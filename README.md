@@ -1,4 +1,4 @@
-# Syllentra
+# Codename: Syllentra
 
 Syllentra is a local AI-powered LMS support app!
 it helps admins, instructors, reviewers, and students manage courses and run AI-assisted content review!
@@ -105,7 +105,7 @@ Syllentra uses a local Ollama model from `apps/api/.env`:
 simple setup:
 1. install Ollama from [ollama.com/download](https://ollama.com/download)
 2. finish install and open Ollama once (service should start)
-3. pull the model used by this repo:
+3. pull the model used by this repo in a new terminal window:
 
 ```bash
 ollama pull llama3.1:8b

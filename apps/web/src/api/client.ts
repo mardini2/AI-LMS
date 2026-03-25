@@ -61,6 +61,8 @@ export const apiClient = {
   },
   listContentResources: (contentId: string) =>
     http.get(`/content-items/${contentId}/resources`).then((response) => response.data),
+  removeContentResource: (contentId: string, attachmentId: string) =>
+    http.delete(`/content-items/${contentId}/resources/${attachmentId}`).then((response) => response.data),
   getContentItem: (contentId: string) =>
     http.get(`/content-items/${contentId}`).then((response) => response.data),
   updateContentItem: (

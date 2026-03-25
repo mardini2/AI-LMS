@@ -144,6 +144,10 @@ export class AiService {
       resources: contentItem.attachments,
       studentAttachments: studentSubmission?.attachments ?? [],
     });
+    const draftContext =
+      input.userRole === Role.STUDENT
+        ? `Student draft answer:\n${input.studentDraft?.trim() || 'No draft provided'}`
+        : `Instructor context:\nUse the content body and rubric as the source material for lesson-improvement advice.`;
     // large string template so the model sees course, review, and file hints together
     const prompt = `
 You are Syllentra Coaching Assistant.
@@ -164,8 +168,7 @@ ${latestReview?.finalSummary?.summaryText ?? 'No summary yet'}
 Question:
 ${input.question}
 
-Student draft answer:
-${input.studentDraft ?? 'No draft provided'}
+${draftContext}
 
 Attachment context:
 ${attachmentContext}

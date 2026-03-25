@@ -425,6 +425,45 @@ export class ContentItemsService {
     });
   }
 
+  async removeContentResource(input: {
+    contentItemId: string;
+    attachmentId: string;
+    requesterId: string;
+    requesterRole: UserRole;
+  }) {
+    const attachment = await this.prisma.fileAttachment.findFirst({
+      where: {
+        id: input.attachmentId,
+        contentItemId: input.contentItemId,
+        submissionId: null,
+      },
+      select: { id: true, storagePath: true, uploadedById: true },
+    });
+
+    if (!attachment) {
+      throw new NotFoundException('Attachment not found');
+    }
+
+    // Allow admins to remove any resource; instructors can only remove their own uploads.
+    const isAdmin = input.requesterRole === UserRole.ADMIN;
+    if (!isAdmin && attachment.uploadedById !== input.requesterId) {
+      throw new NotFoundException('Attachment not found');
+    }
+
+    await this.prisma.fileAttachment.delete({
+      where: { id: attachment.id },
+    });
+
+    // Best-effort cleanup on disk. DB record is already removed.
+    try {
+      await unlink(attachment.storagePath);
+    } catch {
+      // Ignore missing/locked file errors to avoid blocking UX.
+    }
+
+    return { removed: true, attachmentId: attachment.id };
+  }
+
   async listStudentSubmissionAttachments(
     contentItemId: string,
     studentId: string,

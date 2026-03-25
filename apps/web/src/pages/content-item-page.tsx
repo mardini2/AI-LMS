@@ -20,6 +20,7 @@ import {
   Textarea,
 } from '../components/ui'
 import { authStorage } from '../features/auth/auth-storage'
+import { formatEnumLabel } from '../utils/format-enum-label'
 
 interface ReviewHistoryItem {
   id: string
@@ -70,12 +71,7 @@ const contentEditSchema = z.object({
 })
 
 function formatContentType(value?: string) {
-  if (!value) return 'Type'
-  return value
-    .toLowerCase()
-    .split('_')
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(' ')
+  return formatEnumLabel(value, 'Type')
 }
 
 const MAX_FILES_PER_BATCH = 10
@@ -129,6 +125,13 @@ export function ContentItemPage() {
     queryKey: ['submission-attachments', contentId],
     queryFn: () => apiClient.listMySubmissionAttachments(contentId),
     enabled: Boolean(contentId) && isStudent,
+  })
+
+  const removeContentResourceMutation = useMutation({
+    mutationFn: (attachmentId: string) => apiClient.removeContentResource(contentId, attachmentId),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['content-resources', contentId] })
+    },
   })
 
   const reviewMutation = useMutation({
@@ -369,7 +372,7 @@ export function ContentItemPage() {
                       : 'info'
               }
             >
-              {contentQuery.data?.status ?? 'Status'}
+              {formatEnumLabel(contentQuery.data?.status, 'Status')}
             </Badge>
           </div>
         }
@@ -438,7 +441,7 @@ export function ContentItemPage() {
                 <div className="flex items-center justify-between gap-2">
                   <p className="font-medium text-slate-800">Request {reviewRequest.id.slice(0, 8)}</p>
                   <Badge variant={reviewRequest.status === 'COMPLETED' ? 'success' : reviewRequest.status === 'FAILED' ? 'danger' : 'warning'}>
-                    {reviewRequest.status}
+                    {formatEnumLabel(reviewRequest.status)}
                   </Badge>
                 </div>
                 <p className="mt-1 text-slate-500">
@@ -462,96 +465,6 @@ export function ContentItemPage() {
       </Card>
 
       {!isStudent && (
-        <Card className="space-y-3">
-          <h2 className="text-lg font-semibold">Resources and attachments</h2>
-          <div className="space-y-2">
-            <p className="text-sm text-slate-500">
-              Upload up to {MAX_FILES_PER_BATCH} resource files at once (max 2GB each). Drag-drop is supported.
-            </p>
-            <div
-              className={`rounded-xl border border-dashed p-4 transition ${
-                resourceDropActive ? 'border-blue-400 bg-blue-50' : 'border-slate-300 bg-slate-50'
-              }`}
-              onDragOver={(event) => {
-                event.preventDefault()
-                setResourceDropActive(true)
-              }}
-              onDragLeave={() => setResourceDropActive(false)}
-              onDrop={(event) => {
-                event.preventDefault()
-                setResourceDropActive(false)
-                addFilesToSelection(
-                  event.dataTransfer.files,
-                  setResourceFiles,
-                  resourceFiles,
-                )
-              }}
-            >
-              <p className="text-sm text-slate-700">Drop files here, or choose files manually.</p>
-              <Input
-                className="mt-2"
-                type="file"
-                multiple
-                onChange={(event) =>
-                  addFilesToSelection(event.target.files, setResourceFiles, resourceFiles)
-                }
-              />
-              {resourceFiles.length > 0 && (
-                <div className="mt-2 space-y-1">
-                  <p className="text-xs text-slate-600">
-                    Selected {resourceFiles.length} / {MAX_FILES_PER_BATCH}
-                  </p>
-                  {resourceFiles.map((file) => (
-                    <p key={file.name + file.size} className="text-xs text-slate-500">
-                      {file.name}
-                    </p>
-                  ))}
-                </div>
-              )}
-            </div>
-            <Button
-              type="button"
-              variant="secondary"
-              disabled={resourceFiles.length === 0 || resourceUploading}
-              onClick={uploadResourceFiles}
-            >
-              {resourceUploading
-                ? `Uploading ${resourceUploadCurrent}/${resourceUploadTotal} (${resourceUploadProgress}%)`
-                : `Upload selected files (${resourceFiles.length})`}
-            </Button>
-            {resourceUploading && (
-              <div className="h-2 w-full overflow-hidden rounded-full bg-slate-200">
-                <div
-                  className="h-full rounded-full bg-blue-500 transition-all"
-                  style={{ width: `${resourceUploadProgress}%` }}
-                />
-              </div>
-            )}
-            {resourceUploadError && (
-              <p className="text-sm text-rose-700">{resourceUploadError}</p>
-            )}
-          </div>
-          <div className="space-y-2">
-            <p className="text-sm font-medium text-slate-700">Available resources</p>
-            {(resourcesQuery.data?.length ?? 0) === 0 && (
-              <p className="text-sm text-slate-500">No resources uploaded yet.</p>
-            )}
-            {resourcesQuery.data?.map((file: any) => (
-              <a
-                key={file.id}
-                className="block rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700 underline underline-offset-4"
-                href={`/api/attachments/${file.id}/download`}
-                target="_blank"
-                rel="noreferrer"
-              >
-                {file.originalName}
-              </a>
-            ))}
-          </div>
-        </Card>
-      )}
-
-      {!isStudent && (
         <Card className="space-y-2">
           <button
             type="button"
@@ -573,6 +486,101 @@ export function ContentItemPage() {
               </div>
               <Textarea rows={8} placeholder="Content body" {...registerContentEdit('body')} />
               <Textarea placeholder="Rubric text" {...registerContentEdit('rubricText')} />
+              <div className="space-y-2 rounded-xl border border-slate-200 bg-slate-50 p-3">
+                <p className="text-sm font-medium text-slate-700">Resources and attachments</p>
+                <p className="text-xs text-slate-500">
+                  Upload files students can download while reviewing this content.
+                </p>
+                <div
+                  className={`rounded-xl border border-dashed p-4 transition ${
+                    resourceDropActive ? 'border-blue-400 bg-blue-50' : 'border-slate-300 bg-white'
+                  }`}
+                  onDragOver={(event) => {
+                    event.preventDefault()
+                    setResourceDropActive(true)
+                  }}
+                  onDragLeave={() => setResourceDropActive(false)}
+                  onDrop={(event) => {
+                    event.preventDefault()
+                    setResourceDropActive(false)
+                    addFilesToSelection(
+                      event.dataTransfer.files,
+                      setResourceFiles,
+                      resourceFiles,
+                    )
+                  }}
+                >
+                  <p className="text-sm text-slate-700">Drop files here, or choose files manually.</p>
+                  <Input
+                    className="mt-2"
+                    type="file"
+                    multiple
+                    onChange={(event) =>
+                      addFilesToSelection(event.target.files, setResourceFiles, resourceFiles)
+                    }
+                  />
+                  {resourceFiles.length > 0 && (
+                    <div className="mt-2 space-y-1">
+                      <p className="text-xs text-slate-600">
+                        Selected {resourceFiles.length} / {MAX_FILES_PER_BATCH}
+                      </p>
+                      {resourceFiles.map((file) => (
+                        <p key={file.name + file.size} className="text-xs text-slate-500">
+                          {file.name}
+                        </p>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  disabled={resourceFiles.length === 0 || resourceUploading}
+                  onClick={uploadResourceFiles}
+                >
+                  {resourceUploading
+                    ? `Uploading ${resourceUploadCurrent}/${resourceUploadTotal} (${resourceUploadProgress}%)`
+                    : `Upload selected files (${resourceFiles.length})`}
+                </Button>
+                {resourceUploading && (
+                  <div className="h-2 w-full overflow-hidden rounded-full bg-slate-200">
+                    <div
+                      className="h-full rounded-full bg-blue-500 transition-all"
+                      style={{ width: `${resourceUploadProgress}%` }}
+                    />
+                  </div>
+                )}
+                {resourceUploadError && (
+                  <p className="text-sm text-rose-700">{resourceUploadError}</p>
+                )}
+                <div className="space-y-2">
+                  <p className="text-sm font-medium text-slate-700">Available resources</p>
+                  {(resourcesQuery.data?.length ?? 0) === 0 && (
+                    <p className="text-sm text-slate-500">No resources uploaded yet.</p>
+                  )}
+                  {resourcesQuery.data?.map((file: any) => (
+                    <div key={file.id} className="flex items-center justify-between gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2">
+                      <a
+                        className="block text-sm text-slate-700 underline underline-offset-4"
+                        href={`/api/attachments/${file.id}/download`}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        {file.originalName}
+                      </a>
+                      <Button
+                        type="button"
+                        variant="danger"
+                        disabled={removeContentResourceMutation.isPending}
+                        className="h-8 px-2 py-0 text-xs"
+                        onClick={() => removeContentResourceMutation.mutate(file.id)}
+                      >
+                        Remove
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              </div>
               <div className="flex flex-wrap gap-2">
                 <Button variant="secondary" disabled={updateContentMutation.isPending} type="submit">
                   {updateContentMutation.isPending ? 'Saving...' : 'Save changes'}
@@ -839,7 +847,9 @@ export function ContentItemPage() {
               <div key={submission.id} className={`rounded-xl border border-slate-200 bg-slate-50/70 p-4 ${CARD_HOVER_CLASS}`}>
                 <div className="flex items-center justify-between gap-2">
                   <p className="font-medium text-slate-900">{submission.student.fullName}</p>
-                  <Badge variant={submission.status === 'GRADED' ? 'success' : 'info'}>{submission.status}</Badge>
+                  <Badge variant={submission.status === 'GRADED' ? 'success' : 'info'}>
+                    {formatEnumLabel(submission.status)}
+                  </Badge>
                 </div>
                 <p className="mt-2 whitespace-pre-wrap text-sm text-slate-700">{submission.answerText}</p>
                 {(submission.attachments?.length ?? 0) > 0 && (

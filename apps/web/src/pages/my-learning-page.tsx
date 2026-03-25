@@ -3,6 +3,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { apiClient } from '../api/client'
 import { Card, EmptyState, PageHeader } from '../components/ui'
+import { formatEnumLabel } from '../utils/format-enum-label'
 
 export function MyLearningPage() {
   const coursesQuery = useQuery({
@@ -65,7 +66,7 @@ export function MyLearningPage() {
               <div key={submission.id} className="rounded-xl border border-slate-200 bg-slate-50 p-3">
                 <p className="text-sm font-medium text-slate-800">{submission.contentItem.title}</p>
                 <p className="text-xs text-slate-500">
-                  {submission.contentItem.module.course.title} • {submission.status}
+                  {submission.contentItem.module.course.title} • {formatEnumLabel(submission.status)}
                 </p>
                 <p className="mt-1 text-sm text-slate-700">
                   Score: {submission.score ?? 'Pending'} / 100

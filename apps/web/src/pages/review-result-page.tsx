@@ -5,6 +5,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom'
 import { apiClient } from '../api/client'
 import { Badge, Button, Card, ConfirmModal, EmptyState, PageHeader, Textarea } from '../components/ui'
 import { useState } from 'react'
+import { formatEnumLabel } from '../utils/format-enum-label'
 
 interface AgentReview {
   id: string
@@ -99,7 +100,7 @@ export function ReviewResultPage() {
               </Link>
             )}
             <Badge variant={reviewQuery.data?.status === 'COMPLETED' ? 'success' : reviewQuery.data?.status === 'FAILED' ? 'danger' : 'warning'}>
-              {reviewQuery.data?.status ?? 'PENDING'}
+              {formatEnumLabel(reviewQuery.data?.status, 'Pending')}
             </Badge>
           </div>
         }

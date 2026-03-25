@@ -19,6 +19,7 @@ import {
 } from '../components/ui'
 import { authStorage } from '../features/auth/auth-storage'
 import { useState } from 'react'
+import { formatEnumLabel } from '../utils/format-enum-label'
 
 interface ModuleDetail {
   id: string
@@ -51,11 +52,7 @@ const moduleEditSchema = z.object({
 })
 
 function formatContentType(value: string) {
-  return value
-    .toLowerCase()
-    .split('_')
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(' ')
+  return formatEnumLabel(value)
 }
 
 export function ModuleDetailPage() {
@@ -74,10 +71,57 @@ export function ModuleDetailPage() {
     enabled: Boolean(moduleId),
   })
 
+  const MAX_FILES_PER_BATCH = 10
+
+  const [resourceFiles, setResourceFiles] = useState<File[]>([])
+  const [resourceUploading, setResourceUploading] = useState(false)
+  const [resourceUploadProgress, setResourceUploadProgress] = useState(0)
+  const [resourceUploadTotal, setResourceUploadTotal] = useState(0)
+  const [resourceUploadCurrent, setResourceUploadCurrent] = useState(0)
+  const [resourceUploadError, setResourceUploadError] = useState('')
+
+  const addFilesToSelection = (incoming: FileList | null, setter: (files: File[]) => void, existing: File[]) => {
+    if (!incoming) return
+    const merged = [...existing, ...Array.from(incoming)]
+    setter(merged.slice(0, MAX_FILES_PER_BATCH))
+  }
+
+  const fileSelectionKey = (file: File) => `${file.name}|${file.size}|${file.lastModified}`
+
   const createContentMutation = useMutation({
     mutationFn: (payload: { title: string; contentType: string; body: string; rubricText?: string; dueAt?: string }) =>
       apiClient.createContentItem(moduleId, payload),
-    onSuccess: async () => {
+    onSuccess: async (createdContentItem) => {
+      await queryClient.invalidateQueries({ queryKey: ['module', moduleId] })
+
+      if (resourceFiles.length === 0) {
+        setResourceFiles([])
+        return
+      }
+
+      setResourceUploadError('')
+      setResourceUploading(true)
+      setResourceUploadProgress(0)
+      setResourceUploadTotal(resourceFiles.length)
+      setResourceUploadCurrent(0)
+
+      const queue = resourceFiles.slice(0, MAX_FILES_PER_BATCH)
+      try {
+        for (let index = 0; index < queue.length; index += 1) {
+          setResourceUploadCurrent(index + 1)
+          await apiClient.uploadContentResource(
+            createdContentItem.id,
+            queue[index],
+            (percent) => setResourceUploadProgress(percent),
+          )
+        }
+        setResourceFiles([])
+      } catch {
+        setResourceUploadError('Failed to upload one or more resource files.')
+      } finally {
+        setResourceUploading(false)
+      }
+
       await queryClient.invalidateQueries({ queryKey: ['module', moduleId] })
     },
   })
@@ -164,8 +208,57 @@ export function ModuleDetailPage() {
               </div>
               <Textarea placeholder="Body text" rows={8} {...register('body')} />
               <Textarea placeholder="Rubric (optional)" {...register('rubricText')} />
-              <Button type="submit" disabled={createContentMutation.isPending}>
-                {createContentMutation.isPending ? 'Creating...' : 'Create content item'}
+              <div className="space-y-2 rounded-xl border border-slate-200 bg-slate-50 p-3">
+                <p className="text-sm font-medium text-slate-700">Resources students can download</p>
+                <p className="text-xs text-slate-500">
+                  Optional: upload files now; you can add/remove later in the content editor.
+                </p>
+                <div className="space-y-1">
+                  <Input
+                    type="file"
+                    multiple
+                    onChange={(event) => addFilesToSelection(event.target.files, setResourceFiles, resourceFiles)}
+                  />
+                  {resourceFiles.length > 0 && (
+                    <div className="space-y-1">
+                      <p className="text-xs text-slate-600">
+                        Selected {resourceFiles.length} / {MAX_FILES_PER_BATCH}
+                      </p>
+                      {resourceFiles.map((file) => (
+                        <div key={fileSelectionKey(file)} className="flex items-center justify-between gap-2">
+                          <p className="truncate text-xs text-slate-500">{file.name}</p>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            className="h-7 px-2 text-xs"
+                            onClick={() => {
+                              const key = fileSelectionKey(file)
+                              setResourceFiles((previous) => previous.filter((f) => fileSelectionKey(f) !== key))
+                            }}
+                          >
+                            Remove
+                          </Button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                {resourceUploading && (
+                  <p className="text-xs text-slate-600">
+                    Uploading resources ({resourceUploadCurrent}/{resourceUploadTotal})… {resourceUploadProgress}%
+                  </p>
+                )}
+                {resourceUploadError && <p className="text-sm text-rose-700">{resourceUploadError}</p>}
+              </div>
+              <Button
+                type="submit"
+                disabled={createContentMutation.isPending || resourceUploading}
+              >
+                {createContentMutation.isPending
+                  ? 'Creating...'
+                  : resourceUploading
+                    ? 'Uploading resources...'
+                    : 'Create content item'}
               </Button>
             </form>
           )}
@@ -247,7 +340,7 @@ export function ModuleDetailPage() {
                           : 'info'
                   }
                 >
-                  {contentItem.status}
+                  {formatEnumLabel(contentItem.status)}
                 </Badge>
               </div>
             </div>

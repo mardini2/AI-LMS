@@ -178,6 +178,21 @@ export class ContentItemsController {
     return this.contentItemsService.listContentResources(id);
   }
 
+  @Delete('content-items/:id/resources/:attachmentId')
+  @Roles(Role.ADMIN, Role.INSTRUCTOR)
+  async removeResource(
+    @Param('id') id: string,
+    @Param('attachmentId') attachmentId: string,
+    @Req() request: AuthenticatedRequest,
+  ) {
+    return this.contentItemsService.removeContentResource({
+      contentItemId: id,
+      attachmentId,
+      requesterId: request.user.sub,
+      requesterRole: request.user.role as UserRole,
+    });
+  }
+
   @Post('content-items/:id/submissions/attachments')
   @Roles(Role.STUDENT)
   @UseInterceptors(FileInterceptor('file', attachmentMulterOptions))

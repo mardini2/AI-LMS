@@ -7,6 +7,7 @@ import { apiClient } from '../api/client'
 import { Badge, CARD_HOVER_CLASS, Card, EmptyState, PageHeader } from '../components/ui'
 import { authStorage } from '../features/auth/auth-storage'
 import { COURSE_BACKGROUND_OPTIONS } from '../constants/course-backgrounds'
+import { formatEnumLabel } from '../utils/format-enum-label'
 
 type MetricFilter = 'pending' | 'reviewed' | 'approved' | 'needsRevision' | 'rejected'
 
@@ -194,7 +195,7 @@ export function DashboardPage() {
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <p className="font-medium text-slate-900">{item.contentItem?.title}</p>
                 <Badge variant={item.status === 'COMPLETED' ? 'success' : item.status === 'FAILED' ? 'danger' : 'warning'}>
-                  {item.status}
+                  {formatEnumLabel(item.status)}
                 </Badge>
               </div>
               <p className="mt-1 text-sm text-slate-600">
