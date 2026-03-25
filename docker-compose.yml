@@ -1,0 +1,53 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: syllentra-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: syllentra
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - '55432:5432'
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: syllentra-ollama
+    restart: unless-stopped
+    ports:
+      - '11434:11434'
+    volumes:
+      - ollama_data:/root/.ollama
+
+  api:
+    build:
+      context: ./apps/api
+    container_name: syllentra-api
+    depends_on:
+      - postgres
+      - ollama
+    environment:
+      PORT: 3000
+      WEB_ORIGIN: http://localhost:4173
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/syllentra
+      JWT_SECRET: replace_with_a_long_random_value
+      JWT_EXPIRES_IN: 1d
+      OLLAMA_BASE_URL: http://ollama:11434
+      OLLAMA_MODEL: llama3.1:8b
+    ports:
+      - '3000:3000'
+
+  web:
+    build:
+      context: ./apps/web
+    container_name: syllentra-web
+    depends_on:
+      - api
+    ports:
+      - '4173:4173'
+
+volumes:
+  postgres_data:
+  ollama_data:

@@ -1,0 +1,34 @@
+{
+  "name": "syllentra",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Syllentra - AI-assisted LMS capstone platform",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "predev": "kill-port 3000 5173 || exit 0",
+    "dev": "concurrently \"npm run dev:api\" \"npm run dev:web:wait\"",
+    "dev:api": "npm run start:dev --workspace api",
+    "dev:web": "npm run dev --workspace web",
+    "dev:web:wait": "wait-on tcp:3000 && npm run dev:web",
+    "build": "npm run build --workspace api && npm run build --workspace web",
+    "lint": "npm run lint --workspace api && npm run lint --workspace web",
+    "db:generate": "npm run prisma:generate --workspace api",
+    "db:migrate": "npm run prisma:migrate --workspace api",
+    "db:seed": "npm run prisma:seed --workspace api"
+  },
+  "engines": {
+    "node": ">=20.0.0",
+    "npm": ">=10.0.0"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1",
+    "kill-port": "^2.0.1",
+    "wait-on": "^9.0.4"
+  },
+  "dependencies": {
+    "@nestjs/platform-express": "^11.1.17"
+  }
+}
