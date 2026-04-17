@@ -91,7 +91,7 @@ export function AdminUsersPage() {
       />
 
       {!usersQuery.isLoading && (usersQuery.data?.length ?? 0) === 0 && (
-        <EmptyState title="No users found" description="Seed demo users or create user onboarding flow." />
+        <EmptyState title="No users found" description="Run the database seed or create accounts below." />
       )}
 
       <div className="grid grid-cols-1 gap-3 md:grid-cols-2">

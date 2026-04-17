@@ -1,4 +1,4 @@
-// goal: HTTP routes for content items, student work, and attachment download.
+// HTTP routes for content items, student work, and attachment download
 
 import {
   Body,
@@ -27,19 +27,14 @@ import {
   UpdateContentItemDto,
 } from './content-item.dto';
 import type { AuthenticatedRequest } from '../common/types/authenticated-request.type';
-import { AuditLogService } from '../audit-log/audit-log.service';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { attachmentMulterOptions } from '../common/upload/upload.config';
 import type { Response } from 'express';
 
-// routes live at /modules/..., /content-items/..., /students/..., /attachments/...
 @Controller()
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class ContentItemsController {
-  constructor(
-    private readonly contentItemsService: ContentItemsService,
-    private readonly auditLogService: AuditLogService,
-  ) {}
+  constructor(private readonly contentItemsService: ContentItemsService) {}
 
   @Get('modules/:moduleId/content-items')
   @Roles(Role.ADMIN, Role.INSTRUCTOR, Role.REVIEWER, Role.STUDENT)
@@ -60,7 +55,7 @@ export class ContentItemsController {
     @Body() body: CreateContentItemDto,
     @Req() request: AuthenticatedRequest,
   ) {
-    const contentItem = await this.contentItemsService.create(
+    return this.contentItemsService.create(
       moduleId,
       request.user.sub,
       body.title,
@@ -69,16 +64,6 @@ export class ContentItemsController {
       body.rubricText,
       body.dueAt,
     );
-
-    await this.auditLogService.write({
-      actorId: request.user.sub,
-      action: 'CONTENT_ITEM_CREATED',
-      entityType: 'ContentItem',
-      entityId: contentItem.id,
-      metadata: { moduleId },
-    });
-
-    return contentItem;
   }
 
   @Get('content-items/:id')
@@ -174,8 +159,14 @@ export class ContentItemsController {
 
   @Get('content-items/:id/resources')
   @Roles(Role.ADMIN, Role.INSTRUCTOR, Role.REVIEWER, Role.STUDENT)
-  async listResources(@Param('id') id: string) {
-    return this.contentItemsService.listContentResources(id);
+  async listResources(
+    @Param('id') id: string,
+    @Req() request: AuthenticatedRequest,
+  ) {
+    return this.contentItemsService.listContentResources(id, {
+      role: request.user.role as UserRole,
+      userId: request.user.sub,
+    });
   }
 
   @Delete('content-items/:id/resources/:attachmentId')
@@ -242,7 +233,6 @@ export class ContentItemsController {
 
   @Get('attachments/:attachmentId/download')
   @Roles(Role.ADMIN, Role.INSTRUCTOR, Role.REVIEWER, Role.STUDENT)
-  // streams file from disk after verifying the caller may see this attachment
   async downloadAttachment(
     @Param('attachmentId') attachmentId: string,
     @Req() request: AuthenticatedRequest,

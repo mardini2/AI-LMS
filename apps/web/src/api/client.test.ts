@@ -37,20 +37,25 @@ describe('apiClient', () => {
     })
   })
 
-  it('sets extended timeout for requestReview', async () => {
-    vi.mocked(http.post).mockResolvedValue({ data: { id: 'r1' } })
+  it('calls studentGuidance with the expected path', async () => {
+    vi.mocked(http.post).mockResolvedValue({ data: { response: 'ok' } })
 
-    await expect(apiClient.requestReview('content-1')).resolves.toEqual({ id: 'r1' })
-    expect(http.post).toHaveBeenCalledWith(
-      '/reviews/content-items/content-1/request',
-      undefined,
-      expect.objectContaining({ timeout: 180000 }),
-    )
+    await expect(
+      apiClient.studentGuidance('content-1', { question: 'What is this task?' }),
+    ).resolves.toEqual({ response: 'ok' })
+    expect(http.post).toHaveBeenCalledWith('/ai/student-guidance/content-items/content-1', {
+      question: 'What is this task?',
+    })
   })
 
   it('reports upload progress as percentage for content resource upload', async () => {
     vi.mocked(http.post).mockImplementation((_url, _formData, config) => {
-      config?.onUploadProgress?.({ loaded: 35, total: 100 })
+      config?.onUploadProgress?.({
+        loaded: 35,
+        total: 100,
+        bytes: 35,
+        lengthComputable: true,
+      })
       return Promise.resolve({ data: { ok: true } })
     })
     const onProgress = vi.fn()

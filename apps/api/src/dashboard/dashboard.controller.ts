@@ -1,4 +1,4 @@
-// goal: HTTP endpoints for dashboard counts and recent review activity.
+// staff home: total courses visible for the signed-in role
 
 import { Controller, Get, Req, UseGuards } from '@nestjs/common';
 import { DashboardService } from './dashboard.service';
@@ -17,15 +17,6 @@ export class DashboardController {
   @Roles(Role.ADMIN, Role.INSTRUCTOR, Role.REVIEWER)
   async overview(@Req() request: AuthenticatedRequest) {
     return this.dashboardService.overview({
-      role: request.user.role as Role,
-      userId: request.user.sub,
-    });
-  }
-
-  @Get('recent-activity')
-  @Roles(Role.ADMIN, Role.INSTRUCTOR, Role.REVIEWER)
-  async recentActivity(@Req() request: AuthenticatedRequest) {
-    return this.dashboardService.recentActivity({
       role: request.user.role as Role,
       userId: request.user.sub,
     });

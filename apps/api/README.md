@@ -7,8 +7,8 @@ this is the NestJS backend for Syllentra.
 - auth (`/auth`)
 - users/admin operations (`/users`)
 - courses, modules, content, submissions
-- AI review + coaching routes
-- dashboard, calendar, notifications
+- AI coaching + student guidance routes (Ollama)
+- dashboard course totals for staff
 - health check (`/health`)
 
 ## run from repo root (recommended)
@@ -17,7 +17,7 @@ most setup is workspace-based, so use the root README flow first:
 - install deps
 - run postgres
 - run migrations + seed
-- pull Ollama model `llama3.1:8b`
+- pull Ollama model `llama3.2:1b` (or set `OLLAMA_MODEL` in `.env`)
 
 then use:
 
@@ -60,4 +60,4 @@ npm run start:dev
 - `JWT_SECRET`
 - `JWT_EXPIRES_IN`
 - `OLLAMA_BASE_URL`
-- `OLLAMA_MODEL` (default in this repo: `llama3.1:8b`)
+- `OLLAMA_MODEL` (default in code: `llama3.2:1b` if unset)

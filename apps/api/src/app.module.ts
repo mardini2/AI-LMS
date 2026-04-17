@@ -1,4 +1,4 @@
-// goal: register all feature modules, env validation, and global rate limiting.
+// registers feature modules, env validation, and global rate limiting
 
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
@@ -11,20 +11,15 @@ import { UsersModule } from './users/users.module';
 import { CoursesModule } from './courses/courses.module';
 import { CourseModulesModule } from './course-modules/course-modules.module';
 import { ContentItemsModule } from './content-items/content-items.module';
-import { ReviewsModule } from './reviews/reviews.module';
 import { AiModule } from './ai/ai.module';
 import { DashboardModule } from './dashboard/dashboard.module';
-import { AuditLogModule } from './audit-log/audit-log.module';
 import { HealthModule } from './health/health.module';
-import { CalendarModule } from './calendar/calendar.module';
-import { NotificationsModule } from './notifications/notifications.module';
 
 @Module({
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
       envFilePath: ['.env.local', '.env'],
-      // fail fast if required secrets or URLs are missing or malformed
       validationSchema: Joi.object({
         NODE_ENV: Joi.string()
           .valid('development', 'test', 'production')
@@ -39,7 +34,6 @@ import { NotificationsModule } from './notifications/notifications.module';
         TRUST_PROXY: Joi.string().valid('0', '1', 'true', 'false').optional(),
       }),
     }),
-    // global request budget per window (helps blunt abuse)
     ThrottlerModule.forRoot([
       {
         ttl: 60000,
@@ -52,18 +46,13 @@ import { NotificationsModule } from './notifications/notifications.module';
     CoursesModule,
     CourseModulesModule,
     ContentItemsModule,
-    ReviewsModule,
     AiModule,
     DashboardModule,
-    AuditLogModule,
     HealthModule,
-    CalendarModule,
-    NotificationsModule,
   ],
   providers: [
     {
       provide: APP_GUARD,
-      // applies throttler to every route unless a handler opts out
       useClass: ThrottlerGuard,
     },
   ],

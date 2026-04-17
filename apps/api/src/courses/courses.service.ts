@@ -1,11 +1,11 @@
-// goal: Prisma queries for courses, enrollments, announcements, and deep deletes.
+// prisma queries for courses, enrollments, and deep deletes
 
 import {
   BadRequestException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { NotificationType, UserRole } from '@prisma/client';
+import { UserRole } from '@prisma/client';
 import type { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 
@@ -44,7 +44,7 @@ export class CoursesService {
       include: {
         course: {
           include: {
-            instructor: { select: { id: true, fullName: true, role: true } },
+            instructor: { select: { id: true, fullName: true } },
             _count: { select: { modules: true } },
           },
         },
@@ -72,7 +72,6 @@ export class CoursesService {
         description,
         backgroundImage,
         createdById,
-        // admins can create shells; only instructors become the listed instructor
         instructorId:
           creator?.role === UserRole.INSTRUCTOR ? createdById : undefined,
       },
@@ -108,16 +107,6 @@ export class CoursesService {
     return course;
   }
 
-  async listAnnouncements(courseId: string) {
-    return this.prisma.courseAnnouncement.findMany({
-      where: { courseId },
-      include: {
-        createdBy: { select: { id: true, fullName: true, role: true } },
-      },
-      orderBy: { createdAt: 'desc' },
-    });
-  }
-
   async assertStudentEnrollment(courseId: string, studentId: string) {
     const enrollment = await this.prisma.enrollment.findUnique({
       where: {
@@ -127,58 +116,6 @@ export class CoursesService {
     if (!enrollment) {
       throw new NotFoundException('Course not found for this student');
     }
-  }
-
-  async createAnnouncement(
-    courseId: string,
-    createdById: string,
-    title: string,
-    body: string,
-  ) {
-    const course = await this.prisma.course.findUnique({
-      where: { id: courseId },
-    });
-    if (!course) {
-      throw new NotFoundException('Course not found');
-    }
-
-    const announcement = await this.prisma.courseAnnouncement.create({
-      data: {
-        courseId,
-        createdById,
-        title,
-        body,
-      },
-      include: {
-        createdBy: { select: { id: true, fullName: true, role: true } },
-      },
-    });
-
-    const enrollments = await this.prisma.enrollment.findMany({
-      where: { courseId },
-      select: { studentId: true },
-    });
-
-    if (enrollments.length > 0) {
-      const targetUserIds = enrollments.map(
-        (enrollment) => enrollment.studentId,
-      );
-      // one in-app notification per enrolled student
-      await this.prisma.notification.createMany({
-        data: enrollments.map((enrollment) => ({
-          userId: enrollment.studentId,
-          courseId,
-          type: NotificationType.ANNOUNCEMENT,
-          title: `${course.title}: ${title}`,
-          message: body,
-          entityId: announcement.id,
-        })),
-      });
-      // keeps each user's inbox from growing without bound
-      await this.pruneNotificationsForUsers(targetUserIds);
-    }
-
-    return announcement;
   }
 
   async updateCourse(
@@ -239,14 +176,6 @@ export class CoursesService {
         where: { courseId: course.id },
       });
 
-      await tx.courseAnnouncement.deleteMany({
-        where: { courseId: course.id },
-      });
-
-      await tx.notification.deleteMany({
-        where: { courseId: course.id },
-      });
-
       await tx.course.delete({
         where: { id: course.id },
       });
@@ -255,29 +184,23 @@ export class CoursesService {
     return { deleted: true };
   }
 
-  // mirrors similar cleanup in UsersService / CourseModulesService; order matters for FKs
   private async deleteContentItemDependencies(
     tx: Prisma.TransactionClient,
     contentItemId: string,
   ) {
-    const reviewRequests = await tx.reviewRequest.findMany({
+    const submissionRows = await tx.studentSubmission.findMany({
       where: { contentItemId },
       select: { id: true },
     });
+    const submissionIds = submissionRows.map((s) => s.id);
 
-    for (const reviewRequest of reviewRequests) {
-      await tx.humanReviewDecision.deleteMany({
-        where: { reviewRequestId: reviewRequest.id },
-      });
-      await tx.agentReview.deleteMany({
-        where: { reviewRequestId: reviewRequest.id },
-      });
-      await tx.finalReviewSummary.deleteMany({
-        where: { reviewRequestId: reviewRequest.id },
+    if (submissionIds.length > 0) {
+      await tx.fileAttachment.deleteMany({
+        where: { submissionId: { in: submissionIds } },
       });
     }
 
-    await tx.reviewRequest.deleteMany({
+    await tx.studentSubmission.deleteMany({
       where: { contentItemId },
     });
 
@@ -292,24 +215,5 @@ export class CoursesService {
     await tx.contentItem.delete({
       where: { id: contentItemId },
     });
-  }
-
-  // cap at 10 newest rows per user; delete older extras
-  private async pruneNotificationsForUsers(userIds: string[]) {
-    const uniqueUserIds = [...new Set(userIds)];
-    for (const userId of uniqueUserIds) {
-      const overflow = await this.prisma.notification.findMany({
-        where: { userId },
-        orderBy: { createdAt: 'desc' },
-        skip: 10,
-        select: { id: true },
-      });
-      if (overflow.length === 0) continue;
-      await this.prisma.notification.deleteMany({
-        where: {
-          id: { in: overflow.map((item) => item.id) },
-        },
-      });
-    }
   }
 }

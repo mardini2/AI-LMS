@@ -1,4 +1,4 @@
-// goal: populate the database with demo users, a course, and sample content for local dev.
+// populate dev users, a course, and sample content
 
 import { PrismaClient } from '@prisma/client';
 import { hash } from 'bcrypt';
@@ -6,7 +6,7 @@ import { hash } from 'bcrypt';
 const prisma = new PrismaClient();
 
 async function main() {
-  // bcrypt cost factor 10 matches typical app defaults; passwords are demo-only
+  // bcrypt cost factor 10; use strong passwords outside local dev
   const adminPassword = await hash('Admin123!', 10);
   const instructorPassword = await hash('Instructor123!', 10);
   const reviewerPassword = await hash('Reviewer123!', 10);
@@ -60,14 +60,14 @@ async function main() {
   const course = await prisma.course.create({
     data: {
       title: 'Introduction to Data Literacy',
-      description: 'A sample course used for demonstrating Syllentra.',
+      description: 'Sample course for local development and testing.',
       backgroundImage: '/stockphoto1.png',
       createdById: instructor.id,
       instructorId: instructor.id,
     },
   });
 
-  // ties the demo student to the new course
+  // enroll the sample student
   await prisma.enrollment.create({
     data: {
       courseId: course.id,
@@ -85,7 +85,7 @@ async function main() {
     },
   });
 
-  // one lecture-style item with body + rubric for reviews
+  // approved so it appears as normal published content with coaching
   await prisma.contentItem.create({
     data: {
       moduleId: module.id,
@@ -95,6 +95,7 @@ async function main() {
       rubricText:
         'Student work should define at least three dimensions and include one realistic example per dimension.',
       createdById: instructor.id,
+      status: 'APPROVED',
     },
   });
 

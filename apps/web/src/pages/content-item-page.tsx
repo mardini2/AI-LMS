@@ -1,10 +1,10 @@
-// goal: rich content workspace: reviews, coaching chat, submissions, and uploads.
+// content workspace: coaching (ollama), submissions, uploads, grading
 
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useMemo, useState } from 'react'
 import { useForm } from 'react-hook-form'
-import { Link, useNavigate, useParams } from 'react-router-dom'
+import { useNavigate, useParams } from 'react-router-dom'
 import { z } from 'zod'
 import axios from 'axios'
 import { apiClient } from '../api/client'
@@ -22,15 +22,6 @@ import {
 import { authStorage } from '../features/auth/auth-storage'
 import { formatEnumLabel } from '../utils/format-enum-label'
 
-interface ReviewHistoryItem {
-  id: string
-  createdAt: string
-  status: string
-  finalSummary?: {
-    qualityScore?: number
-  }
-}
-
 interface ContentItemDetail {
   id: string
   title: string
@@ -40,7 +31,6 @@ interface ContentItemDetail {
   dueAt?: string
   status: string
   module: { id: string; title: string; course: { title: string } }
-  reviewRequests: ReviewHistoryItem[]
   submissions?: Array<{
     id: string
     answerText: string
@@ -68,6 +58,7 @@ const contentEditSchema = z.object({
   body: z.string().min(10),
   rubricText: z.string().optional(),
   dueAt: z.string().optional(),
+  status: z.enum(['DRAFT', 'APPROVED']),
 })
 
 function formatContentType(value?: string) {
@@ -134,18 +125,11 @@ export function ContentItemPage() {
     },
   })
 
-  const reviewMutation = useMutation({
+  const guidanceMutation = useMutation({
     mutationFn: () =>
-      isStudent
-        ? apiClient.studentGuidance(contentId, {
-            question: 'Explain what the instructor is asking and how I should answer.',
-          })
-        : apiClient.requestReview(contentId),
-    onSuccess: async () => {
-      if (!isStudent) {
-        await queryClient.invalidateQueries({ queryKey: ['content-item', contentId] })
-      }
-    },
+      apiClient.studentGuidance(contentId, {
+        question: 'Explain what the instructor is asking and how I should answer.',
+      }),
   })
 
   const coachingMutation = useMutation({
@@ -157,8 +141,13 @@ export function ContentItemPage() {
   })
 
   const updateContentMutation = useMutation({
-    mutationFn: (payload: { title: string; body: string; rubricText?: string; dueAt?: string }) =>
-      apiClient.updateContentItem(contentId, payload),
+    mutationFn: (payload: {
+      title: string
+      body: string
+      rubricText?: string
+      dueAt?: string
+      status?: string
+    }) => apiClient.updateContentItem(contentId, payload),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ['content-item', contentId] })
     },
@@ -302,6 +291,7 @@ export function ContentItemPage() {
       dueAt: contentQuery.data?.dueAt
         ? new Date(contentQuery.data.dueAt).toISOString().slice(0, 16)
         : '',
+      status: (contentQuery.data?.status === 'APPROVED' ? 'APPROVED' : 'DRAFT') as 'DRAFT' | 'APPROVED',
     },
   })
 
@@ -362,15 +352,7 @@ export function ContentItemPage() {
               </Badge>
             )}
             <Badge
-              variant={
-                contentQuery.data?.status === 'APPROVED'
-                  ? 'success'
-                  : contentQuery.data?.status === 'REJECTED'
-                    ? 'danger'
-                    : contentQuery.data?.status === 'NEEDS_REVISION'
-                      ? 'warning'
-                      : 'info'
-              }
+              variant={contentQuery.data?.status === 'APPROVED' ? 'success' : 'neutral'}
             >
               {formatEnumLabel(contentQuery.data?.status, 'Status')}
             </Badge>
@@ -391,78 +373,34 @@ export function ContentItemPage() {
         <p className="whitespace-pre-wrap text-sm leading-6">{contentQuery.data?.body}</p>
       </Card>
 
-      <Card className="space-y-3">
-        <h2 className="text-lg font-semibold">{isStudent ? 'Task breakdown' : 'AI Review Workflow'}</h2>
-        <Button disabled={reviewMutation.isPending} onClick={() => reviewMutation.mutate()}>
-          {reviewMutation.isPending
-            ? isStudent
-              ? 'Preparing guidance...'
-              : 'Running review...'
-            : 'Run AI Review'}
-        </Button>
-        <p className="mt-2 text-xs text-slate-500">
-          {isStudent
-            ? 'This gives a simpler interpretation of what your instructor is asking.'
-            : 'AI review can take up to 1-3 minutes.'}
-        </p>
-        {reviewMutation.isError && (
-          <p className="mt-2 text-sm text-rose-700">
-            {(() => {
-              if (axios.isAxiosError(reviewMutation.error)) {
-                const maybeMessage = reviewMutation.error.response?.data?.message
-                if (typeof maybeMessage === 'string') return `Review failed: ${maybeMessage}`
-                return 'Review failed. Please check that API and Ollama are running.'
-              }
-              return 'Review failed. Please try again.'
-            })()}
+      {isStudent && (
+        <Card className="space-y-3">
+          <h2 className="text-lg font-semibold">Task help</h2>
+          <p className="text-sm text-slate-600">
+            Plain-language summary of the assignment. Use AI coaching below for a full conversation.
           </p>
-        )}
-        {reviewMutation.isSuccess && !isStudent && (
-          <p className="mt-2 text-sm text-emerald-700">
-            Review completed. A new review record has been added below.
-          </p>
-        )}
-        {reviewMutation.isSuccess && isStudent && (
-          <div className="mt-2 rounded-xl border border-blue-200 bg-blue-50 p-3 text-sm text-slate-700">
-            <p className="whitespace-pre-wrap">{(reviewMutation.data as any)?.response}</p>
-          </div>
-        )}
-
-        {!isStudent && (
-          <div className="mt-2 space-y-2">
-            {(contentQuery.data?.reviewRequests.length ?? 0) === 0 && (
-              <EmptyState
-                title="No review history"
-                description="Run AI review to generate per-agent findings and a final synthesis."
-              />
-            )}
-            {contentQuery.data?.reviewRequests.map((reviewRequest) => (
-              <div className={`rounded-xl border border-slate-200 bg-slate-50/70 p-4 text-sm transition duration-200 ${CARD_HOVER_CLASS}`} key={reviewRequest.id}>
-                <div className="flex items-center justify-between gap-2">
-                  <p className="font-medium text-slate-800">Request {reviewRequest.id.slice(0, 8)}</p>
-                  <Badge variant={reviewRequest.status === 'COMPLETED' ? 'success' : reviewRequest.status === 'FAILED' ? 'danger' : 'warning'}>
-                    {formatEnumLabel(reviewRequest.status)}
-                  </Badge>
-                </div>
-                <p className="mt-1 text-slate-500">
-                  Quality score: {reviewRequest.finalSummary?.qualityScore ?? 'N/A'}
-                </p>
-                <Link className="mt-2 inline-block font-medium text-slate-800 underline underline-offset-4" to={`/reviews/${reviewRequest.id}`}>
-                  Open review result
-                </Link>
-                <Link
-                  className="ml-4 mt-2 inline-block text-sm text-slate-500 underline underline-offset-4"
-                  to={`/reviews/${reviewRequest.id}`}
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  Open in new tab
-                </Link>
-              </div>
-            ))}
-          </div>
-        )}
-      </Card>
+          <Button disabled={guidanceMutation.isPending} onClick={() => guidanceMutation.mutate()}>
+            {guidanceMutation.isPending ? 'Preparing guidance...' : 'Explain this task'}
+          </Button>
+          {guidanceMutation.isError && (
+            <p className="mt-2 text-sm text-rose-700">
+              {(() => {
+                if (axios.isAxiosError(guidanceMutation.error)) {
+                  const maybeMessage = guidanceMutation.error.response?.data?.message
+                  if (typeof maybeMessage === 'string') return `Request failed: ${maybeMessage}`
+                  return 'Check that the API and Ollama are running.'
+                }
+                return 'Something went wrong. Try again.'
+              })()}
+            </p>
+          )}
+          {guidanceMutation.isSuccess && (
+            <div className="mt-2 rounded-xl border border-blue-200 bg-blue-50 p-3 text-sm text-slate-700">
+              <p className="whitespace-pre-wrap">{(guidanceMutation.data as { response?: string })?.response}</p>
+            </div>
+          )}
+        </Card>
+      )}
 
       {!isStudent && (
         <Card className="space-y-2">
@@ -486,10 +424,20 @@ export function ContentItemPage() {
               </div>
               <Textarea rows={8} placeholder="Content body" {...registerContentEdit('body')} />
               <Textarea placeholder="Rubric text" {...registerContentEdit('rubricText')} />
+              <div className="space-y-1">
+                <label className="text-xs font-medium text-slate-600">Visibility</label>
+                <select
+                  className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-700 outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-200"
+                  {...registerContentEdit('status')}
+                >
+                  <option value="DRAFT">Draft</option>
+                  <option value="APPROVED">Approved</option>
+                </select>
+              </div>
               <div className="space-y-2 rounded-xl border border-slate-200 bg-slate-50 p-3">
                 <p className="text-sm font-medium text-slate-700">Resources and attachments</p>
                 <p className="text-xs text-slate-500">
-                  Upload files students can download while reviewing this content.
+                  Upload files students can download from this page.
                 </p>
                 <div
                   className={`rounded-xl border border-dashed p-4 transition ${
@@ -917,7 +865,7 @@ export function ContentItemPage() {
         <ConfirmModal
           open={openDeleteContentModal}
           title="Delete content item"
-          description="This will permanently delete this content item, all AI reviews, and coaching history."
+          description="This will permanently delete this content item, submissions, files, and coaching history."
           confirmLabel="Delete content item"
           confirmVariant="danger"
           busy={deleteContentMutation.isPending}

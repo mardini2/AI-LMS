@@ -63,7 +63,7 @@ export function CoursesPage() {
     <div className="space-y-6">
       <PageHeader
         title="Courses"
-        description="Create and manage courses that will be reviewed by multi-agent AI quality checks."
+        description="Create and manage courses, modules, and content for your classes."
         actions={
           canCreate ? (
             <Button

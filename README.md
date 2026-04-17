@@ -1,165 +1,139 @@
-# Codename: Syllentra
+# Syllentra
 
-Syllentra is a local AI-powered LMS support app!
-it helps admins, instructors, reviewers, and students manage courses and run AI-assisted content review!
+Syllentra is a local-first LMS: courses, modules, and content with student submissions, grading, file uploads, and AI coaching powered by [Ollama](https://ollama.com) on your machine.
 
 ## what is in this repo
 
-- `apps/api`: NestJS backend (auth, courses, modules, content, reviews, AI, notifications, calendar, dashboard)
-- `apps/web`: React + Vite frontend
-- `docs`: architecture and API docs
-- `docker-compose.yml`: local services (postgres, ollama, api, web)
+- **`apps/api`**: NestJS REST API (JWT auth, RBAC, Prisma/PostgreSQL, local Ollama for coaching and student guidance)
+- **`apps/web`**: React + Vite SPA (TanStack Query, React Router)
+- **`docs`**: architecture notes and route list (`docs/architecture.md`, `docs/api-routes.md`)
+- **`docker-compose.yml`**: optional local stack (PostgreSQL, Ollama, API, web containers)
 
-## quick requirements
+## requirements
 
-- Node.js `20+`
-- npm `10+`
-- Docker Desktop (or Docker Engine + Compose)
-- Ollama (for local/free AI)
+- Node.js **20+**
+- npm **10+**
+- Docker Desktop (or Docker Engine + Compose), for PostgreSQL
+- [Ollama](https://ollama.com/download), for AI features (coaching and “explain this task” guidance)
 
-## first-time setup (follow in this order)
+## first-time setup
 
-### 0) env files
+### 0) Environment files
 
-copy env examples before running anything:
+Copy the examples, then edit values (especially `JWT_SECRET`):
 
 ```bash
 copy apps\api\.env.example apps\api\.env
 copy apps\web\.env.example apps\web\.env
 ```
-for `JWT_SECRET` in `apps/api/.env`, generate a strong random value in PowerShell:
+
+Generate a strong `JWT_SECRET` in PowerShell:
 
 ```powershell
 [Convert]::ToBase64String((1..64 | ForEach-Object { Get-Random -Maximum 256 }))
 ```
 
-then copy the output and set:
+Put the result in `apps/api/.env`:
 
 ```env
 JWT_SECRET=your_generated_value_here
 ```
 
-### 1) install packages
+Default AI model in `.env` is **`llama3.2:1b`** (set `OLLAMA_MODEL` if you use something else).
+
+### 1) Install dependencies
 
 ```bash
 npm install
 ```
 
-what it does:
-- installs all workspace dependencies for root + `apps/api` + `apps/web`
-
-### 2) install Nest platform express package (requested step)
+### 2) Optional: Nest platform adapter (workspace safety)
 
 ```bash
 npm install @nestjs/platform-express
 ```
 
-what it does:
-- makes sure the HTTP platform adapter used by NestJS is installed
-- this repo already uses it, but running this is safe and keeps setup explicit
-
-### 3) make sure docker is running, then reset old DB volume
+### 3) Clean database volume (optional fresh start)
 
 ```bash
 docker compose down -v
 ```
 
-what it does:
-- stops compose services
-- removes old volumes (`-v`) so you get a clean local database state
-
-### 4) start only postgres
+### 4) Start PostgreSQL
 
 ```bash
 docker compose up -d postgres
 ```
 
-what it does:
-- starts postgres in background only
-- local DB is exposed on `localhost:55432`
+Postgres is exposed at **`localhost:55432`** (see `DATABASE_URL` in `apps/api/.env.example`).
 
-### 5) run DB migrations
+### 5) Migrations and seed
 
 ```bash
 npm run db:migrate
-```
-
-what it does:
-- runs Prisma migrations from `apps/api/prisma/migrations`
-- creates/updates schema in your local postgres database
-
-### 6) seed demo data
-
-```bash
 npm run db:seed
 ```
 
-what it does:
-- inserts demo users/course/module/content used for local testing
+This creates sample users, a course, a module, and published content for local testing.
 
-### 7) install ollama and pull model (needed for AI features)
+### 6) Ollama and the model
 
-Syllentra uses a local Ollama model from `apps/api/.env`:
-- `OLLAMA_MODEL=llama3.1:8b`
+The API reads `OLLAMA_BASE_URL` and `OLLAMA_MODEL` from `apps/api/.env`. This repo defaults to **`llama3.2:1b`** (small and fast on modest hardware).
 
-simple setup:
-1. install Ollama from [ollama.com/download](https://ollama.com/download)
-2. finish install and open Ollama once (service should start)
-3. pull the model used by this repo in a new terminal window:
+1. Install Ollama and ensure the app/service is running.
+2. Pull the model:
 
 ```bash
-ollama pull llama3.1:8b
+ollama pull llama3.2:1b
 ```
 
-4. optional quick check:
+3. Quick check:
 
 ```bash
-ollama run llama3.1:8b "hello"
+ollama run llama3.2:1b "hello"
 ```
 
-if that responds, AI routes should work.
-
-### 8) run the app
+### 7) Run the app
 
 ```bash
 npm run dev
 ```
 
-what it does:
-- starts API on `http://localhost:3000`
-- waits for API, then starts web on `http://localhost:5173`
+- API: [http://localhost:3000](http://localhost:3000) (health: `/health`)
+- Web: [http://localhost:5173](http://localhost:5173) (Vite proxies `/api` to the API in dev)
 
-## one-block command list
-
-if you just want the exact sequence:
+## One-shot command sequence
 
 ```bash
 npm install
-npm install @nestjs/platform-express
 docker compose down -v
 docker compose up -d postgres
 npm run db:migrate
 npm run db:seed
-ollama pull llama3.1:8b
+ollama pull llama3.2:1b
 npm run dev
 ```
 
-## seeded login accounts
+## Seeded accounts
 
-- Admin: `admin@syllentra.local` / `Admin123!`
-- Instructor: `instructor@syllentra.local` / `Instructor123!`
-- Reviewer: `reviewer@syllentra.local` / `Reviewer123!`
-- Student: `student@syllentra.local` / `Student123!`
+| Role        | Email                      | Password        |
+|------------|----------------------------|-----------------|
+| Admin      | `admin@syllentra.local`    | `Admin123!`     |
+| Instructor | `instructor@syllentra.local` | `Instructor123!` |
+| Reviewer   | `reviewer@syllentra.local` | `Reviewer123!`  |
+| Student    | `student@syllentra.local`  | `Student123!`   |
 
-## useful links
+## Useful links
 
-- web app: [http://localhost:5173](http://localhost:5173)
+- Web app: [http://localhost:5173](http://localhost:5173)
 - API health: [http://localhost:3000/health](http://localhost:3000/health)
-- architecture notes: `docs/architecture.md`
-- routes list: `docs/api-routes.md`
 
-## quick troubleshooting
+## Troubleshooting
 
-- if API says DB connection failed: make sure `docker compose up -d postgres` is running
-- if AI endpoints fail: make sure Ollama is running and `llama3.1:8b` is pulled
-- if ports are busy: close old dev processes, then re-run `npm run dev`
+- **Database connection errors**: ensure `docker compose up -d postgres` is running and `DATABASE_URL` matches the port (`55432` for the default compose mapping).
+- **AI endpoints fail**: ensure Ollama is running and **`ollama pull llama3.2:1b`** has completed; confirm `OLLAMA_MODEL` and `OLLAMA_BASE_URL` in `apps/api/.env`.
+- **Port already in use**: stop other processes on `3000` / `5173`, or adjust ports in your env and Vite config.
+
+## Docker Compose (full stack)
+
+You can run API + web + Postgres + Ollama via Compose; see `docker-compose.yml` and set `JWT_SECRET` and any URLs for container networking. For day-to-day dev, running Postgres in Docker and `npm run dev` on the host is usually simplest.

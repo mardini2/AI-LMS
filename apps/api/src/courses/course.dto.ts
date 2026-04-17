@@ -1,5 +1,3 @@
-// goal: DTOs for creating/updating courses, deleting with title confirm, and announcements.
-
 import { IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
 
 export class CreateCourseDto {
@@ -37,15 +35,4 @@ export class DeleteCourseDto {
   @IsString()
   @MinLength(1)
   confirmTitle!: string;
-}
-
-export class CreateAnnouncementDto {
-  @IsString()
-  @MinLength(3)
-  @MaxLength(120)
-  title!: string;
-
-  @IsString()
-  @MinLength(3)
-  body!: string;
 }

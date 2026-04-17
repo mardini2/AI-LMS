@@ -47,6 +47,7 @@ export class AiController {
     return this.aiService.listCoachingHistory({
       contentItemId,
       userId: request.user.sub,
+      userRole: request.user.role as Role,
     });
   }
 

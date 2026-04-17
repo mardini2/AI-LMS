@@ -1,4 +1,4 @@
-// goal: Prisma-backed admin operations on users, enrollments, and safe cascading delete.
+// prisma-backed admin operations on users, enrollments, and safe cascading delete
 
 import {
   BadRequestException,
@@ -15,7 +15,6 @@ export class UsersService {
   constructor(private readonly prisma: PrismaService) {}
 
   async listUsers() {
-    // never return password hashes to the API consumer
     return this.prisma.user.findMany({
       select: {
         id: true,
@@ -116,7 +115,6 @@ export class UsersService {
       throw new BadRequestException('Only students can be enrolled');
     }
 
-    // composite unique key from schema: one row per student per course
     return this.prisma.enrollment.upsert({
       where: {
         courseId_studentId: { courseId, studentId: userId },
@@ -163,7 +161,6 @@ export class UsersService {
     }
 
     await this.prisma.$transaction(async (tx) => {
-      // remove courses owned by this user (deep cleanup).
       const ownedCourses = await tx.course.findMany({
         where: { createdById: user.id },
         include: {
@@ -186,14 +183,9 @@ export class UsersService {
 
         await tx.courseModule.deleteMany({ where: { courseId: course.id } });
         await tx.enrollment.deleteMany({ where: { courseId: course.id } });
-        await tx.courseAnnouncement.deleteMany({
-          where: { courseId: course.id },
-        });
-        await tx.notification.deleteMany({ where: { courseId: course.id } });
         await tx.course.delete({ where: { id: course.id } });
       }
 
-      // remove content authored by this user in other courses.
       const authoredItems = await tx.contentItem.findMany({
         where: { createdById: user.id },
         select: { id: true },
@@ -202,47 +194,16 @@ export class UsersService {
         await this.deleteContentItemDependencies(tx, item.id);
       }
 
-      // remove direct user-linked records.
-      await tx.notification.deleteMany({ where: { userId: user.id } });
       await tx.fileAttachment.deleteMany({ where: { uploadedById: user.id } });
       await tx.coachingMessage.deleteMany({ where: { userId: user.id } });
-      await tx.humanReviewDecision.deleteMany({
-        where: { decidedById: user.id },
-      });
-      const requestedReviews = await tx.reviewRequest.findMany({
-        where: { requestedById: user.id },
-        select: { id: true },
-      });
-      for (const review of requestedReviews) {
-        await tx.humanReviewDecision.deleteMany({
-          where: { reviewRequestId: review.id },
-        });
-        await tx.agentReview.deleteMany({
-          where: { reviewRequestId: review.id },
-        });
-        await tx.finalReviewSummary.deleteMany({
-          where: { reviewRequestId: review.id },
-        });
-      }
-      await tx.reviewRequest.deleteMany({ where: { requestedById: user.id } });
       await tx.studentSubmission.deleteMany({ where: { studentId: user.id } });
       await tx.enrollment.deleteMany({ where: { studentId: user.id } });
-      await tx.courseAnnouncement.deleteMany({
-        where: { createdById: user.id },
-      });
 
       await tx.studentSubmission.updateMany({
         where: { gradedById: user.id },
         data: { gradedById: null },
       });
-      await tx.calendarEvent.updateMany({
-        where: { createdById: user.id },
-        data: { createdById: null },
-      });
-      await tx.auditLog.updateMany({
-        where: { actorId: user.id },
-        data: { actorId: null },
-      });
+
       await tx.course.updateMany({
         where: { instructorId: user.id },
         data: { instructorId: null },
@@ -254,7 +215,6 @@ export class UsersService {
     return { deleted: true };
   }
 
-  // tears down reviews, submissions, and files tied to one content item
   private async deleteContentItemDependencies(
     tx: Prisma.TransactionClient,
     contentItemId: string,
@@ -263,35 +223,28 @@ export class UsersService {
       where: { contentItemId },
       select: { id: true },
     });
-    const submissionIds = submissionRows.map((submission) => submission.id);
+    const submissionIds = submissionRows.map((s) => s.id);
 
-    const reviewRequests = await tx.reviewRequest.findMany({
-      where: { contentItemId },
-      select: { id: true },
-    });
-
-    for (const reviewRequest of reviewRequests) {
-      await tx.humanReviewDecision.deleteMany({
-        where: { reviewRequestId: reviewRequest.id },
-      });
-      await tx.agentReview.deleteMany({
-        where: { reviewRequestId: reviewRequest.id },
-      });
-      await tx.finalReviewSummary.deleteMany({
-        where: { reviewRequestId: reviewRequest.id },
-      });
-    }
-
-    await tx.reviewRequest.deleteMany({ where: { contentItemId } });
-    await tx.coachingMessage.deleteMany({ where: { contentItemId } });
     if (submissionIds.length > 0) {
       await tx.fileAttachment.deleteMany({
         where: { submissionId: { in: submissionIds } },
       });
     }
-    await tx.studentSubmission.deleteMany({ where: { contentItemId } });
-    await tx.fileAttachment.deleteMany({ where: { contentItemId } });
-    await tx.notification.deleteMany({ where: { entityId: contentItemId } });
-    await tx.contentItem.delete({ where: { id: contentItemId } });
+
+    await tx.studentSubmission.deleteMany({
+      where: { contentItemId },
+    });
+
+    await tx.coachingMessage.deleteMany({
+      where: { contentItemId },
+    });
+
+    await tx.fileAttachment.deleteMany({
+      where: { contentItemId },
+    });
+
+    await tx.contentItem.delete({
+      where: { id: contentItemId },
+    });
   }
 }

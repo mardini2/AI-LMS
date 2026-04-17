@@ -38,7 +38,7 @@ export const attachmentMulterOptions = {
     _file: unknown,
     callback: (error: Error | null, acceptFile: boolean) => void,
   ) => {
-    // MVP rule: accept almost all file types, rely on size + auth controls.
+    // accept most file types; size limit and auth still apply
     callback(null, true);
   },
 };

@@ -1,4 +1,4 @@
-// goal: convert enum-like values (IN_REVIEW) into UI labels (In Review).
+// goal: convert enum-like values (e.g. SUBMITTED) into UI labels (Submitted).
 
 export function formatEnumLabel(value?: string, fallback = 'N/A') {
   if (!value) return fallback

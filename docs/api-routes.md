@@ -1,6 +1,6 @@
-# API routes (current)
+# API routes
 
-this file is the current route map from controller decorators in `apps/api/src`.
+route map from controller decorators in `apps/api/src`.
 
 ## auth
 
@@ -29,8 +29,6 @@ this file is the current route map from controller decorators in `apps/api/src`.
 - `GET /courses/:id`
 - `PATCH /courses/:id`
 - `DELETE /courses/:id`
-- `GET /courses/:id/announcements`
-- `POST /courses/:id/announcements`
 
 ## modules
 
@@ -53,17 +51,11 @@ this file is the current route map from controller decorators in `apps/api/src`.
 - `PATCH /submissions/:submissionId/grade`
 - `POST /content-items/:id/resources`
 - `GET /content-items/:id/resources`
+- `DELETE /content-items/:id/resources/:attachmentId`
 - `POST /content-items/:id/submissions/attachments`
 - `GET /content-items/:id/submissions/my/attachments`
 - `DELETE /content-items/:id/submissions/attachments/:attachmentId`
 - `GET /attachments/:attachmentId/download`
-
-## reviews
-
-- `POST /reviews/content-items/:contentItemId/request`
-- `GET /reviews/content-items/:contentItemId/history`
-- `GET /reviews/:reviewRequestId`
-- `PATCH /reviews/:reviewRequestId/decision`
 
 ## AI
 
@@ -74,15 +66,3 @@ this file is the current route map from controller decorators in `apps/api/src`.
 ## dashboard
 
 - `GET /dashboard/overview`
-- `GET /dashboard/recent-activity`
-
-## notifications
-
-- `GET /notifications`
-- `GET /notifications/unread-count`
-- `PATCH /notifications/mark-all-read`
-
-## calendar
-
-- `GET /calendar-events`
-- `POST /calendar-events`

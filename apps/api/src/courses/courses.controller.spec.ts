@@ -1,7 +1,4 @@
-// goal: verify CoursesController picks the right service method per role and logs creates.
-
 import { Role } from '../common/enums/role.enum';
-import { AuditLogService } from '../audit-log/audit-log.service';
 import { CoursesController } from './courses.controller';
 import { CoursesService } from './courses.service';
 
@@ -15,15 +12,11 @@ describe('CoursesController', () => {
     getCourse: jest.fn(),
   } as unknown as CoursesService;
 
-  const auditLogService = {
-    write: jest.fn(),
-  } as unknown as AuditLogService;
-
   let controller: CoursesController;
 
   beforeEach(() => {
     jest.clearAllMocks();
-    controller = new CoursesController(coursesService, auditLogService);
+    controller = new CoursesController(coursesService);
   });
 
   it('routes listCourses to student-specific query for students', async () => {
@@ -65,7 +58,7 @@ describe('CoursesController', () => {
     );
   });
 
-  it('writes audit log entry after creating a course', async () => {
+  it('creates a course with the expected service arguments', async () => {
     (coursesService.createCourse as jest.Mock).mockResolvedValue({ id: 'c1' });
     const request = { user: { sub: 'u1', role: Role.INSTRUCTOR } } as never;
 
@@ -74,11 +67,11 @@ describe('CoursesController', () => {
       request,
     );
 
-    expect(auditLogService.write).toHaveBeenCalledWith({
-      actorId: 'u1',
-      action: 'COURSE_CREATED',
-      entityType: 'Course',
-      entityId: 'c1',
-    });
+    expect(coursesService.createCourse).toHaveBeenCalledWith(
+      'u1',
+      'New',
+      'D',
+      '/a.png',
+    );
   });
 });

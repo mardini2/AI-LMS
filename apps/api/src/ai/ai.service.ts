@@ -1,14 +1,16 @@
-// goal: call Ollama for reviews, coaching, and guidance; persist coaching messages.
+// calls ollama for coaching + student guidance; persists coaching messages
 
-import { Injectable, ServiceUnavailableException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  ServiceUnavailableException,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { ContentStatus, FileAttachment } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
-import { AgentExecutionContext, AgentExecutionResult } from './ai.types';
-import { FileAttachment, ReviewAgentType } from '@prisma/client';
 import { readFile } from 'node:fs/promises';
 import { Role } from '../common/enums/role.enum';
 
-// minimal JSON shape from /api/generate
 interface OllamaResponse {
   response: string;
 }
@@ -19,74 +21,6 @@ export class AiService {
     private readonly configService: ConfigService,
     private readonly prisma: PrismaService,
   ) {}
-
-  async runContentReview(context: AgentExecutionContext): Promise<{
-    agentResults: AgentExecutionResult[];
-    summary: string;
-    suggestedAction: string;
-    qualityScore: number;
-    confidenceLabel: 'LOW' | 'MEDIUM' | 'HIGH';
-  }> {
-    // four specialist "agents" with different review prompts; results get synthesized later
-    const agentPrompts: Array<{
-      agentType: ReviewAgentType;
-      objective: string;
-    }> = [
-      {
-        agentType: ReviewAgentType.STRUCTURE,
-        objective:
-          'Evaluate content structure, headings, sequencing, and missing sections.',
-      },
-      {
-        agentType: ReviewAgentType.CLARITY,
-        objective:
-          'Evaluate writing clarity, readability, ambiguity, and confusing wording.',
-      },
-      {
-        agentType: ReviewAgentType.ALIGNMENT,
-        objective:
-          'Evaluate alignment with module outcomes, course goals, and rubric.',
-      },
-      {
-        agentType: ReviewAgentType.SAFETY_POLICY,
-        objective:
-          'Evaluate bias, inappropriate wording, policy conflicts, and safety risks.',
-      },
-    ];
-
-    const agentResults: AgentExecutionResult[] = [];
-
-    for (const agent of agentPrompts) {
-      const prompt = this.buildReviewPrompt(context, agent.objective);
-      const responseText = await this.generate(prompt);
-      const confidenceScore = this.estimateConfidence(responseText);
-
-      agentResults.push({
-        agentType: agent.agentType,
-        findings: responseText,
-        confidenceScore,
-        confidenceLabel: this.scoreToLabel(confidenceScore),
-        suggestedActions: this.buildActionHint(agent.agentType),
-      });
-    }
-
-    const synthesisPrompt = this.buildSynthesisPrompt(context, agentResults);
-    const summary = await this.generate(synthesisPrompt);
-    const qualityScore = this.estimateQualityScore(agentResults);
-    const confidenceLabel = this.scoreToLabel(
-      agentResults.reduce((sum, result) => sum + result.confidenceScore, 0) /
-        agentResults.length,
-    );
-
-    return {
-      agentResults,
-      summary,
-      suggestedAction:
-        qualityScore >= 75 ? 'APPROVE_WITH_MINOR_EDITS' : 'REVISE_CONTENT',
-      qualityScore,
-      confidenceLabel,
-    };
-  }
 
   async askCoachingQuestion(input: {
     contentItemId: string;
@@ -105,11 +39,6 @@ export class AiService {
           where: { submissionId: null },
           orderBy: { createdAt: 'desc' },
           take: 10,
-        },
-        reviewRequests: {
-          include: { agentReviews: true, finalSummary: true },
-          orderBy: { createdAt: 'desc' },
-          take: 1,
         },
         submissions: {
           where: { studentId: input.userId },
@@ -130,6 +59,12 @@ export class AiService {
         'Content item context was not found',
       );
     }
+    if (
+      input.userRole === Role.STUDENT &&
+      contentItem.status !== ContentStatus.APPROVED
+    ) {
+      throw new NotFoundException('Content item not found');
+    }
     await this.assertCanAccessContent({
       userId: input.userId,
       userRole: input.userRole,
@@ -138,7 +73,6 @@ export class AiService {
       instructorId: contentItem.module.course.instructorId,
     });
 
-    const latestReview = contentItem.reviewRequests[0];
     const studentSubmission = contentItem.submissions[0];
     const attachmentContext = await this.buildAttachmentContext({
       resources: contentItem.attachments,
@@ -148,7 +82,8 @@ export class AiService {
       input.userRole === Role.STUDENT
         ? `Student draft answer:\n${input.studentDraft?.trim() || 'No draft provided'}`
         : `Instructor context:\nUse the content body and rubric as the source material for lesson-improvement advice.`;
-    // large string template so the model sees course, review, and file hints together
+
+    // include course, module, and attachment context so answers stay relevant
     const prompt = `
 You are Syllentra Coaching Assistant.
 If the user message is simple social talk (for example: hi, hello, thanks, bye), respond naturally in one short friendly sentence only.
@@ -161,9 +96,6 @@ Content Title: ${contentItem.title}
 
 Content Body:
 ${contentItem.body}
-
-Latest Review Summary:
-${latestReview?.finalSummary?.summaryText ?? 'No summary yet'}
 
 Question:
 ${input.question}
@@ -193,7 +125,38 @@ For non-social questions, respond with:
     return message;
   }
 
-  async listCoachingHistory(input: { contentItemId: string; userId: string }) {
+  async listCoachingHistory(input: {
+    contentItemId: string;
+    userId: string;
+    userRole: Role;
+  }) {
+    const contentItem = await this.prisma.contentItem.findUnique({
+      where: { id: input.contentItemId },
+      include: {
+        module: {
+          include: { course: true },
+        },
+      },
+    });
+    if (!contentItem) {
+      throw new ServiceUnavailableException(
+        'Content item context was not found',
+      );
+    }
+    if (
+      input.userRole === Role.STUDENT &&
+      contentItem.status !== ContentStatus.APPROVED
+    ) {
+      throw new NotFoundException('Content item not found');
+    }
+    await this.assertCanAccessContent({
+      userId: input.userId,
+      userRole: input.userRole,
+      courseId: contentItem.module.course.id,
+      createdById: contentItem.module.course.createdById,
+      instructorId: contentItem.module.course.instructorId,
+    });
+
     return this.prisma.coachingMessage.findMany({
       where: {
         contentItemId: input.contentItemId,
@@ -221,6 +184,9 @@ For non-social questions, respond with:
       throw new ServiceUnavailableException(
         'Content item context was not found',
       );
+    }
+    if (contentItem.status !== ContentStatus.APPROVED) {
+      throw new NotFoundException('Content item not found');
     }
     await this.assertCanAccessContent({
       userId: input.studentId,
@@ -255,10 +221,9 @@ Return in this order:
     return { response };
   }
 
-  // single POST to Ollama; non-streaming for simpler JSON parsing
   private async generate(prompt: string): Promise<string> {
     const model =
-      this.configService.get<string>('OLLAMA_MODEL') ?? 'llama3.1:8b';
+      this.configService.get<string>('OLLAMA_MODEL') ?? 'llama3.2:1b';
     const baseUrl =
       this.configService.get<string>('OLLAMA_BASE_URL') ??
       'http://localhost:11434';
@@ -320,7 +285,6 @@ Return in this order:
     return sections.join('\n\n');
   }
 
-  // only peek small text-ish uploads; skip binary and huge files
   private async readTextSnippet(file: FileAttachment): Promise<string | null> {
     const textLikeMime =
       file.mimeType.startsWith('text/') ||
@@ -374,90 +338,5 @@ Return in this order:
         );
       }
     }
-  }
-
-  private buildReviewPrompt(
-    context: AgentExecutionContext,
-    objective: string,
-  ): string {
-    return `
-You are an educational content quality reviewer.
-Goal: ${objective}
-
-Course: ${context.courseTitle}
-Course Description: ${context.courseDescription ?? 'N/A'}
-Module: ${context.moduleTitle}
-Module Description: ${context.moduleDescription ?? 'N/A'}
-Module Learning Outcomes: ${context.moduleLearningOutcomes ?? 'N/A'}
-Content Type: ${context.contentType}
-Content Title: ${context.contentTitle}
-Rubric: ${context.rubricText ?? 'N/A'}
-
-Content:
-${context.contentBody}
-
-Give a clear review in plain English with:
-- key findings
-- why this matters
-- suggested fixes
-`.trim();
-  }
-
-  private buildSynthesisPrompt(
-    context: AgentExecutionContext,
-    agentResults: AgentExecutionResult[],
-  ): string {
-    return `
-You are SynthesisAgent. Combine these focused reviews into one final summary.
-
-Course: ${context.courseTitle}
-Module: ${context.moduleTitle}
-Content: ${context.contentTitle}
-
-Agent Reviews:
-${agentResults
-  .map((result) => `${result.agentType}: ${result.findings}`)
-  .join('\n\n')}
-
-Return a concise summary with:
-- top issues
-- overall quality impression
-- practical next action
-`.trim();
-  }
-
-  private buildActionHint(agentType: ReviewAgentType): string {
-    switch (agentType) {
-      case ReviewAgentType.STRUCTURE:
-        return 'Add missing sections and improve content flow.';
-      case ReviewAgentType.CLARITY:
-        return 'Simplify wording and reduce ambiguous phrasing.';
-      case ReviewAgentType.ALIGNMENT:
-        return 'Map each major section to learning outcomes and rubric goals.';
-      case ReviewAgentType.SAFETY_POLICY:
-        return 'Remove risky statements and adjust wording for inclusivity.';
-      default:
-        return 'Review and revise based on findings.';
-    }
-  }
-
-  private estimateConfidence(text: string): number {
-    // We keep this heuristic simple for MVP and upgrade later.
-    if (text.length > 700) return 0.82;
-    if (text.length > 300) return 0.72;
-    return 0.62;
-  }
-
-  private scoreToLabel(score: number): 'LOW' | 'MEDIUM' | 'HIGH' {
-    if (score >= 0.8) return 'HIGH';
-    if (score >= 0.65) return 'MEDIUM';
-    return 'LOW';
-  }
-
-  private estimateQualityScore(agentResults: AgentExecutionResult[]): number {
-    const averageConfidence =
-      agentResults.reduce((sum, result) => sum + result.confidenceScore, 0) /
-      agentResults.length;
-    return Math.round(averageConfidence * 100);
   }
 }

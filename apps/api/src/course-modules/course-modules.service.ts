@@ -1,6 +1,7 @@
-// goal: CRUD for CourseModule rows and cascade delete related content items.
+// CRUD for CourseModule rows and cascade delete related content items
 
 import { Injectable, NotFoundException } from '@nestjs/common';
+import { ContentStatus, UserRole } from '@prisma/client';
 import type { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 
@@ -8,10 +9,26 @@ import { PrismaService } from '../prisma/prisma.service';
 export class CourseModulesService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async listByCourse(courseId: string) {
+  async listByCourse(
+    courseId: string,
+    viewer?: { role: UserRole; userId: string },
+  ) {
+    if (viewer?.role === UserRole.STUDENT) {
+      await this.assertStudentEnrolledInCourse(courseId, viewer.userId);
+    }
+
     return this.prisma.courseModule.findMany({
       where: { courseId },
-      include: { _count: { select: { contentItems: true } } },
+      include: {
+        _count: {
+          select: {
+            contentItems:
+              viewer?.role === UserRole.STUDENT
+                ? { where: { status: ContentStatus.APPROVED } }
+                : true,
+          },
+        },
+      },
       orderBy: { createdAt: 'asc' },
     });
   }
@@ -39,19 +56,31 @@ export class CourseModulesService {
     });
   }
 
-  async getModule(id: string) {
+  async getModule(
+    id: string,
+    viewer?: { role: UserRole; userId: string },
+  ) {
     const moduleEntity = await this.prisma.courseModule.findUnique({
       where: { id },
       include: {
         course: true,
         contentItems: {
-          include: { _count: { select: { reviewRequests: true } } },
+          ...(viewer?.role === UserRole.STUDENT
+            ? { where: { status: ContentStatus.APPROVED } }
+            : {}),
           orderBy: { createdAt: 'desc' },
         },
       },
     });
     if (!moduleEntity) {
       throw new NotFoundException('Module not found');
+    }
+
+    if (viewer?.role === UserRole.STUDENT) {
+      await this.assertStudentEnrolledInCourse(
+        moduleEntity.courseId,
+        viewer.userId,
+      );
     }
 
     return moduleEntity;
@@ -95,7 +124,6 @@ export class CourseModulesService {
     }
 
     await this.prisma.$transaction(async (tx) => {
-      // delete children before the parent module row
       for (const contentItem of moduleEntity.contentItems) {
         await this.deleteContentItemDependencies(tx, contentItem.id);
       }
@@ -108,29 +136,23 @@ export class CourseModulesService {
     return { deleted: true };
   }
 
-  // slimmer than UsersService version: module delete does not need every attachment edge case
   private async deleteContentItemDependencies(
     tx: Prisma.TransactionClient,
     contentItemId: string,
   ) {
-    const reviewRequests = await tx.reviewRequest.findMany({
+    const submissionRows = await tx.studentSubmission.findMany({
       where: { contentItemId },
       select: { id: true },
     });
+    const submissionIds = submissionRows.map((s) => s.id);
 
-    for (const reviewRequest of reviewRequests) {
-      await tx.humanReviewDecision.deleteMany({
-        where: { reviewRequestId: reviewRequest.id },
-      });
-      await tx.agentReview.deleteMany({
-        where: { reviewRequestId: reviewRequest.id },
-      });
-      await tx.finalReviewSummary.deleteMany({
-        where: { reviewRequestId: reviewRequest.id },
+    if (submissionIds.length > 0) {
+      await tx.fileAttachment.deleteMany({
+        where: { submissionId: { in: submissionIds } },
       });
     }
 
-    await tx.reviewRequest.deleteMany({
+    await tx.studentSubmission.deleteMany({
       where: { contentItemId },
     });
 
@@ -138,8 +160,25 @@ export class CourseModulesService {
       where: { contentItemId },
     });
 
+    await tx.fileAttachment.deleteMany({
+      where: { contentItemId },
+    });
+
     await tx.contentItem.delete({
       where: { id: contentItemId },
     });
+  }
+
+  private async assertStudentEnrolledInCourse(
+    courseId: string,
+    studentId: string,
+  ) {
+    const enrollment = await this.prisma.enrollment.findFirst({
+      where: { courseId, studentId },
+      select: { id: true },
+    });
+    if (!enrollment) {
+      throw new NotFoundException('Course not found');
+    }
   }
 }

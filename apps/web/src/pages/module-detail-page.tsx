@@ -306,7 +306,7 @@ export function ModuleDetailPage() {
       {!moduleQuery.isLoading && (moduleQuery.data?.contentItems.length ?? 0) === 0 && (
         <EmptyState
           title="No content items yet"
-          description="Create a content item in this module to trigger AI review and coaching."
+          description="Create a content item to add notes, assignments, and AI coaching."
         />
       )}
 
@@ -329,17 +329,7 @@ export function ModuleDetailPage() {
                     })}
                   </Badge>
                 )}
-                <Badge
-                  variant={
-                    contentItem.status === 'APPROVED'
-                      ? 'success'
-                      : contentItem.status === 'REJECTED'
-                        ? 'danger'
-                        : contentItem.status === 'NEEDS_REVISION'
-                          ? 'warning'
-                          : 'info'
-                  }
-                >
+                <Badge variant={contentItem.status === 'APPROVED' ? 'success' : 'neutral'}>
                   {formatEnumLabel(contentItem.status)}
                 </Badge>
               </div>
@@ -354,7 +344,7 @@ export function ModuleDetailPage() {
       <ConfirmModal
         open={openDeleteModuleModal}
         title="Delete module"
-        description="This will permanently delete the module, all linked content items, and related reviews."
+        description="This will permanently delete the module and all content items inside it."
         confirmLabel="Delete module"
         confirmVariant="danger"
         busy={deleteModuleMutation.isPending}

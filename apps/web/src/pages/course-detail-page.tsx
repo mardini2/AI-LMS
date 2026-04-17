@@ -1,4 +1,4 @@
-// goal: single course hub: modules, roster hints, announcements, and edit flows.
+// single course hub: modules, roster hints, and edit flows
 
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
@@ -43,11 +43,6 @@ const courseEditSchema = z.object({
   backgroundImage: z.string().optional(),
 })
 
-const announcementSchema = z.object({
-  title: z.string().min(3),
-  body: z.string().min(3),
-})
-
 export function CourseDetailPage() {
   const { courseId = '' } = useParams()
   const queryClient = useQueryClient()
@@ -57,7 +52,6 @@ export function CourseDetailPage() {
   const [openDeleteCourseModal, setOpenDeleteCourseModal] = useState(false)
   const [showCreateModule, setShowCreateModule] = useState(false)
   const [showStudents, setShowStudents] = useState(false)
-  const [showAnnouncements, setShowAnnouncements] = useState(false)
   const [showCourseSettings, setShowCourseSettings] = useState(false)
   const [saveMessage, setSaveMessage] = useState('')
 
@@ -95,21 +89,6 @@ export function CourseDetailPage() {
     },
   })
 
-  const announcementsQuery = useQuery({
-    queryKey: ['course-announcements', courseId],
-    queryFn: () => apiClient.listCourseAnnouncements(courseId),
-    enabled: Boolean(courseId),
-  })
-
-  const createAnnouncementMutation = useMutation({
-    mutationFn: (payload: { title: string; body: string }) =>
-      apiClient.createCourseAnnouncement(courseId, payload),
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ['course-announcements', courseId] })
-    },
-  })
-
-
   const { register, handleSubmit, reset } = useForm({
     resolver: zodResolver(moduleSchema),
   })
@@ -127,14 +106,6 @@ export function CourseDetailPage() {
     },
   })
 
-  const {
-    register: registerAnnouncement,
-    handleSubmit: handleSubmitAnnouncement,
-    reset: resetAnnouncement,
-  } = useForm({
-    resolver: zodResolver(announcementSchema),
-  })
-
   return (
     <div className="space-y-6">
       <PageHeader
@@ -149,7 +120,6 @@ export function CourseDetailPage() {
           </div>
         }
       />
-
 
       {canCreate && (
         <Card className="space-y-3">
@@ -210,85 +180,6 @@ export function CourseDetailPage() {
               </div>
             </>
           )}
-        </Card>
-      )}
-
-      {(session?.user.role === 'INSTRUCTOR' || session?.user.role === 'ADMIN') && (
-        <Card className="space-y-3">
-          <button
-            type="button"
-            className="flex w-full items-center justify-between text-left"
-            onClick={() => setShowAnnouncements((previous) => !previous)}
-          >
-            <h2 className="text-lg font-semibold">Course announcements</h2>
-            <span className="text-sm text-slate-500">{showAnnouncements ? 'Hide' : 'Show'}</span>
-          </button>
-          {showAnnouncements && (
-            <>
-              <form
-                className="space-y-2"
-                onSubmit={handleSubmitAnnouncement((values) =>
-                  createAnnouncementMutation.mutate(values, {
-                    onSuccess: () => {
-                      resetAnnouncement()
-                      setShowAnnouncements(true)
-                    },
-                  }),
-                )}
-              >
-                <Input placeholder="Announcement title" {...registerAnnouncement('title')} />
-                <Textarea placeholder="Write announcement..." {...registerAnnouncement('body')} />
-                <Button type="submit" variant="secondary" disabled={createAnnouncementMutation.isPending}>
-                  {createAnnouncementMutation.isPending ? 'Posting...' : 'Post announcement'}
-                </Button>
-              </form>
-              <div className="space-y-2">
-                {announcementsQuery.data?.map((announcement: any) => (
-                  <div key={announcement.id} className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-                    <p className="text-sm font-semibold text-slate-900">{announcement.title}</p>
-                    <p className="mt-1 whitespace-pre-wrap text-sm text-slate-700">{announcement.body}</p>
-                    <p className="mt-1 text-xs text-slate-500">
-                      {new Date(announcement.createdAt).toLocaleString('en-GB', {
-                        day: '2-digit',
-                        month: '2-digit',
-                        year: 'numeric',
-                        hour: 'numeric',
-                        minute: '2-digit',
-                        hour12: true,
-                      })}
-                    </p>
-                  </div>
-                ))}
-              </div>
-            </>
-          )}
-        </Card>
-      )}
-
-      {(session?.user.role === 'STUDENT' || session?.user.role === 'REVIEWER') && (
-        <Card className="space-y-3">
-          <h2 className="text-lg font-semibold">Course announcements</h2>
-          {(announcementsQuery.data?.length ?? 0) === 0 && (
-            <p className="text-sm text-slate-500">No announcements posted yet.</p>
-          )}
-          <div className="space-y-2">
-            {announcementsQuery.data?.map((announcement: any) => (
-              <div key={announcement.id} className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-                <p className="text-sm font-semibold text-slate-900">{announcement.title}</p>
-                <p className="mt-1 whitespace-pre-wrap text-sm text-slate-700">{announcement.body}</p>
-                <p className="mt-1 text-xs text-slate-500">
-                  {new Date(announcement.createdAt).toLocaleString('en-GB', {
-                    day: '2-digit',
-                    month: '2-digit',
-                    year: 'numeric',
-                    hour: 'numeric',
-                    minute: '2-digit',
-                    hour12: true,
-                  })}
-                </p>
-              </div>
-            ))}
-          </div>
         </Card>
       )}
 
@@ -358,7 +249,7 @@ export function CourseDetailPage() {
       {!courseQuery.isLoading && (courseQuery.data?.modules.length ?? 0) === 0 && (
         <EmptyState
           title="No modules yet"
-          description="Create a module to organize content and run AI review by context."
+          description="Create a module to add lecture notes, assignments, and AI coaching."
         />
       )}
 
@@ -379,7 +270,7 @@ export function CourseDetailPage() {
       <TypedConfirmModal
         open={openDeleteCourseModal}
         title="Delete course"
-        description="This will permanently delete the course, all modules, content items, reviews, and coaching history."
+        description="This will permanently delete the course, all modules, content items, submissions, and coaching history."
         expectedText={courseQuery.data?.title ?? ''}
         inputLabel="Type the course title to confirm"
         busy={deleteCourseMutation.isPending}

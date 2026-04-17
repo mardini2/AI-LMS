@@ -1,4 +1,4 @@
-// goal: Prisma logic for lessons/assignments, submissions, grading, and file storage.
+// prisma logic for lessons/assignments, submissions, grading, and file storage
 
 import {
   BadRequestException,
@@ -11,13 +11,11 @@ import {
   FileAttachment,
   SubmissionStatus,
   UserRole,
-  NotificationType,
 } from '@prisma/client';
 import type { Prisma } from '@prisma/client';
 import { unlink } from 'node:fs/promises';
 import { PrismaService } from '../prisma/prisma.service';
 
-// shape multer gives us after disk storage writes under uploads/
 interface UploadFile {
   originalname: string;
   mimetype: string;
@@ -38,13 +36,15 @@ export class ContentItemsService {
     }
 
     return this.prisma.contentItem.findMany({
-      where: { moduleId },
+      where: {
+        moduleId,
+        ...(viewer?.role === UserRole.STUDENT
+          ? { status: ContentStatus.APPROVED }
+          : {}),
+      },
       include: {
         createdBy: {
           select: { id: true, fullName: true, role: true },
-        },
-        _count: {
-          select: { reviewRequests: true },
         },
       },
       orderBy: { createdAt: 'desc' },
@@ -67,7 +67,7 @@ export class ContentItemsService {
       throw new NotFoundException('Module not found');
     }
 
-    const createdItem = await this.prisma.contentItem.create({
+    return this.prisma.contentItem.create({
       data: {
         moduleId,
         createdById,
@@ -78,36 +78,6 @@ export class ContentItemsService {
         dueAt: dueAt ? new Date(dueAt) : undefined,
       },
     });
-
-    const enrollments = await this.prisma.enrollment.findMany({
-      where: { courseId: moduleEntity.courseId },
-      select: { studentId: true },
-    });
-
-    if (enrollments.length > 0) {
-      const targetUserIds = enrollments.map(
-        (enrollment) => enrollment.studentId,
-      );
-      await this.prisma.notification.createMany({
-        data: enrollments.map((enrollment) => ({
-          userId: enrollment.studentId,
-          courseId: moduleEntity.courseId,
-          type: NotificationType.CONTENT_POSTED,
-          title: `${title} is now available`,
-          message: `${moduleEntity.title} • ${
-            dueAt &&
-            (contentType === ContentType.ASSIGNMENT ||
-              contentType === ContentType.QUIZ)
-              ? `A new ${contentType.toLowerCase().replace('_', ' ')} was posted with due date ${new Date(dueAt).toLocaleString()}.`
-              : `A new ${contentType.toLowerCase().replace('_', ' ')} was posted in your course.`
-          }`,
-          entityId: createdItem.id,
-        })),
-      });
-      await this.pruneNotificationsForUsers(targetUserIds);
-    }
-
-    return createdItem;
   }
 
   async getOne(id: string, viewer?: { role: UserRole; userId: string }) {
@@ -116,21 +86,6 @@ export class ContentItemsService {
       include: {
         module: {
           include: { course: true },
-        },
-        reviewRequests: {
-          include: {
-            agentReviews: true,
-            finalSummary: true,
-            humanDecisions: {
-              include: {
-                decidedBy: {
-                  select: { id: true, fullName: true, role: true },
-                },
-              },
-              orderBy: { createdAt: 'desc' },
-            },
-          },
-          orderBy: { createdAt: 'desc' },
         },
         submissions: {
           where:
@@ -161,6 +116,9 @@ export class ContentItemsService {
         contentItem.module.course.id,
         viewer.userId,
       );
+      if (contentItem.status !== ContentStatus.APPROVED) {
+        throw new NotFoundException('Content item not found');
+      }
     }
 
     return contentItem;
@@ -224,7 +182,10 @@ export class ContentItemsService {
     if (!contentItem) {
       throw new NotFoundException('Content item not found');
     }
-    await this.assertStudentEnrolledInContentCourse(contentItemId, studentId);
+    await this.assertStudentMayInteractWithPublishedContentItem(
+      contentItemId,
+      studentId,
+    );
 
     return this.prisma.studentSubmission.upsert({
       where: {
@@ -256,7 +217,10 @@ export class ContentItemsService {
     if (!contentItem) {
       throw new NotFoundException('Content item not found');
     }
-    await this.assertStudentEnrolledInContentCourse(contentItemId, studentId);
+    await this.assertStudentMayInteractWithPublishedContentItem(
+      contentItemId,
+      studentId,
+    );
 
     return this.prisma.studentSubmission.upsert({
       where: {
@@ -277,7 +241,10 @@ export class ContentItemsService {
 
   async listStudentSubmissions(studentId: string) {
     return this.prisma.studentSubmission.findMany({
-      where: { studentId },
+      where: {
+        studentId,
+        contentItem: { status: ContentStatus.APPROVED },
+      },
       include: {
         contentItem: {
           include: {
@@ -381,7 +348,7 @@ export class ContentItemsService {
     if (!contentItem) {
       throw new NotFoundException('Content item not found');
     }
-    await this.assertStudentEnrolledInContentCourse(
+    await this.assertStudentMayInteractWithPublishedContentItem(
       input.contentItemId,
       input.studentId,
     );
@@ -415,7 +382,17 @@ export class ContentItemsService {
     });
   }
 
-  async listContentResources(contentItemId: string) {
+  async listContentResources(
+    contentItemId: string,
+    viewer?: { role: UserRole; userId: string },
+  ) {
+    if (viewer?.role === UserRole.STUDENT) {
+      await this.assertStudentMayInteractWithPublishedContentItem(
+        contentItemId,
+        viewer.userId,
+      );
+    }
+
     return this.prisma.fileAttachment.findMany({
       where: {
         contentItemId,
@@ -444,7 +421,6 @@ export class ContentItemsService {
       throw new NotFoundException('Attachment not found');
     }
 
-    // Allow admins to remove any resource; instructors can only remove their own uploads.
     const isAdmin = input.requesterRole === UserRole.ADMIN;
     if (!isAdmin && attachment.uploadedById !== input.requesterId) {
       throw new NotFoundException('Attachment not found');
@@ -454,11 +430,10 @@ export class ContentItemsService {
       where: { id: attachment.id },
     });
 
-    // Best-effort cleanup on disk. DB record is already removed.
     try {
       await unlink(attachment.storagePath);
     } catch {
-      // Ignore missing/locked file errors to avoid blocking UX.
+      // ignore missing file on disk
     }
 
     return { removed: true, attachmentId: attachment.id };
@@ -468,7 +443,10 @@ export class ContentItemsService {
     contentItemId: string,
     studentId: string,
   ) {
-    await this.assertStudentEnrolledInContentCourse(contentItemId, studentId);
+    await this.assertStudentMayInteractWithPublishedContentItem(
+      contentItemId,
+      studentId,
+    );
 
     const submission = await this.prisma.studentSubmission.findUnique({
       where: {
@@ -489,7 +467,7 @@ export class ContentItemsService {
     studentId: string;
     attachmentId: string;
   }) {
-    await this.assertStudentEnrolledInContentCourse(
+    await this.assertStudentMayInteractWithPublishedContentItem(
       input.contentItemId,
       input.studentId,
     );
@@ -527,11 +505,10 @@ export class ContentItemsService {
       where: { id: attachment.id },
     });
 
-    // Best-effort cleanup on disk. DB record is already removed.
     try {
       await unlink(attachment.storagePath);
     } catch {
-      // Ignore missing/locked file errors to avoid blocking UX.
+      // ignore missing file on disk
     }
 
     return { removed: true, attachmentId: attachment.id };
@@ -547,6 +524,7 @@ export class ContentItemsService {
       include: {
         contentItem: {
           select: {
+            status: true,
             module: {
               select: {
                 course: {
@@ -575,6 +553,9 @@ export class ContentItemsService {
     }
 
     if (input.requesterRole === UserRole.STUDENT) {
+      if (attachment.contentItem?.status !== ContentStatus.APPROVED) {
+        throw new NotFoundException('Attachment not found');
+      }
       if (attachment.submissionId) {
         if (attachment.submission?.studentId !== input.requesterId) {
           throw new NotFoundException('Attachment not found');
@@ -603,13 +584,14 @@ export class ContentItemsService {
     return attachment;
   }
 
-  private async assertStudentEnrolledInContentCourse(
+  private async assertStudentMayInteractWithPublishedContentItem(
     contentItemId: string,
     studentId: string,
   ) {
-    const enrollment = await this.prisma.contentItem.findFirst({
+    const row = await this.prisma.contentItem.findFirst({
       where: {
         id: contentItemId,
+        status: ContentStatus.APPROVED,
         module: {
           course: {
             enrollments: {
@@ -620,7 +602,7 @@ export class ContentItemsService {
       },
       select: { id: true },
     });
-    if (!enrollment) {
+    if (!row) {
       throw new NotFoundException('Content item not found');
     }
   }
@@ -658,28 +640,24 @@ export class ContentItemsService {
     }
   }
 
+  // tears down submissions (and their files) before the content row
   private async deleteContentItemDependencies(
     tx: Prisma.TransactionClient,
     contentItemId: string,
   ) {
-    const reviewRequests = await tx.reviewRequest.findMany({
+    const submissionRows = await tx.studentSubmission.findMany({
       where: { contentItemId },
       select: { id: true },
     });
+    const submissionIds = submissionRows.map((s) => s.id);
 
-    for (const reviewRequest of reviewRequests) {
-      await tx.humanReviewDecision.deleteMany({
-        where: { reviewRequestId: reviewRequest.id },
-      });
-      await tx.agentReview.deleteMany({
-        where: { reviewRequestId: reviewRequest.id },
-      });
-      await tx.finalReviewSummary.deleteMany({
-        where: { reviewRequestId: reviewRequest.id },
+    if (submissionIds.length > 0) {
+      await tx.fileAttachment.deleteMany({
+        where: { submissionId: { in: submissionIds } },
       });
     }
 
-    await tx.reviewRequest.deleteMany({
+    await tx.studentSubmission.deleteMany({
       where: { contentItemId },
     });
 
@@ -687,38 +665,12 @@ export class ContentItemsService {
       where: { contentItemId },
     });
 
-    await tx.studentSubmission.deleteMany({
-      where: { contentItemId },
-    });
-
     await tx.fileAttachment.deleteMany({
       where: { contentItemId },
-    });
-
-    await tx.notification.deleteMany({
-      where: { entityId: contentItemId },
     });
 
     await tx.contentItem.delete({
       where: { id: contentItemId },
     });
-  }
-
-  private async pruneNotificationsForUsers(userIds: string[]) {
-    const uniqueUserIds = [...new Set(userIds)];
-    for (const userId of uniqueUserIds) {
-      const overflow = await this.prisma.notification.findMany({
-        where: { userId },
-        orderBy: { createdAt: 'desc' },
-        skip: 10,
-        select: { id: true },
-      });
-      if (overflow.length === 0) continue;
-      await this.prisma.notification.deleteMany({
-        where: {
-          id: { in: overflow.map((item) => item.id) },
-        },
-      });
-    }
   }
 }

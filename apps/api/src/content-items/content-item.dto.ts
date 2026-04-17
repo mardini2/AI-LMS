@@ -25,10 +25,6 @@ export class CreateContentItemDto {
 
   @IsOptional()
   @IsString()
-  learningOutcomes?: string;
-
-  @IsOptional()
-  @IsString()
   rubricText?: string;
 
   @IsOptional()

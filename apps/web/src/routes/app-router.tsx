@@ -1,4 +1,4 @@
-// goal: declare all LMS routes, nesting admin-only paths inside AdminRoute.
+// declares LMS routes; admin-only paths sit inside AdminRoute
 
 import { Navigate, Route, Routes } from 'react-router-dom'
 import { LoginPage } from '../pages/login-page'
@@ -9,7 +9,6 @@ import { CoursesPage } from '../pages/courses-page'
 import { CourseDetailPage } from '../pages/course-detail-page'
 import { ModuleDetailPage } from '../pages/module-detail-page'
 import { ContentItemPage } from '../pages/content-item-page'
-import { ReviewResultPage } from '../pages/review-result-page'
 import { AdminUsersPage } from '../pages/admin-users-page'
 import { MyLearningPage } from '../pages/my-learning-page'
 import { AdminRoute } from './admin-route'
@@ -28,7 +27,6 @@ export function AppRouter() {
           <Route path="/courses/:courseId" element={<CourseDetailPage />} />
           <Route path="/modules/:moduleId" element={<ModuleDetailPage />} />
           <Route path="/content-items/:contentId" element={<ContentItemPage />} />
-          <Route path="/reviews/:reviewRequestId" element={<ReviewResultPage />} />
           <Route element={<AdminRoute />}>
             <Route path="/admin/users" element={<AdminUsersPage />} />
           </Route>

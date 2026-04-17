@@ -16,8 +16,8 @@ const loginSchema = z.object({
 
 type LoginValues = z.infer<typeof loginSchema>
 
-// seeded users from prisma/seed for quick demos
-const demoAccounts = [
+// same accounts as prisma/seed.ts for local setup
+const seededLoginPresets = [
   { label: 'Admin', email: 'admin@syllentra.local', password: 'Admin123!' },
   { label: 'Instructor', email: 'instructor@syllentra.local', password: 'Instructor123!' },
   { label: 'Reviewer', email: 'reviewer@syllentra.local', password: 'Reviewer123!' },
@@ -84,7 +84,7 @@ export function LoginPage() {
           <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600">
             <p className="font-semibold text-slate-700">Demo accounts</p>
             <div className="mt-2 space-y-1">
-              {demoAccounts.map((account) => (
+              {seededLoginPresets.map((account) => (
                 <p key={account.email}>
                   {account.label}: {account.email} / {account.password}
                 </p>

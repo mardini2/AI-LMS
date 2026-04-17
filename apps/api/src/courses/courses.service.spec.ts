@@ -1,11 +1,8 @@
-// goal: cover instructor flagging on create, announcements, enrollment checks, and delete.
-
 import { BadRequestException, NotFoundException } from '@nestjs/common';
-import { NotificationType, UserRole } from '@prisma/client';
+import { UserRole } from '@prisma/client';
 import { CoursesService } from './courses.service';
 
 describe('CoursesService', () => {
-  // hand-rolled prisma mock; tests override return values per case
   const prisma = {
     user: {
       findUnique: jest.fn(),
@@ -19,15 +16,6 @@ describe('CoursesService', () => {
     enrollment: {
       findMany: jest.fn(),
       findUnique: jest.fn(),
-      deleteMany: jest.fn(),
-    },
-    courseAnnouncement: {
-      create: jest.fn(),
-      deleteMany: jest.fn(),
-    },
-    notification: {
-      createMany: jest.fn(),
-      findMany: jest.fn(),
       deleteMany: jest.fn(),
     },
     $transaction: jest.fn(),
@@ -82,47 +70,6 @@ describe('CoursesService', () => {
     );
   });
 
-  it('creates announcement notifications and prunes overflow', async () => {
-    prisma.course.findUnique.mockResolvedValue({ id: 'c1', title: 'Data Lit' });
-    prisma.courseAnnouncement.create.mockResolvedValue({
-      id: 'a1',
-      createdBy: { id: 'u1', fullName: 'Inst', role: 'INSTRUCTOR' },
-    });
-    prisma.enrollment.findMany.mockResolvedValue([
-      { studentId: 's1' },
-      { studentId: 's2' },
-    ]);
-    prisma.notification.findMany
-      .mockResolvedValueOnce([{ id: 'n-old' }])
-      .mockResolvedValueOnce([]);
-
-    await service.createAnnouncement('c1', 'u1', 'Week 1', 'Read chapter 1');
-
-    expect(prisma.notification.createMany).toHaveBeenCalledWith({
-      data: [
-        {
-          userId: 's1',
-          courseId: 'c1',
-          type: NotificationType.ANNOUNCEMENT,
-          title: 'Data Lit: Week 1',
-          message: 'Read chapter 1',
-          entityId: 'a1',
-        },
-        {
-          userId: 's2',
-          courseId: 'c1',
-          type: NotificationType.ANNOUNCEMENT,
-          title: 'Data Lit: Week 1',
-          message: 'Read chapter 1',
-          entityId: 'a1',
-        },
-      ],
-    });
-    expect(prisma.notification.deleteMany).toHaveBeenCalledWith({
-      where: { id: { in: ['n-old'] } },
-    });
-  });
-
   it('rejects deleteCourse when title confirmation does not match', async () => {
     prisma.course.findUnique.mockResolvedValue({
       id: 'c1',
@@ -135,27 +82,22 @@ describe('CoursesService', () => {
     );
   });
 
-  it('deletes course and nested dependencies in a transaction', async () => {
+  it('deletes course and nested content in a transaction', async () => {
     prisma.course.findUnique.mockResolvedValue({
       id: 'c1',
       title: 'Real',
       modules: [{ contentItems: [{ id: 'content-1' }] }],
     });
     const tx = {
-      reviewRequest: {
+      studentSubmission: {
         findMany: jest.fn().mockResolvedValue([]),
         deleteMany: jest.fn(),
       },
-      humanReviewDecision: { deleteMany: jest.fn() },
-      agentReview: { deleteMany: jest.fn() },
-      finalReviewSummary: { deleteMany: jest.fn() },
-      coachingMessage: { deleteMany: jest.fn() },
       fileAttachment: { deleteMany: jest.fn() },
+      coachingMessage: { deleteMany: jest.fn() },
       contentItem: { delete: jest.fn() },
       courseModule: { deleteMany: jest.fn() },
       enrollment: { deleteMany: jest.fn() },
-      courseAnnouncement: { deleteMany: jest.fn() },
-      notification: { deleteMany: jest.fn() },
       course: { delete: jest.fn() },
     };
     prisma.$transaction.mockImplementation(
