@@ -1,0 +1,26 @@
+# ── Local dev dependencies (cloned by setup.ps1, not owned by this repo) ─────
+/moodle/
+/moodle-docker/
+
+# ── Environment secrets ───────────────────────────────────────────────────────
+.env
+
+# ── Node / NestJS ─────────────────────────────────────────────────────────────
+node_modules/
+api/node_modules/
+api/dist/
+api/.tsbuildinfo
+
+# ── OS / Editor ───────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+*.swp
+*.swo
+
+# ── Docker volumes (if accidentally created locally) ──────────────────────────
+pgdata/
+
+# ── Logs ──────────────────────────────────────────────────────────────────────
+*.log
+npm-debug.log*

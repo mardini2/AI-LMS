@@ -1,0 +1,70 @@
+# Extends moodle-docker/base.yml for local development.
+# Run via: .\dev.ps1 up
+# (which wraps: docker compose -f moodle-docker/base.yml -f docker-compose.override.yml up -d)
+
+services:
+
+  # ── Moodle webserver ─────────────────────────────────────────────────────────
+  # Adds the plugin volume mount and exposes the Xdebug port.
+  webserver:
+    volumes:
+      # Mount our plugin directly into Moodle's local/ directory.
+      # Edit plugin files locally → changes are live immediately.
+      - ./plugin/syllentras_ai:/var/www/html/local/syllentras_ai
+    ports:
+      # Xdebug port — VS Code "Listen: Xdebug (Moodle)" attaches here.
+      # This is PHP's Xdebug port (9003), separate from the Node.js debug port (9229).
+      - "9003:9003"
+    environment:
+      XDEBUG_CONFIG: "client_host=host.docker.internal"
+
+  # ── API PostgreSQL ────────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:18
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── NestJS API (development mode) ────────────────────────────────────────────
+  # In dev we run from source with live reload — no image rebuild needed.
+  # In production, deploy the Dockerfile-built image instead.
+  api:
+    image: node:24-alpine
+    restart: unless-stopped
+    working_dir: /app
+    command: sh -c "npm install && npm run start:debug"
+    environment:
+      NODE_ENV: ${NODE_ENV:-development}
+      PORT: ${API_PORT:-3000}
+      DATABASE_URL: ${DATABASE_URL}
+      MOODLE_INTERNAL_URL: ${MOODLE_INTERNAL_URL:-http://webserver}
+      MOODLE_TOKEN: ${MOODLE_TOKEN}
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
+      CORS_ORIGIN: ${CORS_ORIGIN}
+    ports:
+      - "${API_PORT:-3000}:3000"
+      # Node.js inspector port — VS Code "Attach: NestJS API" connects here.
+      - "${API_DEBUG_PORT:-9229}:9229"
+    volumes:
+      # Mount source so edits are reflected without rebuilding.
+      - ./api:/app
+      # Isolate node_modules inside the container (avoids Windows path issues).
+      - api_node_modules:/app/node_modules
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  pgdata:
+  api_node_modules:

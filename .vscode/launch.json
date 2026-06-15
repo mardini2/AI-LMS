@@ -1,0 +1,36 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    // ── NestJS API ────────────────────────────────────────────────────────────
+    // Attach to the Node.js inspector running inside the api container.
+    // Start the stack first: .\dev.ps1 up
+    // Then press F5 or click the play button to attach.
+    {
+      "name": "Attach: NestJS API",
+      "type": "node",
+      "request": "attach",
+      "port": 9229,
+      "address": "localhost",
+      "restart": true,
+      "localRoot": "${workspaceFolder}/api",
+      "remoteRoot": "/app",
+      "sourceMaps": true,
+      "skipFiles": ["<node_internals>/**", "**/node_modules/**"]
+    },
+
+    // ── Moodle PHP Plugin ─────────────────────────────────────────────────────
+    // Listens for Xdebug connections from the Moodle webserver container.
+    // Requires MOODLE_DOCKER_XDEBUG=1 in .env and the PHP Debug extension.
+    // Start this config, then trigger a page load in the browser to hit breakpoints.
+    {
+      "name": "Listen: Xdebug (Moodle)",
+      "type": "php",
+      "request": "launch",
+      "port": 9003,
+      "pathMappings": {
+        "/var/www/html": "${workspaceFolder}/moodle",
+        "/var/www/html/local/syllentras_ai": "${workspaceFolder}/plugin/syllentras_ai"
+      }
+    }
+  ]
+}

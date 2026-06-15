@@ -1,0 +1,18 @@
+{
+  "recommendations": [
+    // PHP debugging (required for Xdebug breakpoints in the Moodle plugin)
+    "xdebug.php-debug",
+    // PHP IntelliSense — autocomplete, go-to-definition for plugin development
+    "bmewburn.vscode-intelephense-client",
+    // ESLint — linting for NestJS / TypeScript
+    "dbaeumer.vscode-eslint",
+    // Prettier — code formatting
+    "esbenp.prettier-vscode",
+    // Docker — manage containers, view logs from the IDE
+    "ms-azuretools.vscode-docker",
+    // REST Client — test API endpoints directly from .http files
+    "humao.rest-client",
+    // DotENV — syntax highlighting for .env files
+    "mikestead.dotenv"
+  ]
+}
