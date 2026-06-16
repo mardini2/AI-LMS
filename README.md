@@ -235,6 +235,43 @@ Create a new conversation.
 
 **Request body:** `{ "courseId": 2, "moodleUserId": 5 }`
 
+### `GET /conversations/active`
+
+Return the most recent conversation for a user+course pair (used to resume chat when local storage is empty).
+
+**Query:** `moodleUserId`, `courseId`
+
+**Response:**
+
+```json
+{ "conversationId": "uuid-or-null" }
+```
+
+### `GET /conversations/:id/messages`
+
+Paginated messages for a conversation. Requires the caller to prove ownership via `moodleUserId` (403 if mismatch).
+
+**Query:**
+
+| Param | Description |
+| ----- | ----------- |
+| `moodleUserId` | Required — must match the conversation owner |
+| `limit` | Page size (default 30, max 100) |
+| `before` | ISO-8601 timestamp — return messages older than this cursor |
+
+**Response:**
+
+```json
+{
+  "messages": [
+    { "id": "uuid", "role": "user", "content": "...", "createdAt": "2026-06-16T12:00:00.000Z" }
+  ],
+  "hasMore": true
+}
+```
+
+Messages are returned in chronological order (oldest first within the page). Omit `before` to fetch the most recent page; pass the oldest message's `createdAt` to load the next older page (scroll-up infinite load in the widget).
+
 ### `GET /conversations/:id`
 
 Retrieve a conversation and all its messages.
@@ -261,7 +298,7 @@ AI-LMS-Tool/
     ├── Dockerfile               — production build
     └── src/
         ├── chat/                — POST /chat/message
-        ├── conversation/        — GET|POST /conversations
+        ├── conversation/        — conversation CRUD + paginated messages
         └── context/             — Moodle content fetching + cache
 ```
 

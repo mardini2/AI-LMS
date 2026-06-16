@@ -51,11 +51,21 @@ export class ChatService {
       }
     }
     if (!conversationId) {
-      const conversation = await this.conversationService.create(
-        courseId,
-        moodleUserId,
-      );
-      conversationId = conversation.id;
+      const existing = moodleUserId
+        ? await this.conversationService.findLatestForUserCourse(
+            moodleUserId,
+            courseId,
+          )
+        : null;
+      if (existing) {
+        conversationId = existing.id;
+      } else {
+        const conversation = await this.conversationService.create(
+          courseId,
+          moodleUserId,
+        );
+        conversationId = conversation.id;
+      }
     }
 
     // ── 2. Fetch course context (cached) ─────────────────────────────────────
@@ -69,7 +79,10 @@ export class ChatService {
       ]);
 
     // ── 3. Load persisted history from DB ────────────────────────────────────
-    const dbHistory = await this.conversationService.getHistory(conversationId);
+    const dbHistory = await this.conversationService.getRecentHistory(
+      conversationId,
+      20,
+    );
 
     // ── 4. Build the Gemini prompt ────────────────────────────────────────────
     // systemInstruction must be passed to getGenerativeModel (string accepted),
@@ -120,6 +133,7 @@ function buildSystemPrompt(ctx: {
   const lines: string[] = [
     'You are Syllentras AI, a helpful teaching assistant. Answer the student\'s questions clearly and accurately.',
     'Format responses with markdown (headings, bold, lists) when it improves readability.',
+    'If this is the first message in the conversation, introduce yourself as Syllentras AI and ask the student how you can help them and what you can do for them.',
   ];
 
   if (ctx.userFirstName?.trim()) {

@@ -43,13 +43,18 @@ class before_footer {
             <!-- Chat panel -->
             <div id="syllentras-chat-panel" role="dialog" aria-label="Course AI Assistant" hidden>
                 <div id="syllentras-chat-header">
-                    <span>Syllentras AI</span>
+                    <div class="syllentras-chat-header-text">
+                        <span class="syllentras-chat-title">Syllentras AI</span>
+                        <span id="syllentras-chat-course" class="syllentras-chat-subtitle"></span>
+                    </div>
                     <div style="display:flex;gap:4px;align-items:center;">
                         <button id="syllentras-chat-expand" aria-label="Expand">&#x2922;</button>
                         <button id="syllentras-chat-close" aria-label="Close">&times;</button>
                     </div>
                 </div>
-                <div id="syllentras-chat-messages" role="log" aria-live="polite"></div>
+                <div id="syllentras-chat-messages" role="log" aria-live="polite">
+                    <div id="syllentras-chat-load-more" hidden>Loading...</div>
+                </div>
                 <div id="syllentras-chat-input-row">
                     <textarea
                         id="syllentras-chat-input"
@@ -106,7 +111,35 @@ class before_footer {
                 display: flex;
                 justify-content: space-between;
                 align-items: center;
+            }
+            .syllentras-chat-header-text {
+                display: flex;
+                flex-direction: column;
+                min-width: 0;
+                flex: 1;
+            }
+            .syllentras-chat-title {
                 font-weight: 600;
+                font-size: 15px;
+                line-height: 1.2;
+            }
+            .syllentras-chat-subtitle {
+                font-weight: 400;
+                font-size: 12px;
+                opacity: 0.85;
+                margin-top: 2px;
+                white-space: nowrap;
+                overflow: hidden;
+                text-overflow: ellipsis;
+            }
+            #syllentras-chat-load-more {
+                align-self: center;
+                font-size: 12px;
+                color: #666;
+                padding: 4px 0 8px;
+            }
+            #syllentras-chat-load-more[hidden] {
+                display: none;
             }
             #syllentras-chat-expand {
                 background: none;
@@ -246,7 +279,7 @@ class before_footer {
             var courseName = <?php echo json_encode($coursename); ?>;
             var moodleUserId = <?php echo json_encode($moodleuserid); ?>;
             var userFirstName = <?php echo json_encode($userfirstname); ?>;
-            var conversationId = sessionStorage.getItem('syllentras_conversation_id') || null;
+            var PAGE_SIZE = 30;
 
             var btn       = document.getElementById('syllentras-chat-btn');
             var panel     = document.getElementById('syllentras-chat-panel');
@@ -255,6 +288,33 @@ class before_footer {
             var input     = document.getElementById('syllentras-chat-input');
             var send      = document.getElementById('syllentras-chat-send');
             var msgs      = document.getElementById('syllentras-chat-messages');
+            var loadMore  = document.getElementById('syllentras-chat-load-more');
+            var courseEl  = document.getElementById('syllentras-chat-course');
+
+            courseEl.textContent = (courseId > 1 && courseName) ? courseName : 'Dashboard';
+
+            var conversationId = null;
+            var historyLoaded = false;
+            var hasMore = false;
+            var loadingHistory = false;
+            var loadingOlder = false;
+
+            function convStorageKey() {
+                return 'syllentras_conv_' + moodleUserId + '_' + courseId;
+            }
+
+            function loadStoredConversationId() {
+                return localStorage.getItem(convStorageKey()) || null;
+            }
+
+            function saveConversationId(id) {
+                conversationId = id;
+                if (id) {
+                    localStorage.setItem(convStorageKey(), id);
+                }
+            }
+
+            conversationId = loadStoredConversationId();
 
             var isExpanded = localStorage.getItem('syllentras_expanded') === '1';
 
@@ -278,11 +338,10 @@ class before_footer {
 
             applyExpandedState();
 
-            var history = [];
-
             btn.addEventListener('click', function () {
                 panel.hidden = false;
                 btn.hidden = true;
+                ensureHistoryLoaded();
                 input.focus();
             });
 
@@ -300,23 +359,165 @@ class before_footer {
 
             send.addEventListener('click', sendMessage);
 
+            msgs.addEventListener('scroll', function () {
+                if (msgs.scrollTop === 0 && hasMore && !loadingOlder && historyLoaded) {
+                    loadOlderMessages();
+                }
+            });
+
             function renderAssistantContent(el, text) {
                 el.classList.add('syllentras-markdown');
                 var raw = marked.parse(text, { breaks: true });
                 el.innerHTML = DOMPurify.sanitize(raw);
             }
 
-            function appendMessage(role, text) {
+            function createMessageElement(role, text, createdAt) {
                 var div = document.createElement('div');
                 div.className = 'syllentras-msg ' + role;
+                if (createdAt) {
+                    div.dataset.createdAt = createdAt;
+                }
                 if (role === 'assistant' && text !== '...') {
                     renderAssistantContent(div, text);
                 } else {
                     div.textContent = text;
                 }
-                msgs.appendChild(div);
-                msgs.scrollTop = msgs.scrollHeight;
                 return div;
+            }
+
+            function appendMessage(role, text, options) {
+                options = options || {};
+                var div = createMessageElement(role, text, options.createdAt);
+                msgs.appendChild(div);
+                if (options.scroll !== false) {
+                    msgs.scrollTop = msgs.scrollHeight;
+                }
+                return div;
+            }
+
+            function prependMessage(role, text, createdAt) {
+                var div = createMessageElement(role, text, createdAt);
+                msgs.insertBefore(div, loadMore.nextSibling);
+                return div;
+            }
+
+            function getOldestMessageCreatedAt() {
+                var nodes = msgs.querySelectorAll('.syllentras-msg[data-created-at]');
+                if (!nodes.length) return null;
+                return nodes[0].dataset.createdAt;
+            }
+
+            function scrollToBottom() {
+                msgs.scrollTop = msgs.scrollHeight;
+            }
+
+            function resolveConversationId() {
+                if (conversationId) {
+                    return Promise.resolve(conversationId);
+                }
+                return fetch(
+                    API_URL + '/conversations/active?moodleUserId=' + encodeURIComponent(moodleUserId)
+                        + '&courseId=' + encodeURIComponent(courseId)
+                )
+                .then(function (res) {
+                    if (!res.ok) throw new Error('HTTP ' + res.status);
+                    return res.json();
+                })
+                .then(function (data) {
+                    if (data.conversationId) {
+                        saveConversationId(data.conversationId);
+                    }
+                    return conversationId;
+                });
+            }
+
+            function fetchMessagesPage(before) {
+                var url = API_URL + '/conversations/' + encodeURIComponent(conversationId)
+                    + '/messages?moodleUserId=' + encodeURIComponent(moodleUserId)
+                    + '&limit=' + PAGE_SIZE;
+                if (before) {
+                    url += '&before=' + encodeURIComponent(before);
+                }
+                return fetch(url).then(function (res) {
+                    if (!res.ok) throw new Error('HTTP ' + res.status);
+                    return res.json();
+                });
+            }
+
+            function renderMessageBatch(messages, prepend) {
+                var list = prepend ? messages.slice().reverse() : messages;
+                list.forEach(function (m) {
+                    var role = m.role === 'assistant' ? 'assistant' : 'user';
+                    var createdAt = m.createdAt;
+                    if (prepend) {
+                        prependMessage(role, m.content, createdAt);
+                    } else {
+                        appendMessage(role, m.content, { scroll: false, createdAt: createdAt });
+                    }
+                });
+            }
+
+            function ensureHistoryLoaded() {
+                if (historyLoaded || loadingHistory) {
+                    return Promise.resolve();
+                }
+                loadingHistory = true;
+
+                return resolveConversationId()
+                .then(function (id) {
+                    if (!id) {
+                        historyLoaded = true;
+                        return null;
+                    }
+                    return fetchMessagesPage(null);
+                })
+                .then(function (page) {
+                    if (page && page.messages && page.messages.length) {
+                        renderMessageBatch(page.messages, false);
+                        hasMore = !!page.hasMore;
+                        scrollToBottom();
+                    } else if (page) {
+                        hasMore = !!page.hasMore;
+                    }
+                })
+                .catch(function () {
+                    appendMessage('error', 'Could not load chat history.', { scroll: false });
+                    scrollToBottom();
+                })
+                .finally(function () {
+                    loadingHistory = false;
+                    historyLoaded = true;
+                });
+            }
+
+            function loadOlderMessages() {
+                if (loadingOlder || !hasMore || !conversationId) return;
+
+                var before = getOldestMessageCreatedAt();
+                if (!before) return;
+
+                loadingOlder = true;
+                loadMore.hidden = false;
+
+                var prevScrollHeight = msgs.scrollHeight;
+
+                fetchMessagesPage(before)
+                .then(function (page) {
+                    if (page.messages && page.messages.length) {
+                        renderMessageBatch(page.messages, true);
+                        hasMore = !!page.hasMore;
+                        msgs.scrollTop = msgs.scrollHeight - prevScrollHeight;
+                    } else {
+                        hasMore = false;
+                    }
+                })
+                .catch(function () {
+                    hasMore = false;
+                })
+                .finally(function () {
+                    loadingOlder = false;
+                    loadMore.hidden = true;
+                });
             }
 
             function sendMessage() {
@@ -327,7 +528,6 @@ class before_footer {
                 send.disabled = true;
 
                 appendMessage('user', text);
-                history.push({ role: 'user', content: text });
 
                 var loadingEl = appendMessage('assistant', '...');
 
@@ -340,8 +540,7 @@ class before_footer {
                         moodleUserId: moodleUserId,
                         userFirstName: userFirstName || undefined,
                         message: text,
-                        conversationId: conversationId,
-                        history: history
+                        conversationId: conversationId
                     })
                 })
                 .then(function (res) {
@@ -350,11 +549,11 @@ class before_footer {
                 })
                 .then(function (data) {
                     renderAssistantContent(loadingEl, data.response);
-                    history.push({ role: 'assistant', content: data.response });
+                    loadingEl.dataset.createdAt = new Date().toISOString();
 
                     if (data.conversationId) {
-                        conversationId = data.conversationId;
-                        sessionStorage.setItem('syllentras_conversation_id', conversationId);
+                        saveConversationId(data.conversationId);
+                        historyLoaded = true;
                     }
                 })
                 .catch(function () {
