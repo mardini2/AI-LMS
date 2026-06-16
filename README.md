@@ -138,6 +138,8 @@ Web services Overview → Step 5 → Add:
 
 On the new service page → Add functions:
 - `core_course_get_contents`
+- `core_course_get_courses`
+- `core_enrol_get_users_courses`
 - `mod_page_get_pages_by_courses`
 
 **Add the API user as an authorised user** (Step 7)
@@ -277,6 +279,7 @@ See `.env.example` for the full list with descriptions. Key variables:
 | `MOODLE_TOKEN`          | Moodle web service token (generated after first boot)                  |
 | `DATABASE_URL`          | PostgreSQL connection string for the API                               |
 | `MOODLE_INTERNAL_URL`   | Docker-internal URL to Moodle (`http://webserver` in dev)              |
+| `MOODLE_INTERNAL_HOST`  | Host header for internal Moodle requests (`localhost:8000` in dev)     |
 | `NODE_ENV`              | `development` locally, `production` in deployment                      |
 
 

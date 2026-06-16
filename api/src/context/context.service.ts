@@ -3,6 +3,8 @@ import { ConfigService } from '@nestjs/config';
 import { Cache } from 'cache-manager';
 import { Inject } from '@nestjs/common';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
+import { request as httpRequest } from 'node:http';
+import { request as httpsRequest } from 'node:https';
 
 /**
  * ContextService — the key abstraction over course content retrieval.
@@ -20,6 +22,8 @@ export class ContextService {
   private readonly logger = new Logger(ContextService.name);
   private readonly moodleUrl: string;
   private readonly moodleToken: string;
+  /** Host header sent to moodle-docker's webserver (avoids Behat mode on http://webserver). */
+  private readonly moodleHost: string;
 
   constructor(
     private readonly config: ConfigService,
@@ -27,6 +31,8 @@ export class ContextService {
   ) {
     this.moodleUrl = this.config.get<string>('MOODLE_INTERNAL_URL')!;
     this.moodleToken = this.config.get<string>('MOODLE_TOKEN')!;
+    this.moodleHost =
+      this.config.get<string>('MOODLE_INTERNAL_HOST') ?? 'localhost:8000';
   }
 
   /**
@@ -53,6 +59,76 @@ export class ContextService {
     const content = await this.fetchCourseContent(courseId);
     await this.cache.set(cacheKey, content);
     return content;
+  }
+
+  /**
+   * Resolves the human-readable course name. Uses the name from the plugin
+   * when available, otherwise falls back to Moodle's core_course_get_courses.
+   */
+  async resolveCourseName(
+    courseId: number,
+    providedName?: string,
+  ): Promise<string | undefined> {
+    if (courseId <= 1) {
+      return undefined;
+    }
+
+    if (providedName?.trim()) {
+      return providedName.trim();
+    }
+
+    const cacheKey = `course_name_${courseId}`;
+    const cached = await this.cache.get<string>(cacheKey);
+    if (cached) {
+      return cached;
+    }
+
+    try {
+      const courses = await this.callMoodleApi<MoodleCourseSummary[]>(
+        'core_course_get_courses',
+        { options: { ids: [courseId] } },
+      );
+      const name = courses.find((c) => c.id === courseId)?.fullname;
+      if (name) {
+        await this.cache.set(cacheKey, name);
+      }
+      return name;
+    } catch (err) {
+      this.logger.warn(
+        `Failed to resolve course name for ${courseId}: ${(err as Error).message}`,
+      );
+      return undefined;
+    }
+  }
+
+  /**
+   * Returns course names the user is enrolled in (excludes site home).
+   */
+  async getEnrolledCourseNames(moodleUserId: number): Promise<string[]> {
+    const cacheKey = `user_courses_${moodleUserId}`;
+    const cached = await this.cache.get<string[]>(cacheKey);
+    if (cached) {
+      return cached;
+    }
+
+    try {
+      const courses = await this.callMoodleApi<MoodleCourseSummary[]>(
+        'core_enrol_get_users_courses',
+        { userid: moodleUserId },
+      );
+
+      const names = courses
+        .filter((c) => c.id > 1 && c.fullname)
+        .map((c) => c.fullname);
+
+      await this.cache.set(cacheKey, names);
+      return names;
+    } catch (err) {
+      this.logger.warn(
+        `Failed to fetch enrolled courses for user ${moodleUserId}: ${(err as Error).message}`,
+      );
+      return [];
+    }
   }
 
   /**
@@ -111,19 +187,27 @@ export class ContextService {
     url.searchParams.set('moodlewsrestformat', 'json');
 
     for (const [key, value] of Object.entries(params)) {
-      if (Array.isArray(value)) {
-        value.forEach((v, i) => url.searchParams.set(`${key}[${i}]`, String(v)));
-      } else {
-        url.searchParams.set(key, String(value));
-      }
+      this.appendParams(url.searchParams, key, value);
     }
 
-    const res = await fetch(url.toString());
-    if (!res.ok) {
-      throw new Error(`Moodle API error: ${res.status} ${res.statusText}`);
+    // moodle-docker sets $CFG->behat_wwwroot = 'http://webserver'. Requests whose
+    // Host is "webserver" trigger Behat mode. fetch() cannot override Host (forbidden
+    // header), so use node:http with Host: localhost:8000 to match $CFG->wwwroot.
+    const hostHeader =
+      url.hostname === 'webserver' ? this.moodleHost : undefined;
+    const { status, body } = await this.httpGet(url, hostHeader);
+    if (status < 200 || status >= 300) {
+      throw new Error(`Moodle API error: ${status}`);
     }
 
-    const data = (await res.json()) as T & { exception?: string; message?: string };
+    let data: T & { exception?: string; message?: string };
+    try {
+      data = JSON.parse(body) as T & { exception?: string; message?: string };
+    } catch {
+      throw new Error(
+        `Moodle API returned non-JSON: ${body.slice(0, 200)}`,
+      );
+    }
 
     // Moodle returns HTTP 200 even for errors — detect the exception envelope.
     if (data.exception) {
@@ -131,6 +215,60 @@ export class ContextService {
     }
 
     return data as T;
+  }
+
+  private appendParams(
+    searchParams: URLSearchParams,
+    key: string,
+    value: unknown,
+  ): void {
+    if (Array.isArray(value)) {
+      value.forEach((v, i) => {
+        searchParams.set(`${key}[${i}]`, String(v));
+      });
+      return;
+    }
+
+    if (value !== null && typeof value === 'object') {
+      for (const [nestedKey, nestedValue] of Object.entries(
+        value as Record<string, unknown>,
+      )) {
+        this.appendParams(searchParams, `${key}[${nestedKey}]`, nestedValue);
+      }
+      return;
+    }
+
+    searchParams.set(key, String(value));
+  }
+
+  private httpGet(
+    url: URL,
+    hostHeader?: string,
+  ): Promise<{ status: number; body: string }> {
+    const requestFn = url.protocol === 'https:' ? httpsRequest : httpRequest;
+
+    return new Promise((resolve, reject) => {
+      const req = requestFn(
+        {
+          hostname: url.hostname,
+          port: url.port || (url.protocol === 'https:' ? 443 : 80),
+          path: `${url.pathname}${url.search}`,
+          method: 'GET',
+          headers: hostHeader ? { Host: hostHeader } : undefined,
+        },
+        (res) => {
+          let body = '';
+          res.on('data', (chunk: Buffer) => {
+            body += chunk.toString();
+          });
+          res.on('end', () => {
+            resolve({ status: res.statusCode ?? 500, body });
+          });
+        },
+      );
+      req.on('error', reject);
+      req.end();
+    });
   }
 }
 
@@ -167,4 +305,9 @@ interface MoodleContent {
 interface MoodlePage {
   coursemodule: number;
   content: string;
+}
+
+interface MoodleCourseSummary {
+  id: number;
+  fullname: string;
 }

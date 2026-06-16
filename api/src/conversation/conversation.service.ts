@@ -35,10 +35,13 @@ export class ConversationService {
   async getHistory(
     conversationId: string,
   ): Promise<Array<{ role: MessageRole; content: string }>> {
-    const messages = await this.messageRepo.find({
-      where: { conversationId },
-      order: { createdAt: 'ASC' },
-    });
+    const messages = await this.messageRepo
+      .createQueryBuilder('m')
+      .where('m.conversation_id = :conversationId', { conversationId })
+      .orderBy('m.created_at', 'ASC')
+      // User/assistant pairs saved in the same millisecond must stay in turn order.
+      .addOrderBy("CASE WHEN m.role = 'user' THEN 0 ELSE 1 END", 'ASC')
+      .getMany();
 
     return messages.map((m) => ({ role: m.role, content: m.content }));
   }
@@ -47,13 +50,15 @@ export class ConversationService {
     conversationId: string,
     pairs: Array<{ role: MessageRole; content: string }>,
   ): Promise<void> {
-    const messages = pairs.map((p) =>
-      this.messageRepo.create({
-        conversationId,
-        role: p.role,
-        content: p.content,
-      }),
-    );
-    await this.messageRepo.save(messages);
+    // Save sequentially so created_at reflects turn order (user before assistant).
+    for (const p of pairs) {
+      await this.messageRepo.save(
+        this.messageRepo.create({
+          conversationId,
+          role: p.role,
+          content: p.content,
+        }),
+      );
+    }
   }
 }

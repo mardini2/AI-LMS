@@ -24,6 +24,15 @@ export class SendMessageDto {
   @Min(0)
   courseId: number;
 
+  @IsOptional()
+  @IsString()
+  courseName?: string;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  moodleUserId?: number;
+
   @IsString()
   @MinLength(1)
   message: string;

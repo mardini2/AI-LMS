@@ -21,6 +21,10 @@ class before_footer {
 
         $apiUrl = rtrim(get_config('local_syllentras_ai', 'api_url') ?: 'http://localhost:3000', '/');
 
+        $courseid = (int) ($PAGE->course->id ?? 0);
+        $coursename = ($courseid > 1) ? format_string($PAGE->course->fullname) : '';
+        $moodleuserid = (int) $USER->id;
+
         ob_start();
         ?>
         <div id="syllentras-chat-root">
@@ -143,18 +147,61 @@ class before_footer {
                 border-radius: 8px;
                 line-height: 1.4;
                 font-size: 14px;
-                white-space: pre-wrap;
                 word-break: break-word;
             }
             .syllentras-msg.user {
                 align-self: flex-end;
                 background: #0066cc;
                 color: #fff;
+                white-space: pre-wrap;
             }
             .syllentras-msg.assistant {
                 align-self: flex-start;
                 background: #f0f0f0;
                 color: #111;
+            }
+            .syllentras-msg.assistant.syllentras-markdown {
+                white-space: normal;
+            }
+            .syllentras-msg.assistant.syllentras-markdown :first-child {
+                margin-top: 0;
+            }
+            .syllentras-msg.assistant.syllentras-markdown :last-child {
+                margin-bottom: 0;
+            }
+            .syllentras-msg.assistant.syllentras-markdown h3,
+            .syllentras-msg.assistant.syllentras-markdown h4 {
+                font-size: 14px;
+                font-weight: 700;
+                margin: 10px 0 6px;
+            }
+            .syllentras-msg.assistant.syllentras-markdown p {
+                margin: 6px 0;
+            }
+            .syllentras-msg.assistant.syllentras-markdown ul,
+            .syllentras-msg.assistant.syllentras-markdown ol {
+                margin: 6px 0;
+                padding-left: 20px;
+            }
+            .syllentras-msg.assistant.syllentras-markdown li {
+                margin: 2px 0;
+            }
+            .syllentras-msg.assistant.syllentras-markdown code {
+                background: rgba(0, 0, 0, 0.06);
+                padding: 1px 4px;
+                border-radius: 3px;
+                font-size: 13px;
+            }
+            .syllentras-msg.assistant.syllentras-markdown pre {
+                background: rgba(0, 0, 0, 0.06);
+                padding: 8px;
+                border-radius: 4px;
+                overflow-x: auto;
+                margin: 6px 0;
+            }
+            .syllentras-msg.assistant.syllentras-markdown pre code {
+                background: none;
+                padding: 0;
             }
             .syllentras-msg.error {
                 align-self: flex-start;
@@ -189,10 +236,14 @@ class before_footer {
             #syllentras-chat-send:disabled { opacity: 0.5; cursor: not-allowed; }
         </style>
 
+        <script src="<?php echo $CFG->wwwroot; ?>/local/syllentras_ai/js/purify.min.js"></script>
+        <script src="<?php echo $CFG->wwwroot; ?>/local/syllentras_ai/js/marked.min.js"></script>
         <script>
         (function () {
             var API_URL = <?php echo json_encode($apiUrl); ?>;
-            var courseId = (window.M && M.cfg && M.cfg.courseId) ? M.cfg.courseId : 0;
+            var courseId = <?php echo json_encode($courseid); ?>;
+            var courseName = <?php echo json_encode($coursename); ?>;
+            var moodleUserId = <?php echo json_encode($moodleuserid); ?>;
             var conversationId = sessionStorage.getItem('syllentras_conversation_id') || null;
 
             var btn       = document.getElementById('syllentras-chat-btn');
@@ -247,10 +298,20 @@ class before_footer {
 
             send.addEventListener('click', sendMessage);
 
+            function renderAssistantContent(el, text) {
+                el.classList.add('syllentras-markdown');
+                var raw = marked.parse(text, { breaks: true });
+                el.innerHTML = DOMPurify.sanitize(raw);
+            }
+
             function appendMessage(role, text) {
                 var div = document.createElement('div');
                 div.className = 'syllentras-msg ' + role;
-                div.textContent = text;
+                if (role === 'assistant' && text !== '...') {
+                    renderAssistantContent(div, text);
+                } else {
+                    div.textContent = text;
+                }
                 msgs.appendChild(div);
                 msgs.scrollTop = msgs.scrollHeight;
                 return div;
@@ -273,6 +334,8 @@ class before_footer {
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         courseId: courseId,
+                        courseName: courseName || undefined,
+                        moodleUserId: moodleUserId,
                         message: text,
                         conversationId: conversationId,
                         history: history
@@ -283,7 +346,7 @@ class before_footer {
                     return res.json();
                 })
                 .then(function (data) {
-                    loadingEl.textContent = data.response;
+                    renderAssistantContent(loadingEl, data.response);
                     history.push({ role: 'assistant', content: data.response });
 
                     if (data.conversationId) {
