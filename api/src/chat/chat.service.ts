@@ -46,8 +46,11 @@ export class ChatService {
     const dbHistory = await this.conversationService.getHistory(conversationId);
 
     // ── 4. Build the Gemini prompt ────────────────────────────────────────────
+    // systemInstruction must be passed to getGenerativeModel (string accepted),
+    // not to startChat (which requires a Content object in the v1beta API).
     const model = this.genAI.getGenerativeModel({
-      model: 'gemini-1.5-flash',
+      model: 'gemini-3.1-flash-lite',
+      systemInstruction: buildSystemPrompt(courseContext),
       safetySettings: [
         {
           category: HarmCategory.HARM_CATEGORY_HARASSMENT,
@@ -56,10 +59,7 @@ export class ChatService {
       ],
     });
 
-    const systemInstruction = buildSystemPrompt(courseContext);
-
     const chat = model.startChat({
-      systemInstruction,
       history: dbHistory.map((m) => ({
         role: m.role === 'assistant' ? 'model' : 'user',
         parts: [{ text: m.content }],

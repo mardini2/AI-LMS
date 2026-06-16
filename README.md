@@ -110,32 +110,55 @@ This takes a few minutes — Moodle installs all its built-in plugins.
 
 ### 8. Enable Moodle Web Services and get `MOODLE_TOKEN`
 
-The API needs a token to call Moodle's REST API for course content.
+The API needs a token to call Moodle's REST API for course content. Navigate to **Site administration → Server → Web services → Overview** and complete these steps:
 
-1. **Enable web services:**
-  Site administration → Advanced features → Enable web services → Save
-2. **Enable the REST protocol:**
-  Site administration → Plugins → Web services → Manage protocols → Enable REST protocol
-3. **Create a service:**
-  Site administration → Plugins → Web services → External services → Add
-  - Name: `Syllentras AI`
-  - Enable: checked
-4. **Add functions to the service:**
-  Click "Add functions" on the new service and add:
-  - `core_course_get_contents`
-  - `mod_page_get_pages_by_courses`
-5. **Generate a token:**
-  Site administration → Plugins → Web services → Manage tokens → Create token
-  - User: admin (or a dedicated service account)
-  - Service: Syllentras AI
-6. Copy the token and set it in `.env`:
-  ```
-   MOODLE_TOKEN=your_token_here
-  ```
-7. Restart the API:
-  ```powershell
-   .\dev.ps1 restart
-  ```
+**Enable web services and REST protocol**
+1. Site administration → Advanced features → Enable web services → Save
+2. Web services Overview → Step 2 → enable the **REST protocol** → Save
+
+**Create a dedicated API user** (Step 3 on the Overview page)
+- Username: `syllentras_api`, First name: `Syllentras`, Last name: `API`
+- Email: `api@example.com`, uncheck "Force password change"
+
+**Create a Web Service role** (Step 4)
+
+Site administration → Users → Permissions → Define roles → Add a new role:
+- Name: `Web Service`, Short name: `webservice`, Archetype: None
+- Check **System** under "Context types where this role may be assigned"
+- Allow these capabilities: `webservice/rest:use`, `moodle/course:view`, `moodle/course:viewhiddencourses`, `mod/page:view`
+
+Assign role: Site administration → Users → Permissions → Assign system roles → **Web Service** → add `syllentras_api`
+
+**Create the external service** (Step 5)
+
+Web services Overview → Step 5 → Add:
+- Name: `Syllentras AI Service`, Enabled: checked, Authorised users only: checked
+
+**Add functions to the service** (Step 6)
+
+On the new service page → Add functions:
+- `core_course_get_contents`
+- `mod_page_get_pages_by_courses`
+
+**Add the API user as an authorised user** (Step 7)
+
+Service page → Authorised users → move `syllentras_api` to the authorised column → Save
+
+**Create the token** (Step 8)
+
+Web services Overview → Step 8 → Create token:
+- User: `syllentras_api`, Service: `Syllentras AI Service`
+
+Copy the token and set it in `.env`:
+```
+MOODLE_TOKEN=your_token_here
+```
+
+Then do a full restart to pick up the new token:
+```powershell
+.\dev.ps1 down
+.\dev.ps1 up
+```
 
 ---
 

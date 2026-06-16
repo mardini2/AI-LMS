@@ -36,7 +36,9 @@ export class ContextService {
    * RAG route (future): uses the question to retrieve only relevant chunks.
    */
   async getContext(courseId: number, question: string): Promise<string> {
-    if (courseId === 0) {
+    // Course 0 = non-course page; course 1 = Moodle site home (content disabled by default).
+    // Both have no meaningful course material to send as LLM context.
+    if (courseId <= 1) {
       return '';
     }
 
@@ -121,8 +123,14 @@ export class ContextService {
       throw new Error(`Moodle API error: ${res.status} ${res.statusText}`);
     }
 
-    const data = (await res.json()) as T;
-    return data;
+    const data = (await res.json()) as T & { exception?: string; message?: string };
+
+    // Moodle returns HTTP 200 even for errors — detect the exception envelope.
+    if (data.exception) {
+      throw new Error(`Moodle API exception: ${data.message ?? data.exception}`);
+    }
+
+    return data as T;
   }
 }
 
