@@ -39,7 +39,10 @@ class before_footer {
             <div id="syllentras-chat-panel" role="dialog" aria-label="Course AI Assistant" hidden>
                 <div id="syllentras-chat-header">
                     <span>Course Assistant</span>
-                    <button id="syllentras-chat-close" aria-label="Close">&times;</button>
+                    <div style="display:flex;gap:4px;align-items:center;">
+                        <button id="syllentras-chat-expand" aria-label="Expand">&#x2922;</button>
+                        <button id="syllentras-chat-close" aria-label="Close">&times;</button>
+                    </div>
                 </div>
                 <div id="syllentras-chat-messages" role="log" aria-live="polite"></div>
                 <div id="syllentras-chat-input-row">
@@ -100,6 +103,15 @@ class before_footer {
                 align-items: center;
                 font-weight: 600;
             }
+            #syllentras-chat-expand {
+                background: none;
+                border: none;
+                color: #fff;
+                font-size: 16px;
+                cursor: pointer;
+                line-height: 1;
+                padding: 0 4px;
+            }
             #syllentras-chat-close {
                 background: none;
                 border: none;
@@ -107,6 +119,13 @@ class before_footer {
                 font-size: 20px;
                 cursor: pointer;
                 line-height: 1;
+            }
+            #syllentras-chat-panel.expanded {
+                height: calc(100vh - 104px);
+                max-height: calc(100vh - 104px);
+            }
+            #syllentras-chat-panel.expanded #syllentras-chat-messages {
+                max-height: none;
             }
             #syllentras-chat-messages {
                 flex: 1;
@@ -176,12 +195,35 @@ class before_footer {
             var courseId = (window.M && M.cfg && M.cfg.courseId) ? M.cfg.courseId : 0;
             var conversationId = sessionStorage.getItem('syllentras_conversation_id') || null;
 
-            var btn    = document.getElementById('syllentras-chat-btn');
-            var panel  = document.getElementById('syllentras-chat-panel');
-            var close  = document.getElementById('syllentras-chat-close');
-            var input  = document.getElementById('syllentras-chat-input');
-            var send   = document.getElementById('syllentras-chat-send');
-            var msgs   = document.getElementById('syllentras-chat-messages');
+            var btn       = document.getElementById('syllentras-chat-btn');
+            var panel     = document.getElementById('syllentras-chat-panel');
+            var close     = document.getElementById('syllentras-chat-close');
+            var expandBtn = document.getElementById('syllentras-chat-expand');
+            var input     = document.getElementById('syllentras-chat-input');
+            var send      = document.getElementById('syllentras-chat-send');
+            var msgs      = document.getElementById('syllentras-chat-messages');
+
+            var isExpanded = localStorage.getItem('syllentras_expanded') === '1';
+
+            function applyExpandedState() {
+                if (isExpanded) {
+                    panel.classList.add('expanded');
+                    expandBtn.innerHTML = '&#x2921;';
+                    expandBtn.setAttribute('aria-label', 'Collapse');
+                } else {
+                    panel.classList.remove('expanded');
+                    expandBtn.innerHTML = '&#x2922;';
+                    expandBtn.setAttribute('aria-label', 'Expand');
+                }
+            }
+
+            expandBtn.addEventListener('click', function () {
+                isExpanded = !isExpanded;
+                localStorage.setItem('syllentras_expanded', isExpanded ? '1' : '0');
+                applyExpandedState();
+            });
+
+            applyExpandedState();
 
             var history = [];
 
