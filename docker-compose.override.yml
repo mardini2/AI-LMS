@@ -8,15 +8,29 @@ services:
   # Adds the plugin volume mount and exposes the Xdebug port.
   webserver:
     volumes:
-      # Mount our plugin directly into Moodle's local/ directory.
-      # Edit plugin files locally → changes are live immediately.
-      - ./plugin/syllentras_ai:/var/www/html/local/syllentras_ai
+      # Moodle 5.x moved to a public/ subdirectory layout ($CFG->dirroot = /var/www/html/public).
+      # All plugins must be mounted under public/local/, not the old local/ root.
+      - ./plugin/syllentras_ai:/var/www/html/public/local/syllentras_ai
+      # Persist Moodle's data directory (user files, session data, cache).
+      # Without this, moodledata is stored in an ephemeral anonymous volume and lost on "dev.ps1 down".
+      - moodledata:/var/www/moodledata
+      # Raise opcache limits and increase revalidate_freq to reduce the ~2000 slow
+      # Windows filesystem stat() calls that Moodle triggers on every page load.
+      - ./docker/php/opcache-dev.ini:/usr/local/etc/php/conf.d/99-opcache-dev.ini:ro
     ports:
       # Xdebug port — VS Code "Listen: Xdebug (Moodle)" attaches here.
       # This is PHP's Xdebug port (9003), separate from the Node.js debug port (9229).
       - "9003:9003"
     environment:
       XDEBUG_CONFIG: "client_host=host.docker.internal"
+
+  # ── Moodle MariaDB ─────────────────────────────────────────────────────────
+  # moodle-docker's db.mariadb.yml uses anonymous volumes — those are orphaned
+  # when containers are removed. Override with a named volume so the database
+  # survives "dev.ps1 down" / "dev.ps1 up" cycles.
+  db:
+    volumes:
+      - mariadb_data:/var/lib/mysql
 
   # ── API PostgreSQL ────────────────────────────────────────────────────────────
   postgres:
@@ -29,7 +43,9 @@ services:
     ports:
       - "${POSTGRES_PORT:-5432}:5432"
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      # postgres:18+ stores data in a versioned subdirectory under /var/lib/postgresql.
+      # Mount one level up (not /data) so pg_upgrade works correctly.
+      - pgdata:/var/lib/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
       interval: 10s
@@ -68,3 +84,5 @@ services:
 volumes:
   pgdata:
   api_node_modules:
+  mariadb_data:
+  moodledata:

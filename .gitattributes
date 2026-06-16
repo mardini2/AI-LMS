@@ -1,0 +1,11 @@
+# Ensure shell scripts always use LF line endings regardless of the OS.
+# Without this, Git on Windows converts LF→CRLF on checkout, causing
+# WSL2/Linux to fail with: /usr/bin/env: 'bash\r': No such file or file.
+*.sh text eol=lf
+.env.example text eol=lf
+
+# PowerShell scripts can use CRLF on Windows (they work fine either way).
+*.ps1 text eol=crlf
+
+# Default: let Git decide for everything else.
+* text=auto

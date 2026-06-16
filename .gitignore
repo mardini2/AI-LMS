@@ -1,4 +1,6 @@
-# ── Local dev dependencies (cloned by setup.ps1, not owned by this repo) ─────
+# ── Local dev dependencies (cloned by setup.sh, not owned by this repo) ──────
+# These live in ~/AI-LMS-Tool-deps/ in WSL2, but gitignore them here in case
+# anyone clones them locally under this directory.
 /moodle/
 /moodle-docker/
 

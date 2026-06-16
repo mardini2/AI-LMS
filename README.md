@@ -13,12 +13,14 @@ Browser (Moodle page)
                                     └── Gemini API (LLM response)
 ```
 
-| Service      | Image / Stack              | Purpose                        |
-|--------------|----------------------------|--------------------------------|
-| Moodle       | moodle-docker (PHP/Apache) | LMS platform                   |
-| MariaDB      | moodle-docker (MariaDB)    | Moodle's database              |
-| NestJS API   | node:24-alpine             | LLM proxy + conversation logic |
-| PostgreSQL   | postgres:18                | Conversation history           |
+
+| Service    | Image / Stack              | Purpose                        |
+| ---------- | -------------------------- | ------------------------------ |
+| Moodle     | moodle-docker (PHP/Apache) | LMS platform                   |
+| MariaDB    | moodle-docker (MariaDB)    | Moodle's database              |
+| NestJS API | node:24-alpine             | LLM proxy + conversation logic |
+| PostgreSQL | postgres:18                | Conversation history           |
+
 
 ---
 
@@ -40,95 +42,100 @@ git clone <your-repo-url> AI-LMS-Tool
 cd AI-LMS-Tool
 ```
 
-### 2. Run the setup script
+### 2. Enable Docker Desktop WSL2 integration
 
-```powershell
-.\setup.ps1
+Open Docker Desktop → **Settings** → **Resources** → **WSL Integration** → toggle on your Linux distro (e.g. Ubuntu) → **Apply & Restart**.
+
+This allows Docker to be called from inside WSL2, which is required for the fast dev workflow.
+
+### 3. Run the setup script
+
+Open a WSL2 terminal (search "Ubuntu" or "WSL" in Start), navigate to the project, and run:
+
+```bash
+cd /mnt/c/Users/<your-username>/source/repos/AI-LMS-Tool
+chmod +x setup.sh dev.sh
+./setup.sh
 ```
 
-This will:
-- Clone `moodlehq/moodle-docker` into `./moodle-docker/`
-- Clone Moodle v5.2.1 into `./moodle/`
-- Copy `.env.example` to `.env` and set `MOODLE_DOCKER_WWWROOT` automatically
+This clones `moodle/` and `moodle-docker/` into `~/AI-LMS-Tool-deps/` on the WSL2 Linux filesystem and sets `MOODLE_DOCKER_WWWROOT` automatically. See [Performance Notes](#performance-notes-wsl2) for why this matters.
 
-> **Note:** `./moodle/` and `./moodle-docker/` are gitignored. They are local dependencies, not part of this repo.
+> `moodle/` and `moodle-docker/` are gitignored — they are local dependencies, not part of this repo.
 
-### 3. Fill in your `.env` file
+### 4. Fill in your `.env` file
 
-Open `.env` and set the following values:
+Open `.env` and set:
 
-| Variable             | What to set                                              |
-|----------------------|----------------------------------------------------------|
+
+| Variable                | What to set                                            |
+| ----------------------- | ------------------------------------------------------ |
 | `MOODLE_ADMIN_PASSWORD` | Choose any password for the local Moodle admin account |
-| `POSTGRES_PASSWORD`  | Choose any password for the local PostgreSQL database    |
-| `DATABASE_URL`       | Replace `CHANGEME` with your `POSTGRES_PASSWORD`         |
-| `GEMINI_API_KEY`     | Get this from your team lead                             |
-| `MOODLE_TOKEN`       | Leave blank for now — generated in step 5 below          |
+| `POSTGRES_PASSWORD`     | Choose any password for the local PostgreSQL database  |
+| `DATABASE_URL`          | Replace `CHANGEME` with your `POSTGRES_PASSWORD`       |
+| `GEMINI_API_KEY`        | Get this from your team lead                           |
+| `MOODLE_TOKEN`          | Leave blank for now — generated in step 8 below        |
 
-### 4. Start all services
+
+### 5. Start all services
 
 ```powershell
 .\dev.ps1 up
 ```
 
-The first run will pull Docker images and may take a few minutes. Subsequent starts are fast.
+Works from PowerShell regardless of which setup path you used — it auto-delegates to WSL2 when the WSL2 path is detected in `.env`.
 
-| Service    | URL                        |
-|------------|----------------------------|
-| Moodle     | http://localhost:8000      |
-| API        | http://localhost:3000      |
+The first run pulls Docker images and may take a few minutes. Subsequent starts are fast.
 
-### 5. Initialize the Moodle database (first time only)
+
+| Service | URL                                            |
+| ------- | ---------------------------------------------- |
+| Moodle  | [http://localhost:8000](http://localhost:8000) |
+| API     | [http://localhost:3000](http://localhost:3000) |
+
+
+### 6. Initialize the Moodle database (first time only)
 
 ```powershell
-docker compose -f moodle-docker/base.yml -f docker-compose.override.yml `
-  exec webserver php admin/cli/install_database.php `
-  --agree-license `
-  --adminpass="$env:MOODLE_ADMIN_PASSWORD" `
-  --adminemail="$env:MOODLE_ADMIN_EMAIL"
+.\dev.ps1 moodle-install
 ```
 
-### 6. Register the plugin (first time only)
+This takes a few minutes — Moodle installs all its built-in plugins.
 
-1. Visit http://localhost:8000/admin
+### 7. Register the plugin (first time only)
+
+1. Visit [http://localhost:8000/admin](http://localhost:8000/admin)
 2. Log in with `admin` / your `MOODLE_ADMIN_PASSWORD`
-3. Moodle will detect the new plugin and prompt: **"Upgrade Moodle database now"** — click it
-4. The Syllentras AI chat button will now appear on all pages
+3. Complete the brief setup wizard (site name, timezone)
+4. The Syllentras AI chat button will appear on all Moodle pages
 
-### 7. Enable Moodle Web Services and get `MOODLE_TOKEN`
+### 8. Enable Moodle Web Services and get `MOODLE_TOKEN`
 
 The API needs a token to call Moodle's REST API for course content.
 
 1. **Enable web services:**
-   Site administration → Advanced features → Enable web services → Save
-
+  Site administration → Advanced features → Enable web services → Save
 2. **Enable the REST protocol:**
-   Site administration → Plugins → Web services → Manage protocols → Enable REST protocol
-
+  Site administration → Plugins → Web services → Manage protocols → Enable REST protocol
 3. **Create a service:**
-   Site administration → Plugins → Web services → External services → Add
-   - Name: `Syllentras AI`
-   - Enable: checked
-
+  Site administration → Plugins → Web services → External services → Add
+  - Name: `Syllentras AI`
+  - Enable: checked
 4. **Add functions to the service:**
-   Click "Add functions" on the new service and add:
-   - `core_course_get_contents`
-   - `mod_page_get_pages_by_courses`
-
+  Click "Add functions" on the new service and add:
+  - `core_course_get_contents`
+  - `mod_page_get_pages_by_courses`
 5. **Generate a token:**
-   Site administration → Plugins → Web services → Manage tokens → Create token
-   - User: admin (or a dedicated service account)
-   - Service: Syllentras AI
-
+  Site administration → Plugins → Web services → Manage tokens → Create token
+  - User: admin (or a dedicated service account)
+  - Service: Syllentras AI
 6. Copy the token and set it in `.env`:
-   ```
+  ```
    MOODLE_TOKEN=your_token_here
-   ```
-
+  ```
 7. Restart the API:
-   ```powershell
+  ```powershell
    .\dev.ps1 restart
-   ```
+  ```
 
 ---
 
@@ -142,11 +149,14 @@ The API needs a token to call Moodle's REST API for course content.
 .\dev.ps1 ps        # Check service status
 ```
 
-**Plugin changes** (`plugin/syllentras_ai/`): edit locally, refresh the browser — changes are live immediately via volume mount.
 
-**API changes** (`api/src/`): edit locally, the container auto-reloads via `--watch` — no restart needed.
+| What changed                              | What to do                                |
+| ----------------------------------------- | ----------------------------------------- |
+| PHP logic files (`lib.php`, `classes/**`) | Refresh browser — live via bind mount     |
+| `db/hooks.php` or `db/access.php`         | `.\dev.ps1 moodle-purge`                  |
+| `version.php` bump or new DB schema       | `.\dev.ps1 moodle-upgrade`                |
+| `api/src/` files                          | Container auto-reloads — no action needed |
 
-**Plugin version changes** (`version.php`): visit http://localhost:8000/admin and run the upgrade.
 
 ---
 
@@ -162,7 +172,7 @@ The API needs a token to call Moodle's REST API for course content.
 
 1. Ensure `MOODLE_DOCKER_XDEBUG=1` in `.env` and services are running
 2. In VS Code: **Run and Debug** → select **"Listen: Xdebug (Moodle)"** → press F5
-3. Set breakpoints in `plugin/syllentras_ai/lib.php` — they will be hit on the next page load
+3. Set breakpoints in `plugin/syllentras_ai/classes/hook/output/before_footer.php` — they will be hit on the next page load
 
 > Install recommended VS Code extensions when prompted (`.vscode/extensions.json`). The PHP Debug extension is required for Xdebug.
 
@@ -171,9 +181,11 @@ The API needs a token to call Moodle's REST API for course content.
 ## API Reference
 
 ### `POST /chat/message`
+
 Send a student message and receive an AI response.
 
 **Request body:**
+
 ```json
 {
   "courseId": 2,
@@ -184,6 +196,7 @@ Send a student message and receive an AI response.
 ```
 
 **Response:**
+
 ```json
 {
   "response": "Based on the course material...",
@@ -192,11 +205,13 @@ Send a student message and receive an AI response.
 ```
 
 ### `POST /conversations`
+
 Create a new conversation.
 
 **Request body:** `{ "courseId": 2, "moodleUserId": 5 }`
 
 ### `GET /conversations/:id`
+
 Retrieve a conversation and all its messages.
 
 ---
@@ -205,8 +220,9 @@ Retrieve a conversation and all its messages.
 
 ```
 AI-LMS-Tool/
-├── setup.ps1                    — one-time setup script
-├── dev.ps1                      — dev commands (up/down/logs/etc.)
+├── setup.sh                     — one-time setup (clones moodle deps to ~/AI-LMS-Tool-deps/)
+├── dev.ps1                      — dev commands (PowerShell, auto-delegates to WSL2)
+├── dev.sh                       — dev commands (WSL2 / Linux)
 ├── docker-compose.override.yml  — extends moodle-docker for local dev
 ├── .env.example                 — copy to .env and fill in secrets
 ├── .vscode/
@@ -214,6 +230,8 @@ AI-LMS-Tool/
 │   └── extensions.json          — recommended VS Code extensions
 ├── plugin/
 │   └── syllentras_ai/           — Moodle local plugin (PHP)
+│       ├── classes/hook/output/ — Moodle 5.x hook listeners
+│       ├── db/hooks.php         — hook registration (purge caches after editing)
 └── api/
     ├── Dockerfile               — production build
     └── src/
@@ -228,11 +246,27 @@ AI-LMS-Tool/
 
 See `.env.example` for the full list with descriptions. Key variables:
 
-| Variable              | Description                                               |
-|-----------------------|-----------------------------------------------------------|
-| `MOODLE_DOCKER_WWWROOT` | Absolute path to `./moodle` — set automatically by setup.ps1 |
-| `GEMINI_API_KEY`      | Google Gemini API key                                     |
-| `MOODLE_TOKEN`        | Moodle web service token (generated after first boot)     |
-| `DATABASE_URL`        | PostgreSQL connection string for the API                  |
-| `MOODLE_INTERNAL_URL` | Docker-internal URL to Moodle (`http://webserver` in dev) |
-| `NODE_ENV`            | `development` locally, `production` in deployment         |
+
+| Variable                | Description                                                            |
+| ----------------------- | ---------------------------------------------------------------------- |
+| `MOODLE_DOCKER_WWWROOT` | Absolute path to Moodle source — set automatically by the setup script |
+| `GEMINI_API_KEY`        | Google Gemini API key                                                  |
+| `MOODLE_TOKEN`          | Moodle web service token (generated after first boot)                  |
+| `DATABASE_URL`          | PostgreSQL connection string for the API                               |
+| `MOODLE_INTERNAL_URL`   | Docker-internal URL to Moodle (`http://webserver` in dev)              |
+| `NODE_ENV`              | `development` locally, `production` in deployment                      |
+
+
+---
+
+## Performance Notes (WSL2)
+
+On Windows, Moodle page loads are 10–15 seconds without WSL2 and under 0.5 seconds with it.
+
+**Why:** Moodle includes ~2,000 PHP files on every page load. When `moodle/` lives on the Windows drive (`C:\...`), each file stat crosses the NTFS → WSL2 → Docker bridge at ~5ms each — 10+ seconds of pure filesystem overhead, regardless of PHP opcache.
+
+**The fix:** `setup.sh` clones `moodle/` and `moodle-docker/` into `~/AI-LMS-Tool-deps/` on the WSL2 native Linux filesystem. Docker mounts these at full Linux speed. Your project repo, plugin code, and API stay on Windows — only the large Moodle source tree (20,000+ files) moves.
+
+**How it works transparently:** `dev.ps1` checks if `MOODLE_DOCKER_WWWROOT` starts with `/` (a Linux path). If so, it translates the current Windows directory to `/mnt/c/...` and runs `dev.sh` inside WSL2 automatically. You keep using `.\dev.ps1 up` from PowerShell and get WSL2 performance without thinking about it.
+
+**Shell script line endings:** `.sh` files must use LF line endings to run in WSL2. The repo's `.gitattributes` enforces this on clone. If you see `/usr/bin/env: 'bash\r'` errors, run `sed -i 's/\r//' setup.sh dev.sh` once in a WSL2 terminal.
