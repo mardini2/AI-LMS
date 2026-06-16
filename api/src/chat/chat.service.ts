@@ -34,6 +34,15 @@ export class ChatService {
 
     // ── 1. Resolve or create the conversation ────────────────────────────────
     let conversationId = incomingConvId;
+    if (conversationId) {
+      // Guard against stale IDs (e.g. table was cleared while the widget was
+      // open). findById throws NotFoundException if the row is gone.
+      try {
+        await this.conversationService.findById(conversationId);
+      } catch {
+        conversationId = undefined;
+      }
+    }
     if (!conversationId) {
       const conversation = await this.conversationService.create(courseId);
       conversationId = conversation.id;
