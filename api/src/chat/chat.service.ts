@@ -34,6 +34,7 @@ export class ChatService {
       courseId,
       courseName,
       moodleUserId,
+      userFirstName,
       message,
       conversationId: incomingConvId,
     } = dto;
@@ -78,6 +79,7 @@ export class ChatService {
       systemInstruction: buildSystemPrompt({
         courseId,
         courseName: resolvedCourseName,
+        userFirstName,
         enrolledCourses,
         courseMaterial,
       }),
@@ -111,6 +113,7 @@ export class ChatService {
 function buildSystemPrompt(ctx: {
   courseId: number;
   courseName?: string;
+  userFirstName?: string;
   enrolledCourses: string[];
   courseMaterial: string;
 }): string {
@@ -118,6 +121,12 @@ function buildSystemPrompt(ctx: {
     'You are Syllentras AI, a helpful teaching assistant. Answer the student\'s questions clearly and accurately.',
     'Format responses with markdown (headings, bold, lists) when it improves readability.',
   ];
+
+  if (ctx.userFirstName?.trim()) {
+    lines.push(
+      `The student's first name is ${ctx.userFirstName.trim()}. Address them by name occasionally when it feels natural — not in every sentence.`,
+    );
+  }
 
   if (ctx.enrolledCourses.length > 0) {
     lines.push(

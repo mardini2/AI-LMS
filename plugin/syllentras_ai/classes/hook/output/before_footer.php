@@ -24,6 +24,7 @@ class before_footer {
         $courseid = (int) ($PAGE->course->id ?? 0);
         $coursename = ($courseid > 1) ? format_string($PAGE->course->fullname) : '';
         $moodleuserid = (int) $USER->id;
+        $userfirstname = format_string($USER->firstname);
 
         ob_start();
         ?>
@@ -244,6 +245,7 @@ class before_footer {
             var courseId = <?php echo json_encode($courseid); ?>;
             var courseName = <?php echo json_encode($coursename); ?>;
             var moodleUserId = <?php echo json_encode($moodleuserid); ?>;
+            var userFirstName = <?php echo json_encode($userfirstname); ?>;
             var conversationId = sessionStorage.getItem('syllentras_conversation_id') || null;
 
             var btn       = document.getElementById('syllentras-chat-btn');
@@ -336,6 +338,7 @@ class before_footer {
                         courseId: courseId,
                         courseName: courseName || undefined,
                         moodleUserId: moodleUserId,
+                        userFirstName: userFirstName || undefined,
                         message: text,
                         conversationId: conversationId,
                         history: history

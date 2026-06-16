@@ -33,6 +33,10 @@ export class SendMessageDto {
   @Min(1)
   moodleUserId?: number;
 
+  @IsOptional()
+  @IsString()
+  userFirstName?: string;
+
   @IsString()
   @MinLength(1)
   message: string;
