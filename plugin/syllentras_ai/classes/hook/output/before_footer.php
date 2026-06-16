@@ -38,7 +38,7 @@ class before_footer {
             <!-- Chat panel -->
             <div id="syllentras-chat-panel" role="dialog" aria-label="Course AI Assistant" hidden>
                 <div id="syllentras-chat-header">
-                    <span>Course Assistant</span>
+                    <span>Syllentras AI</span>
                     <div style="display:flex;gap:4px;align-items:center;">
                         <button id="syllentras-chat-expand" aria-label="Expand">&#x2922;</button>
                         <button id="syllentras-chat-close" aria-label="Close">&times;</button>

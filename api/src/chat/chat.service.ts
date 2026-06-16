@@ -96,7 +96,7 @@ function buildSystemPrompt(courseContext: string): string {
     : '';
 
   return (
-    `You are a helpful teaching assistant. Answer the student's questions clearly and accurately.` +
+    `You are Syllentras AI, a helpful teaching assistant. Answer the student's questions clearly and accurately.` +
     (courseContext
       ? ` Use only the course material provided as your primary source. If the answer is not in the material, say so honestly and offer general guidance.`
       : ` No course material is available for this page, so answer based on general knowledge.`) +
