@@ -106,7 +106,9 @@ This takes a few minutes — Moodle installs all its built-in plugins.
 1. Visit [http://localhost:8000/admin](http://localhost:8000/admin)
 2. Log in with `admin` / your `MOODLE_ADMIN_PASSWORD`
 3. Complete the brief setup wizard (site name, timezone)
-4. The Syllentras AI chat button will appear on all Moodle pages
+4. If prompted, click **Upgrade Moodle database now** to register `local_syllentras_ai`
+5. If the plugin does not appear under Site administration → Plugins, run `.\dev.ps1 moodle-upgrade` and then `.\dev.ps1 moodle-purge`
+6. The Syllentras AI chat button will appear on all logged-in Moodle pages
 
 ### 8. Enable Moodle Web Services and get `MOODLE_TOKEN`
 
@@ -129,6 +131,14 @@ Site administration → Users → Permissions → Define roles → Add a new rol
 
 Assign role: Site administration → Users → Permissions → Assign system roles → **Web Service** → add `syllentras_api`
 
+**Grant site-wide read access** (required for course content and enrolled-course lookups)
+
+The API token acts as `syllentras_api`, not the logged-in student. That user must be able to read course content and query any student's enrolments via the webservice functions below. The simplest approach for local dev:
+
+Site administration → Users → Permissions → **Assign system roles** → **Manager** → add `syllentras_api`
+
+> When you add `syllentras_api` as an authorised user on the external service, Moodle may warn about missing `moodle/course:update`. Ignore that — the API only reads data and must not have write access. `moodle/course:viewhiddencourses` on the Web Service role (above) is worth keeping so hidden courses remain readable.
+
 **Create the external service** (Step 5)
 
 Web services Overview → Step 5 → Add:
@@ -137,10 +147,13 @@ Web services Overview → Step 5 → Add:
 **Add functions to the service** (Step 6)
 
 On the new service page → Add functions:
-- `core_course_get_contents`
-- `core_course_get_courses`
-- `core_enrol_get_users_courses`
-- `mod_page_get_pages_by_courses`
+
+| Function | Used for |
+| -------- | -------- |
+| `core_course_get_contents` | Course sections and activity list for LLM context |
+| `mod_page_get_pages_by_courses` | Full HTML body of Page activities |
+| `core_course_get_courses` | Fallback course name lookup when the plugin does not pass one |
+| `core_enrol_get_users_courses` | List of courses the chatting student is enrolled in |
 
 **Add the API user as an authorised user** (Step 7)
 
@@ -214,11 +227,15 @@ Send a student message and receive an AI response.
 ```json
 {
   "courseId": 2,
+  "courseName": "Project Management 101",
+  "moodleUserId": 5,
+  "userFirstName": "Alex",
   "message": "What is the difference between X and Y?",
-  "conversationId": "optional-uuid-for-existing-conversation",
-  "history": []
+  "conversationId": "optional-uuid-for-existing-conversation"
 }
 ```
+
+The plugin sends `courseName`, `moodleUserId`, and `userFirstName` from the logged-in Moodle session. `conversationId` is persisted in the browser (`localStorage`, keyed per user+course) and resumed via `GET /conversations/active` when missing. Chat history is loaded from `GET /conversations/:id/messages` when the student opens the panel — not from the POST body.
 
 **Response:**
 
@@ -316,8 +333,10 @@ See `.env.example` for the full list with descriptions. Key variables:
 | `MOODLE_TOKEN`          | Moodle web service token (generated after first boot)                  |
 | `DATABASE_URL`          | PostgreSQL connection string for the API                               |
 | `MOODLE_INTERNAL_URL`   | Docker-internal URL to Moodle (`http://webserver` in dev)              |
-| `MOODLE_INTERNAL_HOST`  | Host header for internal Moodle requests (`localhost:8000` in dev)     |
+| `MOODLE_INTERNAL_HOST`  | Host header for internal Moodle requests (`localhost:8000` in dev). Required with moodle-docker — requests to `http://webserver` otherwise trigger Behat mode and return HTML instead of JSON. |
 | `NODE_ENV`              | `development` locally, `production` in deployment                      |
+
+Course content fetched from Moodle is cached in the API for 15 minutes. Restart the API container (`.\dev.ps1 restart`) after editing course pages if you need fresh content immediately.
 
 
 ---
