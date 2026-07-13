@@ -91,17 +91,21 @@ class before_footer {
             }
             #syllentras-chat-btn:hover { background: #0052a3; }
             #syllentras-chat-panel {
-                position: absolute;
-                bottom: 64px;
-                right: 0;
+                position: fixed;
+                bottom: 88px;
+                right: 24px;
                 width: 360px;
-                max-height: 520px;
+                min-width: 280px;
+                min-height: 320px;
+                max-width: calc(100vw - 32px);
+                max-height: calc(100vh - 32px);
                 background: #fff;
                 border-radius: 12px;
                 box-shadow: 0 8px 32px rgba(0,0,0,0.18);
                 display: flex;
                 flex-direction: column;
                 overflow: hidden;
+                resize: both;
             }
             #syllentras-chat-panel[hidden] { display: none; }
             #syllentras-chat-header {
@@ -111,6 +115,8 @@ class before_footer {
                 display: flex;
                 justify-content: space-between;
                 align-items: center;
+                cursor: move;
+                user-select: none;
             }
             .syllentras-chat-header-text {
                 display: flex;
@@ -268,6 +274,32 @@ class before_footer {
                 align-self: flex-end;
             }
             #syllentras-chat-send:disabled { opacity: 0.5; cursor: not-allowed; }
+            @media (max-width: 600px) {
+                #syllentras-chat-root {
+                    bottom: 16px;
+                    right: 16px;
+                }
+                #syllentras-chat-panel {
+                    left: 12px !important;
+                    right: 12px !important;
+                    bottom: 80px !important;
+                    top: auto !important;
+                    width: auto !important;
+                    height: auto !important;
+                    max-height: calc(100vh - 104px);
+                    min-width: 0;
+                    resize: none;
+                }
+                #syllentras-chat-header {
+                    cursor: default;
+                }
+                #syllentras-chat-input-row {
+                    flex-direction: column;
+                }
+                #syllentras-chat-send {
+                    align-self: stretch;
+                }
+            }
         </style>
 
         <script src="<?php echo $CFG->wwwroot; ?>/local/syllentras_ai/js/purify.min.js"></script>
@@ -290,6 +322,7 @@ class before_footer {
             var msgs      = document.getElementById('syllentras-chat-messages');
             var loadMore  = document.getElementById('syllentras-chat-load-more');
             var courseEl  = document.getElementById('syllentras-chat-course');
+            var header    = document.getElementById('syllentras-chat-header');
 
             courseEl.textContent = (courseId > 1 && courseName) ? courseName : 'Dashboard';
 
@@ -298,9 +331,25 @@ class before_footer {
             var hasMore = false;
             var loadingHistory = false;
             var loadingOlder = false;
+            var layoutSaveTimer = null;
+            var isDraggingPanel = false;
+            var dragOffsetX = 0;
+            var dragOffsetY = 0;
+            var mobileLayout = window.matchMedia('(max-width: 600px)');
+            var PANEL_MARGIN = 16;
+            var PANEL_MIN_WIDTH = 280;
+            var PANEL_MIN_HEIGHT = 320;
 
             function convStorageKey() {
                 return 'syllentras_conv_' + moodleUserId + '_' + courseId;
+            }
+
+            function layoutStorageKey() {
+                return 'syllentras_layout_' + moodleUserId;
+            }
+
+            function normalLayoutStorageKey() {
+                return 'syllentras_layout_normal_' + moodleUserId;
             }
 
             function loadStoredConversationId() {
@@ -316,24 +365,132 @@ class before_footer {
 
             conversationId = loadStoredConversationId();
 
+            function isMobileLayout() {
+                return mobileLayout.matches;
+            }
+
+            function clamp(value, min, max) {
+                return Math.min(Math.max(value, min), max);
+            }
+
+            function normalizePanelRect(rect) {
+                var maxWidth = Math.max(1, window.innerWidth - PANEL_MARGIN * 2);
+                var maxHeight = Math.max(1, window.innerHeight - PANEL_MARGIN * 2);
+                var minWidth = Math.min(PANEL_MIN_WIDTH, maxWidth);
+                var minHeight = Math.min(PANEL_MIN_HEIGHT, maxHeight);
+                var width = clamp(rect.width || 360, minWidth, maxWidth);
+                var height = clamp(rect.height || panel.offsetHeight || PANEL_MIN_HEIGHT, minHeight, maxHeight);
+                var left = clamp(rect.left, PANEL_MARGIN, Math.max(PANEL_MARGIN, window.innerWidth - width - PANEL_MARGIN));
+                var top = clamp(rect.top, PANEL_MARGIN, Math.max(PANEL_MARGIN, window.innerHeight - height - PANEL_MARGIN));
+
+                return {
+                    left: left,
+                    top: top,
+                    width: width,
+                    height: height
+                };
+            }
+
+            function setPanelRect(rect) {
+                panel.style.left = Math.round(rect.left) + 'px';
+                panel.style.top = Math.round(rect.top) + 'px';
+                panel.style.width = Math.round(rect.width) + 'px';
+                panel.style.height = Math.round(rect.height) + 'px';
+                panel.style.right = 'auto';
+                panel.style.bottom = 'auto';
+            }
+
+            function getCurrentPanelRect() {
+                var rect = panel.getBoundingClientRect();
+                return normalizePanelRect({
+                    left: rect.left,
+                    top: rect.top,
+                    width: rect.width,
+                    height: rect.height
+                });
+            }
+
+            function loadStoredLayout(normalSize) {
+                try {
+                    var raw = localStorage.getItem(normalSize ? normalLayoutStorageKey() : layoutStorageKey());
+                    return raw ? JSON.parse(raw) : null;
+                } catch (e) {
+                    return null;
+                }
+            }
+
+            function savePanelLayout() {
+                if (isMobileLayout() || panel.hidden) return;
+
+                try {
+                    var rect = JSON.stringify(getCurrentPanelRect());
+                    localStorage.setItem(layoutStorageKey(), rect);
+                    if (!isExpanded) {
+                        localStorage.setItem(normalLayoutStorageKey(), rect);
+                    }
+                } catch (e) {
+                    // Layout persistence is optional; chat should keep working if storage is unavailable.
+                }
+            }
+
+            function scheduleLayoutSave() {
+                if (layoutSaveTimer) {
+                    clearTimeout(layoutSaveTimer);
+                }
+                layoutSaveTimer = setTimeout(savePanelLayout, 150);
+            }
+
+            function applyStoredLayout(normalSize) {
+                if (isMobileLayout()) {
+                    return;
+                }
+
+                var stored = loadStoredLayout(normalSize);
+                if (!stored) {
+                    return;
+                }
+
+                setPanelRect(normalizePanelRect(stored));
+            }
+
+            function clampCurrentPanelLayout() {
+                if (isMobileLayout() || panel.hidden) {
+                    return;
+                }
+
+                setPanelRect(getCurrentPanelRect());
+                savePanelLayout();
+            }
+
             var isExpanded = localStorage.getItem('syllentras_expanded') === '1';
 
-            function applyExpandedState() {
+            function applyExpandedState(forceFullHeight) {
                 if (isExpanded) {
                     panel.classList.add('expanded');
                     expandBtn.innerHTML = '&#x2921;';
                     expandBtn.setAttribute('aria-label', 'Collapse');
+                    if (forceFullHeight && !panel.hidden && !isMobileLayout()) {
+                        var expandedRect = getCurrentPanelRect();
+                        expandedRect.top = PANEL_MARGIN;
+                        expandedRect.height = window.innerHeight - PANEL_MARGIN * 2;
+                        setPanelRect(normalizePanelRect(expandedRect));
+                    }
                 } else {
                     panel.classList.remove('expanded');
                     expandBtn.innerHTML = '&#x2922;';
                     expandBtn.setAttribute('aria-label', 'Expand');
+                    applyStoredLayout(true);
                 }
+                clampCurrentPanelLayout();
             }
 
             expandBtn.addEventListener('click', function () {
+                if (!isExpanded) {
+                    savePanelLayout();
+                }
                 isExpanded = !isExpanded;
                 localStorage.setItem('syllentras_expanded', isExpanded ? '1' : '0');
-                applyExpandedState();
+                applyExpandedState(isExpanded);
             });
 
             applyExpandedState();
@@ -341,6 +498,9 @@ class before_footer {
             btn.addEventListener('click', function () {
                 panel.hidden = false;
                 btn.hidden = true;
+                applyStoredLayout();
+                applyExpandedState(false);
+                clampCurrentPanelLayout();
                 ensureHistoryLoaded();
                 input.focus();
             });
@@ -364,6 +524,60 @@ class before_footer {
                     loadOlderMessages();
                 }
             });
+
+            header.addEventListener('pointerdown', function (e) {
+                if (isMobileLayout() || e.button !== 0 || e.target.closest('button')) {
+                    return;
+                }
+
+                var rect = panel.getBoundingClientRect();
+                isDraggingPanel = true;
+                dragOffsetX = e.clientX - rect.left;
+                dragOffsetY = e.clientY - rect.top;
+
+                // Move from bottom/right positioning to fixed coordinates before dragging.
+                setPanelRect(normalizePanelRect({
+                    left: rect.left,
+                    top: rect.top,
+                    width: rect.width,
+                    height: rect.height
+                }));
+                e.preventDefault();
+            });
+
+            document.addEventListener('pointermove', function (e) {
+                if (!isDraggingPanel) {
+                    return;
+                }
+
+                setPanelRect(normalizePanelRect({
+                    left: e.clientX - dragOffsetX,
+                    top: e.clientY - dragOffsetY,
+                    width: panel.offsetWidth,
+                    height: panel.offsetHeight
+                }));
+            });
+
+            document.addEventListener('pointerup', function () {
+                if (!isDraggingPanel) {
+                    return;
+                }
+
+                isDraggingPanel = false;
+                savePanelLayout();
+            });
+
+            window.addEventListener('resize', clampCurrentPanelLayout);
+
+            if (window.ResizeObserver) {
+                new ResizeObserver(function () {
+                    if (!isDraggingPanel) {
+                        clampCurrentPanelLayout();
+                    }
+                }).observe(panel);
+            } else {
+                panel.addEventListener('mouseup', scheduleLayoutSave);
+            }
 
             function renderAssistantContent(el, text) {
                 el.classList.add('syllentras-markdown');
