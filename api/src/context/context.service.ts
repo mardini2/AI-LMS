@@ -6,16 +6,39 @@ import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import { request as httpRequest } from 'node:http';
 import { request as httpsRequest } from 'node:https';
 
+const { PDFParse }: {
+  PDFParse: new (options: { data: Buffer }) => {
+    getText: () => Promise<{ text?: string }>;
+    destroy?: () => Promise<void> | void;
+  };
+} = require('pdf-parse');
+
+export interface CourseContextFilter {
+  sectionId?: number;
+  sectionNumber?: number;
+  sectionName?: string;
+}
+
+interface CourseContextDocument {
+  courseId: number;
+  courseName?: string;
+  sectionId?: number;
+  sectionNumber?: number;
+  sectionName?: string;
+  moduleId?: number;
+  moduleName?: string;
+  contentType: string;
+  fileName?: string;
+  source?: string;
+  lastUpdated?: number;
+  text: string;
+}
+
 /**
- * ContextService — the key abstraction over course content retrieval.
+ * ContextService is the API boundary for Moodle course content.
  *
- * Current implementation: Simple Route
- *   Fetches full course content from Moodle's REST API and caches it in memory.
- *   The entire content is returned for use as LLM context.
- *
- * Future implementation: RAG Route
- *   Swap the internals of getContext() to do a vector similarity search instead.
- *   The method signature stays identical — nothing outside this service needs to change.
+ * It keeps the existing on-demand ingestion model, but stores richer in-memory
+ * documents so section conversations can receive section-specific context.
  */
 @Injectable()
 export class ContextService {
@@ -35,36 +58,19 @@ export class ContextService {
       this.config.get<string>('MOODLE_INTERNAL_HOST') ?? 'localhost:8000';
   }
 
-  /**
-   * Returns relevant course context for the given courseId and question.
-   *
-   * Simple route: ignores the question and returns all cached course content.
-   * RAG route (future): uses the question to retrieve only relevant chunks.
-   */
-  async getContext(courseId: number, question: string): Promise<string> {
-    // Course 0 = non-course page; course 1 = Moodle site home (content disabled by default).
-    // Both have no meaningful course material to send as LLM context.
+  async getContext(
+    courseId: number,
+    question: string,
+    filter: CourseContextFilter = {},
+  ): Promise<string> {
     if (courseId <= 1) {
       return '';
     }
 
-    const cacheKey = `course_context_${courseId}`;
-    const cached = await this.cache.get<string>(cacheKey);
-    if (cached) {
-      this.logger.debug(`Cache hit for course ${courseId}`);
-      return cached;
-    }
-
-    this.logger.log(`Fetching course content from Moodle for course ${courseId}`);
-    const content = await this.fetchCourseContent(courseId);
-    await this.cache.set(cacheKey, content);
-    return content;
+    const documents = await this.getCourseDocuments(courseId);
+    return formatDocumentsForPrompt(documents, filter, question);
   }
 
-  /**
-   * Resolves the human-readable course name. Uses the name from the plugin
-   * when available, otherwise falls back to Moodle's core_course_get_courses.
-   */
   async resolveCourseName(
     courseId: number,
     providedName?: string,
@@ -101,9 +107,6 @@ export class ContextService {
     }
   }
 
-  /**
-   * Returns course names the user is enrolled in (excludes site home).
-   */
   async getEnrolledCourseNames(moodleUserId: number): Promise<string[]> {
     const cacheKey = `user_courses_${moodleUserId}`;
     const cached = await this.cache.get<string[]>(cacheKey);
@@ -131,56 +134,381 @@ export class ContextService {
     }
   }
 
-  /**
-   * Fetches and flattens all text content from a Moodle course via REST API.
-   */
-  private async fetchCourseContent(courseId: number): Promise<string> {
-    const sections = await this.callMoodleApi<MoodleCourseSection[]>(
-      'core_course_get_contents',
-      { courseid: courseId },
-    );
+  private async getCourseDocuments(
+    courseId: number,
+  ): Promise<CourseContextDocument[]> {
+    const cacheKey = `course_context_documents_v3_${courseId}`;
+    const cached = await this.cache.get<CourseContextDocument[]>(cacheKey);
+    if (cached) {
+      this.logger.debug(`Course document cache hit for course ${courseId}`);
+      return cached;
+    }
 
-    const parts: string[] = [];
+    this.logger.log(`Fetching structured course content from Moodle for ${courseId}`);
+    const documents = await this.fetchCourseDocuments(courseId);
+    await this.cache.set(cacheKey, documents);
+    return documents;
+  }
+
+  private async fetchCourseDocuments(
+    courseId: number,
+  ): Promise<CourseContextDocument[]> {
+    const [course, sections, pages, assignments, forums] = await Promise.all([
+      this.fetchCourseSummary(courseId),
+      this.callMoodleApi<MoodleCourseSection[]>('core_course_get_contents', {
+        courseid: courseId,
+      }),
+      this.fetchPages(courseId),
+      this.fetchAssignments(courseId),
+      this.fetchForums(courseId),
+    ]);
+
+    const documents: CourseContextDocument[] = [];
+
+    if (course?.summary) {
+      documents.push({
+        courseId,
+        courseName: course.fullname,
+        contentType: 'course_summary',
+        source: `course:${courseId}`,
+        lastUpdated: course.timemodified,
+        text: stripHtml(course.summary),
+      });
+    }
 
     for (const section of sections) {
-      if (section.name) {
-        parts.push(`\n## ${section.name}\n`);
+      const sectionMeta = normalizeSection(section);
+      if (sectionMeta.summary) {
+        documents.push({
+          courseId,
+          courseName: course?.fullname,
+          ...sectionMeta,
+          contentType: 'section_summary',
+          source: `section:${sectionMeta.sectionId ?? sectionMeta.sectionNumber}`,
+          lastUpdated: section.timemodified,
+          text: sectionMeta.summary,
+        });
       }
 
       for (const module of section.modules ?? []) {
-        if (module.name) {
-          parts.push(`\n### ${module.name}`);
+        const moduleBase = {
+          courseId,
+          courseName: course?.fullname,
+          ...sectionMeta,
+          moduleId: module.id,
+          moduleName: module.name,
+          source: module.url,
+          lastUpdated: module.dates?.find((d) => d.timestamp)?.timestamp,
+        };
+
+        if (module.description) {
+          documents.push({
+            ...moduleBase,
+            contentType: `${module.modname}_description`,
+            text: stripHtml(module.description),
+          });
         }
 
         for (const content of module.contents ?? []) {
           if (content.type === 'content' && content.content) {
-            // Strip HTML tags from inline content.
-            parts.push(stripHtml(content.content));
+            documents.push({
+              ...moduleBase,
+              contentType: `${module.modname}_inline_content`,
+              text: stripHtml(content.content),
+            });
+          }
+
+          if (content.type === 'file' && content.fileurl) {
+            const fileDocument = await this.fetchFileDocument(
+              moduleBase,
+              content,
+              module.modname,
+            );
+            if (fileDocument) {
+              documents.push(fileDocument);
+            }
           }
         }
 
-        // Fetch full HTML content for page-type activities.
-        if (module.modname === 'page' && module.url) {
-          try {
-            const pages = await this.callMoodleApi<{ pages: MoodlePage[] }>(
-              'mod_page_get_pages_by_courses',
-              { courseids: [courseId] },
-            );
-            const page = pages.pages?.find((p) => p.coursemodule === module.id);
-            if (page?.content) {
-              parts.push(stripHtml(page.content));
+        if (module.modname === 'page') {
+          const page = pages.find((p) => p.coursemodule === module.id);
+          if (page?.content) {
+            documents.push({
+              ...moduleBase,
+              contentType: 'page',
+              lastUpdated: page.timemodified ?? moduleBase.lastUpdated,
+              text: stripHtml(page.content),
+            });
+          }
+        }
+
+        if (module.modname === 'assign') {
+          const assignment = assignments.find((a) => a.cmid === module.id);
+          if (assignment?.intro) {
+            documents.push({
+              ...moduleBase,
+              contentType: 'assignment',
+              lastUpdated: assignment.timemodified ?? moduleBase.lastUpdated,
+              text: stripHtml(assignment.intro),
+            });
+          }
+        }
+
+        if (module.modname === 'forum') {
+          const forum = forums.find((f) => f.cmid === module.id);
+          if (forum?.intro) {
+            documents.push({
+              ...moduleBase,
+              contentType: forum.type === 'news' ? 'announcement_forum' : 'forum',
+              lastUpdated: forum.timemodified ?? moduleBase.lastUpdated,
+              text: stripHtml(forum.intro),
+            });
+          }
+
+          if (forum) {
+            const posts = await this.fetchForumPosts(forum);
+            for (const post of posts) {
+              documents.push({
+                ...moduleBase,
+                contentType: forum.type === 'news' ? 'announcement_post' : 'forum_post',
+                source: `forum:${forum.id}:discussion:${post.discussionId}:post:${post.id}`,
+                lastUpdated: post.modified ?? post.created ?? moduleBase.lastUpdated,
+                text: formatForumPostText(post),
+              });
             }
-          } catch {
-            this.logger.warn(`Failed to fetch page content for module ${module.id}`);
           }
         }
       }
     }
 
-    return parts.join('\n').trim();
+    return documents.filter((doc) => doc.text.trim().length > 0);
   }
 
-  private async callMoodleApi<T>(wsfunction: string, params: Record<string, unknown>): Promise<T> {
+  private async fetchCourseSummary(
+    courseId: number,
+  ): Promise<MoodleCourseSummary | undefined> {
+    try {
+      const courses = await this.callMoodleApi<MoodleCourseSummary[]>(
+        'core_course_get_courses',
+        { options: { ids: [courseId] } },
+      );
+      return courses.find((c) => c.id === courseId);
+    } catch (err) {
+      this.logger.warn(`Failed to fetch course summary: ${(err as Error).message}`);
+      return undefined;
+    }
+  }
+
+  private async fetchPages(courseId: number): Promise<MoodlePage[]> {
+    try {
+      const pages = await this.callMoodleApi<{ pages: MoodlePage[] }>(
+        'mod_page_get_pages_by_courses',
+        { courseids: [courseId] },
+      );
+      return pages.pages ?? [];
+    } catch (err) {
+      this.logger.warn(`Failed to fetch pages: ${(err as Error).message}`);
+      return [];
+    }
+  }
+
+  private async fetchAssignments(courseId: number): Promise<MoodleAssignment[]> {
+    try {
+      const response = await this.callMoodleApi<MoodleAssignmentsResponse>(
+        'mod_assign_get_assignments',
+        { courseids: [courseId] },
+      );
+      return response.courses.flatMap((course) => course.assignments ?? []);
+    } catch (err) {
+      this.logger.warn(`Failed to fetch assignments: ${(err as Error).message}`);
+      return [];
+    }
+  }
+
+  private async fetchForums(courseId: number): Promise<MoodleForum[]> {
+    try {
+      return await this.callMoodleApi<MoodleForum[]>(
+        'mod_forum_get_forums_by_courses',
+        { courseids: [courseId] },
+      );
+    } catch (err) {
+      this.logger.warn(`Failed to fetch forums: ${(err as Error).message}`);
+      return [];
+    }
+  }
+
+  private async fetchForumPosts(forum: MoodleForum): Promise<MoodleForumPost[]> {
+    if (!forum.id) {
+      return [];
+    }
+
+    try {
+      const response = await this.callMoodleApi<MoodleForumDiscussionsResponse>(
+        'mod_forum_get_forum_discussions',
+        { forumid: forum.id },
+      );
+      const discussions = response.discussions ?? [];
+      const posts: MoodleForumPost[] = [];
+
+      for (const discussion of discussions) {
+        const discussionId = discussion.discussion ?? discussion.id;
+        if (!discussionId) {
+          continue;
+        }
+
+        try {
+          const postResponse = await this.callMoodleApi<MoodleForumPostsResponse>(
+            'mod_forum_get_discussion_posts',
+            { discussionid: discussionId },
+          );
+          posts.push(
+            ...(postResponse.posts ?? []).map((post) => ({
+              ...post,
+              discussionId,
+            })),
+          );
+        } catch (err) {
+          this.logger.warn(
+            `Failed to fetch posts for forum discussion ${discussionId}: ${(err as Error).message}`,
+          );
+          // Moodle includes the first post in the discussions response, so use it
+          // as a fallback when the post-detail endpoint is unavailable.
+          if (discussion.message) {
+            posts.push({
+              id: discussion.id,
+              discussionId,
+              subject: discussion.subject ?? discussion.name,
+              message: discussion.message,
+              created: discussion.created,
+              modified: discussion.timemodified,
+              userfullname: discussion.userfullname,
+            });
+          }
+        }
+      }
+
+      return posts;
+    } catch (err) {
+      this.logger.warn(
+        `Failed to fetch forum discussions for ${forum.name}: ${(err as Error).message}`,
+      );
+      return [];
+    }
+  }
+
+  private async fetchFileDocument(
+    moduleBase: Omit<CourseContextDocument, 'contentType' | 'text'>,
+    content: MoodleContent,
+    modname: string,
+  ): Promise<CourseContextDocument | null> {
+    const fileName = content.filename;
+    const mimeType = content.mimetype ?? '';
+    const source = content.fileurl ?? moduleBase.source;
+    const baseDocument = {
+      ...moduleBase,
+      source,
+      fileName,
+      lastUpdated: content.timemodified ?? moduleBase.lastUpdated,
+    };
+
+    const isPdf = mimeType === 'application/pdf' || fileName?.toLowerCase().endsWith('.pdf');
+
+    try {
+      if (isPdf) {
+        const buffer = await this.downloadMoodleFile(content.fileurl!);
+        if (!looksLikePdf(buffer)) {
+          throw new Error('Moodle returned a non-PDF response for this PDF file');
+        }
+
+        const parsed = await parsePdfText(buffer);
+        const text = parsed.text?.trim() ?? '';
+        if (!text) {
+          throw new Error('PDF parsed successfully but no text was extracted');
+        }
+
+        return {
+          ...baseDocument,
+          contentType: `${modname}_pdf`,
+          text,
+        };
+      }
+
+      if (mimeType.startsWith('text/') || mimeType === 'application/json') {
+        const buffer = await this.downloadMoodleFile(content.fileurl!);
+        return {
+          ...baseDocument,
+          contentType: `${modname}_file`,
+          text: buffer.toString('utf8'),
+        };
+      }
+
+      return {
+        ...baseDocument,
+        contentType: `${modname}_file_metadata`,
+        text: [fileName, mimeType].filter(Boolean).join(' '),
+      };
+    } catch (err) {
+      this.logger.warn(
+        `Failed to fetch file ${fileName ?? source}: ${(err as Error).message}`,
+      );
+
+      if (isPdf) {
+        // If PDF text is unavailable, do not feed filename-only metadata to the AI
+        // as though it were the file contents.
+        return null;
+      }
+
+      return {
+        ...baseDocument,
+        contentType: `${modname}_file_metadata`,
+        text: [fileName, mimeType].filter(Boolean).join(' '),
+      };
+    }
+  }
+
+  private async downloadMoodleFile(fileUrl: string): Promise<Buffer> {
+    const url = this.normalizeMoodleFileUrl(fileUrl);
+    const hostHeader =
+      url.hostname === 'webserver' ? this.moodleHost : undefined;
+    const { status, body } = await this.httpGetBuffer(url, hostHeader);
+    if (status < 200 || status >= 300) {
+      throw new Error(`Moodle file download failed: ${status}`);
+    }
+
+    const moodleError = parseMoodleJsonError(body);
+    if (moodleError) {
+      throw new Error(`Moodle file access error: ${moodleError}`);
+    }
+
+    return body;
+  }
+
+  private normalizeMoodleFileUrl(fileUrl: string): URL {
+    const url = new URL(fileUrl);
+    const internal = new URL(this.moodleUrl);
+    const externalHost = this.moodleHost.split(':')[0];
+
+    if (
+      url.hostname === externalHost ||
+      url.hostname === 'localhost' ||
+      url.hostname === '127.0.0.1'
+    ) {
+      url.protocol = internal.protocol;
+      url.hostname = internal.hostname;
+      url.port = internal.port;
+    }
+
+    if (!url.searchParams.has('token')) {
+      url.searchParams.set('token', this.moodleToken);
+    }
+
+    return url;
+  }
+
+  private async callMoodleApi<T>(
+    wsfunction: string,
+    params: Record<string, unknown>,
+  ): Promise<T> {
     const url = new URL(`${this.moodleUrl}/webservice/rest/server.php`);
     url.searchParams.set('wstoken', this.moodleToken);
     url.searchParams.set('wsfunction', wsfunction);
@@ -190,9 +518,6 @@ export class ContextService {
       this.appendParams(url.searchParams, key, value);
     }
 
-    // moodle-docker sets $CFG->behat_wwwroot = 'http://webserver'. Requests whose
-    // Host is "webserver" trigger Behat mode. fetch() cannot override Host (forbidden
-    // header), so use node:http with Host: localhost:8000 to match $CFG->wwwroot.
     const hostHeader =
       url.hostname === 'webserver' ? this.moodleHost : undefined;
     const { status, body } = await this.httpGet(url, hostHeader);
@@ -209,7 +534,6 @@ export class ContextService {
       );
     }
 
-    // Moodle returns HTTP 200 even for errors — detect the exception envelope.
     if (data.exception) {
       throw new Error(`Moodle API exception: ${data.message ?? data.exception}`);
     }
@@ -245,6 +569,16 @@ export class ContextService {
     url: URL,
     hostHeader?: string,
   ): Promise<{ status: number; body: string }> {
+    return this.httpGetBuffer(url, hostHeader).then(({ status, body }) => ({
+      status,
+      body: body.toString('utf8'),
+    }));
+  }
+
+  private httpGetBuffer(
+    url: URL,
+    hostHeader?: string,
+  ): Promise<{ status: number; body: Buffer }> {
     const requestFn = url.protocol === 'https:' ? httpsRequest : httpRequest;
 
     return new Promise((resolve, reject) => {
@@ -257,12 +591,15 @@ export class ContextService {
           headers: hostHeader ? { Host: hostHeader } : undefined,
         },
         (res) => {
-          let body = '';
+          const chunks: Buffer[] = [];
           res.on('data', (chunk: Buffer) => {
-            body += chunk.toString();
+            chunks.push(chunk);
           });
           res.on('end', () => {
-            resolve({ status: res.statusCode ?? 500, body });
+            resolve({
+              status: res.statusCode ?? 500,
+              body: Buffer.concat(chunks),
+            });
           });
         },
       );
@@ -272,21 +609,162 @@ export class ContextService {
   }
 }
 
+async function parsePdfText(buffer: Buffer): Promise<{ text?: string }> {
+  const parser = new PDFParse({ data: buffer });
+  try {
+    return await parser.getText();
+  } finally {
+    await parser.destroy?.();
+  }
+}
+
+function looksLikePdf(buffer: Buffer): boolean {
+  return buffer.subarray(0, 5).toString('utf8') === '%PDF-';
+}
+
+function parseMoodleJsonError(buffer: Buffer): string | null {
+  const firstBytes = buffer.subarray(0, 64).toString('utf8').trimStart();
+  if (!firstBytes.startsWith('{')) {
+    return null;
+  }
+
+  try {
+    const data = JSON.parse(buffer.toString('utf8')) as {
+      error?: string;
+      message?: string;
+      exception?: string;
+    };
+    return data.error ?? data.message ?? data.exception ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function normalizeSection(section: MoodleCourseSection): {
+  sectionId?: number;
+  sectionNumber?: number;
+  sectionName?: string;
+  summary?: string;
+} {
+  const rawName = section.name?.trim();
+  const sectionName =
+    rawName && rawName !== '$@NULL@$'
+      ? rawName
+      : section.section === 0
+        ? 'General'
+        : `Section ${section.section}`;
+
+  return {
+    sectionId: section.id,
+    sectionNumber: section.section,
+    sectionName,
+    summary: section.summary ? stripHtml(section.summary) : undefined,
+  };
+}
+
+function formatDocumentsForPrompt(
+  documents: CourseContextDocument[],
+  filter: CourseContextFilter,
+  question: string,
+): string {
+  const matching = documents.filter((doc) => matchesSection(doc, filter));
+  const other = documents.filter((doc) => !matchesSection(doc, filter));
+  const questionTerms = question
+    .toLowerCase()
+    .split(/\W+/)
+    .filter((term) => term.length > 3);
+
+  const ordered =
+    matching.length > 0
+      ? [
+          ...matching.sort((a, b) => relevanceScore(b, questionTerms) - relevanceScore(a, questionTerms)),
+          ...other.sort((a, b) => relevanceScore(b, questionTerms) - relevanceScore(a, questionTerms)),
+        ]
+      : documents.sort((a, b) => relevanceScore(b, questionTerms) - relevanceScore(a, questionTerms));
+
+  return ordered
+    .slice(0, 80)
+    .map(formatDocument)
+    .join('\n\n')
+    .trim();
+}
+
+function matchesSection(
+  doc: CourseContextDocument,
+  filter: CourseContextFilter,
+): boolean {
+  if (filter.sectionId && doc.sectionId === filter.sectionId) {
+    return true;
+  }
+
+  if (
+    filter.sectionNumber !== undefined &&
+    doc.sectionNumber === filter.sectionNumber
+  ) {
+    return true;
+  }
+
+  return !!(
+    filter.sectionName &&
+    doc.sectionName?.toLowerCase() === filter.sectionName.toLowerCase()
+  );
+}
+
+function relevanceScore(
+  doc: CourseContextDocument,
+  questionTerms: string[],
+): number {
+  const haystack = `${doc.sectionName ?? ''} ${doc.moduleName ?? ''} ${doc.fileName ?? ''} ${doc.text}`.toLowerCase();
+  return questionTerms.reduce(
+    (score, term) => score + (haystack.includes(term) ? 1 : 0),
+    0,
+  );
+}
+
+function formatDocument(doc: CourseContextDocument): string {
+  const meta = [
+    `type=${doc.contentType}`,
+    doc.courseName ? `course=${doc.courseName}` : undefined,
+    doc.sectionName ? `section=${doc.sectionName}` : undefined,
+    doc.moduleName ? `module=${doc.moduleName}` : undefined,
+    doc.fileName ? `file=${doc.fileName}` : undefined,
+    doc.source ? `source=${doc.source}` : undefined,
+    doc.lastUpdated ? `updated=${new Date(doc.lastUpdated * 1000).toISOString()}` : undefined,
+  ].filter(Boolean);
+
+  return `### ${doc.sectionName ?? 'Course'}${doc.moduleName ? ` / ${doc.moduleName}` : ''}\nMetadata: ${meta.join('; ')}\n${doc.text}`;
+}
+
+function formatForumPostText(post: MoodleForumPost): string {
+  return [
+    post.subject ? `Subject: ${stripHtml(post.subject)}` : undefined,
+    post.userfullname ? `Author: ${stripHtml(post.userfullname)}` : undefined,
+    stripHtml(post.message),
+  ].filter(Boolean).join('\n');
+}
+
 function stripHtml(html: string): string {
   return html
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
     .replace(/<[^>]+>/g, ' ')
     .replace(/&nbsp;/g, ' ')
     .replace(/&amp;/g, '&')
     .replace(/&lt;/g, '<')
     .replace(/&gt;/g, '>')
     .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
     .replace(/\s{2,}/g, ' ')
     .trim();
 }
 
 interface MoodleCourseSection {
-  name: string;
-  modules: MoodleModule[];
+  id?: number;
+  section?: number;
+  name?: string;
+  summary?: string;
+  timemodified?: number;
+  modules?: MoodleModule[];
 }
 
 interface MoodleModule {
@@ -294,20 +772,81 @@ interface MoodleModule {
   name: string;
   modname: string;
   url?: string;
+  description?: string;
   contents?: MoodleContent[];
+  dates?: Array<{ timestamp?: number }>;
 }
 
 interface MoodleContent {
   type: string;
   content?: string;
+  filename?: string;
+  filepath?: string;
+  fileurl?: string;
+  mimetype?: string;
+  timemodified?: number;
 }
 
 interface MoodlePage {
   coursemodule: number;
   content: string;
+  timemodified?: number;
+}
+
+interface MoodleAssignment {
+  cmid: number;
+  name: string;
+  intro?: string;
+  timemodified?: number;
+}
+
+interface MoodleAssignmentsResponse {
+  courses: Array<{
+    assignments?: MoodleAssignment[];
+  }>;
+}
+
+interface MoodleForum {
+  id: number;
+  cmid: number;
+  name: string;
+  type?: string;
+  intro?: string;
+  timemodified?: number;
+}
+
+interface MoodleForumDiscussion {
+  id: number;
+  discussion?: number;
+  name?: string;
+  subject?: string;
+  message?: string;
+  created?: number;
+  timemodified?: number;
+  userfullname?: string;
+}
+
+interface MoodleForumDiscussionsResponse {
+  discussions?: MoodleForumDiscussion[];
+}
+
+interface MoodleForumPost {
+  id: number;
+  discussionId: number;
+  subject?: string;
+  message: string;
+  created?: number;
+  modified?: number;
+  userfullname?: string;
+}
+
+interface MoodleForumPostsResponse {
+  posts?: Omit<MoodleForumPost, 'discussionId'>[];
 }
 
 interface MoodleCourseSummary {
   id: number;
   fullname: string;
+  summary?: string;
+  timemodified?: number;
 }

@@ -12,6 +12,7 @@ node_modules/
 api/node_modules/
 api/dist/
 api/.tsbuildinfo
+api/tsconfig*.tsbuildinfo
 
 # ── OS / Editor ───────────────────────────────────────────────────────────────
 .DS_Store

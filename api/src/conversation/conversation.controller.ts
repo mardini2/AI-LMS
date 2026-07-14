@@ -1,5 +1,6 @@
 import {
   Controller,
+  Delete,
   Get,
   Post,
   Body,
@@ -11,14 +12,40 @@ import { ConversationService } from './conversation.service';
 import { CreateConversationDto } from './dto/create-conversation.dto';
 import { GetMessagesQueryDto } from './dto/get-messages-query.dto';
 import { FindActiveConversationQueryDto } from './dto/find-active-conversation-query.dto';
+import { ListConversationsQueryDto } from './dto/list-conversations-query.dto';
+import { SearchConversationsQueryDto } from './dto/search-conversations-query.dto';
+import { DeleteConversationQueryDto } from './dto/delete-conversation-query.dto';
+import { OpenConversationDto } from './dto/open-conversation.dto';
 
 @Controller('conversations')
 export class ConversationController {
   constructor(private readonly conversationService: ConversationService) {}
 
+  @Get()
+  list(@Query() query: ListConversationsQueryDto) {
+    return this.conversationService.listForCourse(
+      query.moodleUserId,
+      query.courseId,
+    );
+  }
+
   @Post()
   create(@Body() dto: CreateConversationDto) {
-    return this.conversationService.create(dto.courseId, dto.moodleUserId);
+    return this.conversationService.create(dto.courseId, dto.moodleUserId, dto);
+  }
+
+  /**
+   * Idempotently opens a general or section conversation. Manual conversations
+   * are intentionally created through POST /conversations so they can duplicate
+   * naturally as separate user-created chats.
+   */
+  @Post('open')
+  open(@Body() dto: OpenConversationDto) {
+    return this.conversationService.openConversation(
+      dto.courseId,
+      dto.moodleUserId,
+      dto,
+    );
   }
 
   /**
@@ -33,6 +60,15 @@ export class ConversationController {
     );
 
     return { conversationId: conversation?.id ?? null };
+  }
+
+  @Get('search')
+  search(@Query() query: SearchConversationsQueryDto) {
+    return this.conversationService.searchForCourse(
+      query.moodleUserId,
+      query.courseId,
+      query.q,
+    );
   }
 
   /**
@@ -53,7 +89,19 @@ export class ConversationController {
   }
 
   @Get(':id')
-  findOne(@Param('id', ParseUUIDPipe) id: string) {
-    return this.conversationService.findById(id);
+  findOne(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Query() query: DeleteConversationQueryDto,
+  ) {
+    return this.conversationService.assertOwner(id, query.moodleUserId);
+  }
+
+  @Delete(':id')
+  async delete(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Query() query: DeleteConversationQueryDto,
+  ) {
+    await this.conversationService.deleteConversation(id, query.moodleUserId);
+    return { deleted: true };
   }
 }

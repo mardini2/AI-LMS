@@ -1,18 +1,18 @@
 import { IsIn, IsInt, IsOptional, IsString, Min } from 'class-validator';
 import { ConversationType } from '../entities/conversation.entity';
 
-export class CreateConversationDto {
+export class OpenConversationDto {
   @IsInt()
   @Min(0)
   courseId: number;
 
-  @IsOptional()
   @IsInt()
-  moodleUserId?: number;
+  @Min(1)
+  moodleUserId: number;
 
   @IsOptional()
-  @IsIn(['general', 'section', 'manual'])
-  type?: ConversationType;
+  @IsIn(['general', 'section'])
+  type?: Extract<ConversationType, 'general' | 'section'>;
 
   @IsOptional()
   @IsString()

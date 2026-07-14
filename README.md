@@ -143,6 +143,7 @@ Site administration → Users → Permissions → **Assign system roles** → **
 
 Web services Overview → Step 5 → Add:
 - Name: `Syllentras AI Service`, Enabled: checked, Authorised users only: checked
+- Enable **Can download files** so Moodle file URLs returned by `core_course_get_contents` can be fetched by the API.
 
 **Add functions to the service** (Step 6)
 
@@ -152,6 +153,10 @@ On the new service page → Add functions:
 | -------- | -------- |
 | `core_course_get_contents` | Course sections and activity list for LLM context |
 | `mod_page_get_pages_by_courses` | Full HTML body of Page activities |
+| `mod_assign_get_assignments` | Assignment names and descriptions |
+| `mod_forum_get_forums_by_courses` | Forum and announcement activity metadata |
+| `mod_forum_get_forum_discussions` | Announcement and forum discussion subjects and first posts |
+| `mod_forum_get_discussion_posts` | Full announcement and forum replies |
 | `core_course_get_courses` | Fallback course name lookup when the plugin does not pass one |
 | `core_enrol_get_users_courses` | List of courses the chatting student is enrolled in |
 
@@ -185,6 +190,7 @@ Then do a full restart to pick up the new token:
 .\dev.ps1 restart   # Restart all services
 .\dev.ps1 logs      # Stream all logs
 .\dev.ps1 ps        # Check service status
+.\dev.ps1 install-api # Reinstall API dependencies after package.json changes
 ```
 
 
@@ -194,6 +200,7 @@ Then do a full restart to pick up the new token:
 | `db/hooks.php` or `db/access.php`         | `.\dev.ps1 moodle-purge`                  |
 | `version.php` bump or new DB schema       | `.\dev.ps1 moodle-upgrade`                |
 | `api/src/` files                          | Container auto-reloads — no action needed |
+| `api/package.json`                        | `.\dev.ps1 install-api` or restart stack  |
 
 
 ---
@@ -246,11 +253,23 @@ The plugin sends `courseName`, `moodleUserId`, and `userFirstName` from the logg
 }
 ```
 
+### `GET /conversations`
+
+List conversations for a Moodle user and course, including general, section, and manual conversations.
+
+**Query:** `moodleUserId`, `courseId`
+
 ### `POST /conversations`
 
 Create a new conversation.
 
-**Request body:** `{ "courseId": 2, "moodleUserId": 5 }`
+**Request body:** `{ "courseId": 2, "moodleUserId": 5, "type": "manual", "title": "New conversation" }`
+
+### `POST /conversations/open`
+
+Open or create the general course conversation or a specific section conversation without creating duplicates.
+
+**Request body:** `{ "courseId": 2, "moodleUserId": 5, "type": "section", "sectionId": 12, "sectionNumber": 3, "sectionName": "Week 2" }`
 
 ### `GET /conversations/active`
 
@@ -291,7 +310,21 @@ Messages are returned in chronological order (oldest first within the page). Omi
 
 ### `GET /conversations/:id`
 
-Retrieve a conversation and all its messages.
+Retrieve a conversation after proving ownership.
+
+**Query:** `moodleUserId`
+
+### `GET /conversations/search`
+
+Search conversation titles, tags, section names, and message content.
+
+**Query:** `moodleUserId`, `courseId`, `q`
+
+### `DELETE /conversations/:id`
+
+Delete one conversation and its message history. Moodle course content and ingestion data are not deleted.
+
+**Query:** `moodleUserId`
 
 ---
 

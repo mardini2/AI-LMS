@@ -45,33 +45,35 @@ export class ChatService {
       // Guard against stale IDs (e.g. table was cleared while the widget was
       // open). findById throws NotFoundException if the row is gone.
       try {
-        await this.conversationService.findById(conversationId);
+        if (moodleUserId) {
+          await this.conversationService.assertOwner(conversationId, moodleUserId);
+        } else {
+          await this.conversationService.findById(conversationId);
+        }
       } catch {
         conversationId = undefined;
       }
     }
     if (!conversationId) {
-      const existing = moodleUserId
-        ? await this.conversationService.findLatestForUserCourse(
-            moodleUserId,
-            courseId,
-          )
-        : null;
-      if (existing) {
-        conversationId = existing.id;
-      } else {
-        const conversation = await this.conversationService.create(
-          courseId,
-          moodleUserId,
-        );
-        conversationId = conversation.id;
-      }
+      const conversation = moodleUserId
+        ? await this.conversationService.openConversation(courseId, moodleUserId, {
+            type: 'general',
+            title: 'Main',
+          })
+        : await this.conversationService.create(courseId, moodleUserId);
+      conversationId = conversation.id;
     }
+
+    const conversation = await this.conversationService.findById(conversationId);
 
     // ── 2. Fetch course context (cached) ─────────────────────────────────────
     const [courseMaterial, resolvedCourseName, enrolledCourses] =
       await Promise.all([
-        this.contextService.getContext(courseId, message),
+        this.contextService.getContext(courseId, message, {
+          sectionId: conversation.sectionId,
+          sectionNumber: conversation.sectionNumber,
+          sectionName: conversation.sectionName,
+        }),
         this.contextService.resolveCourseName(courseId, courseName),
         moodleUserId
           ? this.contextService.getEnrolledCourseNames(moodleUserId)
@@ -94,6 +96,9 @@ export class ChatService {
         courseName: resolvedCourseName,
         userFirstName,
         enrolledCourses,
+        conversationTitle: conversation.title,
+        conversationType: conversation.type,
+        sectionName: conversation.sectionName,
         courseMaterial,
       }),
       safetySettings: [
@@ -128,17 +133,20 @@ function buildSystemPrompt(ctx: {
   courseName?: string;
   userFirstName?: string;
   enrolledCourses: string[];
+  conversationTitle?: string;
+  conversationType?: string;
+  sectionName?: string;
   courseMaterial: string;
 }): string {
   const lines: string[] = [
     'You are Syllentras AI, a helpful teaching assistant. Answer the student\'s questions clearly and accurately.',
     'Format responses with markdown (headings, bold, lists) when it improves readability.',
-    'If this is the first message in the conversation, introduce yourself as Syllentras AI and ask the student how you can help them and what you can do for them.',
+    'Answer the student directly. Do not repeat welcome messages or introduce yourself unless the student asks who you are.',
   ];
 
   if (ctx.userFirstName?.trim()) {
     lines.push(
-      `The student's first name is ${ctx.userFirstName.trim()}. Address them by name occasionally when it feels natural — not in every sentence.`,
+      `The student's first name is ${ctx.userFirstName.trim()}. Do not start answers with a greeting or the student's name unless the student explicitly asks for one.`,
     );
   }
 
@@ -159,6 +167,14 @@ function buildSystemPrompt(ctx: {
     lines.push(
       'The student is on the dashboard or site home, not a specific course page. Answer based on general knowledge or their enrolled courses listed above.',
     );
+  }
+
+  if (ctx.conversationType === 'section' && ctx.sectionName) {
+    lines.push(
+      `The active conversation is specifically for the course section: ${ctx.sectionName}. Keep the answer focused on that section when possible, but use other course material when it helps.`,
+    );
+  } else if (ctx.conversationTitle) {
+    lines.push(`The active conversation is: ${ctx.conversationTitle}.`);
   }
 
   if (ctx.courseMaterial) {
