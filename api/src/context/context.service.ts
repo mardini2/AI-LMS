@@ -335,7 +335,6 @@ export class ContextService {
 
   private async fetchAssignments(courseId: number): Promise<MoodleAssignment[]> {
     try {
-      console.log('fetchAssignments running');
       const response = await this.callMoodleApi<MoodleAssignmentsResponse>(
         'mod_assign_get_assignments',
         { courseids: [courseId], includenotenrolledcourses: 1 },
