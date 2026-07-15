@@ -149,16 +149,21 @@ Web services Overview → Step 5 → Add:
 
 On the new service page → Add functions:
 
-| Function | Used for |
-| -------- | -------- |
-| `core_course_get_contents` | Course sections and activity list for LLM context |
-| `mod_page_get_pages_by_courses` | Full HTML body of Page activities |
-| `mod_assign_get_assignments` | Assignment names and descriptions |
-| `mod_forum_get_forums_by_courses` | Forum and announcement activity metadata |
-| `mod_forum_get_forum_discussions` | Announcement and forum discussion subjects and first posts |
-| `mod_forum_get_discussion_posts` | Full announcement and forum replies |
-| `core_course_get_courses` | Fallback course name lookup when the plugin does not pass one |
-| `core_enrol_get_users_courses` | List of courses the chatting student is enrolled in |
+| Function | Description | Required capabilities |
+| -------- | ----------- | --------------------- |
+| `core_course_get_contents` | Get course contents | `moodle/course:update`, `moodle/course:viewhiddencourses` |
+| `core_course_get_course_module` | Return information about a course module | |
+| `core_course_get_course_module_by_instance` | Return information about a given module name and instance id | |
+| `core_course_get_courses` | Return course details | `moodle/course:view`, `moodle/course:update`, `moodle/course:viewhiddencourses` |
+| `core_course_get_courses_by_field` | Get courses matching a specific field (id/s, shortname, idnumber, category) | |
+| `core_enrol_get_users_courses` | Get the list of courses where a user is enrolled in | `moodle/course:viewparticipants` |
+| `mod_assign_get_assignments` | Returns the courses and assignments for the users capability | |
+| `mod_forum_get_discussion_posts` | Returns a list of forum posts for a discussion. | `mod/forum:viewdiscussion`, `mod/forum:viewqandawithoutposting` |
+| `mod_forum_get_discussion_posts_by_userid` | Returns a list of forum posts for a discussion for a user. | `mod/forum:viewdiscussion`, `mod/forum:viewqandawithoutposting` |
+| `mod_forum_get_forum_discussions` | Returns a list of forum discussions optionally sorted and paginated. | `mod/forum:viewdiscussion`, `mod/forum:viewqandawithoutposting` |
+| `mod_forum_get_forums_by_courses` | Returns a list of forum instances in a provided set of courses, if no courses are provided then all the forum instances the user has access to will be returned. | `mod/forum:viewdiscussion` |
+| `mod_page_get_pages_by_courses` | Returns a list of pages in a provided list of courses, if no list is provided all pages that the user can view will be returned. | `mod/page:view` |
+| `mod_page_view_page` | Simulate the view.php web interface page: trigger events, completion, etc... | `mod/page:view` |
 
 **Add the API user as an authorised user** (Step 7)
 
