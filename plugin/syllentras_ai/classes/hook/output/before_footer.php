@@ -73,6 +73,7 @@ class before_footer {
                         </div>
                         <div id="syllentras-chat-conversations"></div>
                     </aside>
+                    <div id="syllentras-chat-sidebar-resizer" role="separator" aria-label="Resize conversation sidebar" aria-orientation="vertical"></div>
 
                     <main id="syllentras-chat-main">
                         <div id="syllentras-chat-active-meta">
@@ -92,6 +93,14 @@ class before_footer {
                             <button id="syllentras-chat-send" aria-label="Send">Send</button>
                         </div>
                     </main>
+                </div>
+
+                <div id="syllentras-chat-modal" hidden>
+                    <div class="syllentras-modal-card" role="dialog" aria-modal="true" aria-labelledby="syllentras-modal-title">
+                        <div id="syllentras-modal-title" class="syllentras-modal-title"></div>
+                        <div id="syllentras-modal-body" class="syllentras-modal-body"></div>
+                        <div id="syllentras-modal-actions" class="syllentras-modal-actions"></div>
+                    </div>
                 </div>
             </div>
         </div>
@@ -202,10 +211,22 @@ class before_footer {
             }
             #syllentras-chat-sidebar {
                 width: 190px;
-                border-right: 1px solid #e0e0e0;
                 background: #f8f9fb;
                 padding: 10px;
                 overflow-y: auto;
+                flex: 0 0 190px;
+                min-width: 150px;
+                max-width: 340px;
+            }
+            #syllentras-chat-sidebar-resizer {
+                width: 6px;
+                flex: 0 0 6px;
+                cursor: col-resize;
+                background: linear-gradient(to right, #e0e0e0, #f8f9fb);
+            }
+            #syllentras-chat-sidebar-resizer:hover,
+            #syllentras-chat-sidebar-resizer.resizing {
+                background: #b9d6f2;
             }
             .syllentras-sidebar-row {
                 display: flex;
@@ -241,12 +262,14 @@ class before_footer {
                 text-transform: uppercase;
             }
             .syllentras-conversation-item {
+                box-sizing: border-box;
+                position: relative;
                 width: 100%;
                 text-align: left;
                 border: 1px solid transparent;
                 background: transparent;
                 border-radius: 7px;
-                padding: 7px;
+                padding: 7px 30px 7px 7px;
                 cursor: pointer;
                 color: #222;
                 margin-bottom: 4px;
@@ -262,6 +285,13 @@ class before_footer {
                 overflow: hidden;
                 text-overflow: ellipsis;
                 white-space: nowrap;
+            }
+            .syllentras-conversation-name.pinned::before {
+                content: "Pinned ";
+                color: #0066cc;
+                font-size: 10px;
+                font-weight: 700;
+                text-transform: uppercase;
             }
             .syllentras-conversation-tag {
                 display: block;
@@ -279,30 +309,61 @@ class before_footer {
                 line-height: 1.25;
                 margin-top: 4px;
             }
-            .syllentras-conversation-delete {
+            .syllentras-conversation-menu-btn {
+                position: absolute;
+                right: 5px;
+                top: 6px;
+                width: 22px;
+                height: 22px;
                 border: none;
                 background: transparent;
-                color: #9a1c1c;
+                border-radius: 50%;
+                color: #555;
                 cursor: pointer;
-                font-size: 11px;
-                margin: -2px 0 5px 6px;
                 padding: 0;
             }
-            #syllentras-chat-confirm {
-                border-bottom: 1px solid #e0e0e0;
-                background: #fff7e6;
-                padding: 10px 12px;
+            .syllentras-conversation-menu-btn:hover,
+            .syllentras-conversation-menu-btn.open {
+                background: #ddeafa;
+                color: #111;
             }
+            .syllentras-conversation-menu {
+                background: #fff;
+                border: 1px solid #d7dce2;
+                border-radius: 8px;
+                box-shadow: 0 8px 24px rgba(0,0,0,0.16);
+                min-width: 116px;
+                padding: 4px;
+                position: fixed;
+                z-index: 10001;
+            }
+            .syllentras-conversation-menu[hidden] { display: none; }
+            .syllentras-menu-action {
+                background: transparent;
+                border: none;
+                border-radius: 6px;
+                color: #222;
+                cursor: pointer;
+                display: block;
+                font-size: 12px;
+                padding: 7px 8px;
+                text-align: left;
+                width: 100%;
+            }
+            .syllentras-menu-action:hover { background: #edf4fc; }
+            .syllentras-menu-action:disabled {
+                color: #999;
+                cursor: not-allowed;
+            }
+            .syllentras-menu-action.danger { color: #9a1c1c; }
             #syllentras-chat-new-prompt {
                 border-bottom: 1px solid #e0e0e0;
                 background: #f8f9fb;
                 padding: 10px 12px;
             }
-            #syllentras-chat-confirm[hidden],
             #syllentras-chat-new-prompt[hidden] {
                 display: none;
             }
-            #syllentras-chat-confirm-text,
             #syllentras-chat-new-prompt label {
                 color: #222;
                 font-size: 13px;
@@ -333,7 +394,10 @@ class before_footer {
             .syllentras-confirm-delete,
             .syllentras-confirm-cancel,
             .syllentras-new-create,
-            .syllentras-new-cancel {
+            .syllentras-new-cancel,
+            .syllentras-modal-primary,
+            .syllentras-modal-secondary,
+            .syllentras-modal-danger {
                 border: none;
                 border-radius: 6px;
                 cursor: pointer;
@@ -349,9 +413,72 @@ class before_footer {
                 color: #fff;
             }
             .syllentras-confirm-cancel,
-            .syllentras-new-cancel {
+            .syllentras-new-cancel,
+            .syllentras-modal-secondary {
                 background: #e6e6e6;
                 color: #222;
+            }
+            .syllentras-modal-primary {
+                background: #0066cc;
+                color: #fff;
+            }
+            .syllentras-modal-danger {
+                background: #9a1c1c;
+                color: #fff;
+            }
+            #syllentras-chat-modal {
+                align-items: center;
+                background: rgba(18, 31, 48, 0.38);
+                display: flex;
+                inset: 0;
+                justify-content: center;
+                padding: 18px;
+                position: absolute;
+                z-index: 10000;
+            }
+            #syllentras-chat-modal[hidden] { display: none; }
+            .syllentras-modal-card {
+                background: #fff;
+                border-radius: 12px;
+                box-shadow: 0 16px 36px rgba(0,0,0,0.24);
+                color: #222;
+                max-width: 360px;
+                padding: 16px;
+                width: min(360px, 100%);
+            }
+            .syllentras-modal-title {
+                font-size: 15px;
+                font-weight: 700;
+                margin-bottom: 8px;
+            }
+            .syllentras-modal-body {
+                font-size: 13px;
+                line-height: 1.4;
+                margin-bottom: 12px;
+            }
+            .syllentras-modal-body input,
+            .syllentras-modal-body textarea {
+                border: 1px solid #ccc;
+                border-radius: 6px;
+                box-sizing: border-box;
+                font: inherit;
+                margin-top: 8px;
+                padding: 7px 8px;
+                width: 100%;
+            }
+            .syllentras-modal-body textarea {
+                min-height: 160px;
+                resize: vertical;
+            }
+            .syllentras-modal-error {
+                color: #9a1c1c;
+                font-size: 12px;
+                margin-top: 6px;
+            }
+            .syllentras-modal-actions {
+                display: flex;
+                gap: 8px;
+                justify-content: flex-end;
             }
             #syllentras-chat-main {
                 flex: 1;
@@ -512,9 +639,13 @@ class before_footer {
                 }
                 #syllentras-chat-sidebar {
                     width: auto;
+                    flex: 0 0 auto;
                     max-height: 150px;
                     border-right: none;
                     border-bottom: 1px solid #e0e0e0;
+                }
+                #syllentras-chat-sidebar-resizer {
+                    display: none;
                 }
                 #syllentras-chat-input-row {
                     flex-direction: column;
@@ -550,12 +681,16 @@ class before_footer {
             var loadMore  = document.getElementById('syllentras-chat-load-more');
             var courseEl  = document.getElementById('syllentras-chat-course');
             var header    = document.getElementById('syllentras-chat-header');
+            var sidebar   = document.getElementById('syllentras-chat-sidebar');
+            var sidebarResizer = document.getElementById('syllentras-chat-sidebar-resizer');
+            var modal     = document.getElementById('syllentras-chat-modal');
             var conversationsEl = document.getElementById('syllentras-chat-conversations');
             var searchInput = document.getElementById('syllentras-chat-search');
             var newBtn = document.getElementById('syllentras-chat-new');
             var activeTitle = document.getElementById('syllentras-chat-active-title');
             var activeTag = document.getElementById('syllentras-chat-active-tag');
             var pendingDeleteConversation = null;
+            var openMenu = null;
 
             courseEl.textContent = (courseId > 1 && courseName) ? courseName : 'Dashboard';
 
@@ -566,10 +701,13 @@ class before_footer {
             var loadingOlder = false;
             var layoutSaveTimer = null;
             var isDraggingPanel = false;
+            var isResizingSidebar = false;
             var dragOffsetX = 0;
             var dragOffsetY = 0;
             var mobileLayout = window.matchMedia('(max-width: 700px)');
             var isExpanded = localStorage.getItem('syllentras_expanded') === '1';
+            var SIDEBAR_MIN_WIDTH = 150;
+            var SIDEBAR_MAX_WIDTH = 340;
 
             function layoutStorageKey() {
                 return 'syllentras_layout_' + moodleUserId;
@@ -577,6 +715,10 @@ class before_footer {
 
             function normalLayoutStorageKey() {
                 return 'syllentras_layout_normal_' + moodleUserId;
+            }
+
+            function sidebarWidthStorageKey() {
+                return 'syllentras_sidebar_width_' + moodleUserId;
             }
 
             function isMobileLayout() {
@@ -647,6 +789,25 @@ class before_footer {
                 layoutSaveTimer = setTimeout(savePanelLayout, 150);
             }
 
+            function applyStoredSidebarWidth() {
+                if (isMobileLayout()) return;
+                var stored = parseInt(localStorage.getItem(sidebarWidthStorageKey()) || '', 10);
+                if (!Number.isNaN(stored)) setSidebarWidth(stored);
+            }
+
+            function setSidebarWidth(width) {
+                var panelWidth = panel.getBoundingClientRect().width || 620;
+                var maxByPanel = Math.max(SIDEBAR_MIN_WIDTH, panelWidth - 280);
+                var nextWidth = clamp(width, SIDEBAR_MIN_WIDTH, Math.min(SIDEBAR_MAX_WIDTH, maxByPanel));
+                sidebar.style.width = nextWidth + 'px';
+                sidebar.style.flexBasis = nextWidth + 'px';
+            }
+
+            function saveSidebarWidth() {
+                if (isMobileLayout()) return;
+                localStorage.setItem(sidebarWidthStorageKey(), String(Math.round(sidebar.getBoundingClientRect().width)));
+            }
+
             function applyStoredLayout(normalSize) {
                 if (isMobileLayout()) return;
                 var stored = loadStoredLayout(normalSize);
@@ -692,6 +853,7 @@ class before_footer {
                 panel.hidden = false;
                 btn.hidden = true;
                 applyStoredLayout();
+                applyStoredSidebarWidth();
                 applyExpandedState(false);
                 clampCurrentPanelLayout();
             }
@@ -866,9 +1028,11 @@ class before_footer {
 
             function renderConversationList(conversations) {
                 conversationsEl.innerHTML = '';
-                renderConversationGroup('Main', conversations.filter(function (c) { return c.type === 'general'; }));
-                renderConversationGroup('Course Sections', conversations.filter(function (c) { return c.type === 'section'; }));
-                renderConversationGroup('Other Conversations', conversations.filter(function (c) { return c.type === 'manual'; }));
+                var pinned = conversations.filter(function (c) { return c.pinned; });
+                if (pinned.length) renderConversationGroup('Pinned', pinned);
+                renderConversationGroup('Main', conversations.filter(function (c) { return !c.pinned && c.type === 'general'; }));
+                renderConversationGroup('Course Sections', conversations.filter(function (c) { return !c.pinned && c.type === 'section'; }));
+                renderConversationGroup('Other Conversations', conversations.filter(function (c) { return !c.pinned && c.type === 'manual'; }));
                 updateActiveConversationButtons();
             }
 
@@ -882,12 +1046,18 @@ class before_footer {
             }
 
             function renderConversationItem(conversation, matchedMessage) {
-                var item = document.createElement('button');
-                item.type = 'button';
+                var item = document.createElement('div');
+                item.tabIndex = 0;
+                item.setAttribute('role', 'button');
                 item.className = 'syllentras-conversation-item';
                 item.dataset.conversationId = conversation.id;
-                item.innerHTML = '<span class="syllentras-conversation-name"></span><span class="syllentras-conversation-tag"></span>';
-                item.querySelector('.syllentras-conversation-name').textContent = conversation.title || 'Conversation';
+                item.innerHTML =
+                    '<span class="syllentras-conversation-name"></span>' +
+                    '<span class="syllentras-conversation-tag"></span>' +
+                    '<button type="button" class="syllentras-conversation-menu-btn" aria-label="Conversation menu" aria-haspopup="menu">&#8942;</button>';
+                var nameEl = item.querySelector('.syllentras-conversation-name');
+                nameEl.textContent = conversation.title || 'Conversation';
+                nameEl.classList.toggle('pinned', !!conversation.pinned);
                 item.querySelector('.syllentras-conversation-tag').textContent = conversation.tag || '';
                 if (matchedMessage && matchedMessage.content) {
                     var match = document.createElement('span');
@@ -898,46 +1068,17 @@ class before_footer {
                 item.addEventListener('click', function () {
                     openConversationById(conversation.id);
                 });
-                conversationsEl.appendChild(item);
-
-                var del = document.createElement('button');
-                del.type = 'button';
-                del.className = 'syllentras-conversation-delete';
-                del.textContent = 'Delete';
-                del.addEventListener('click', function (e) {
-                    e.stopPropagation();
-                    deleteConversation(conversation);
-                });
-                conversationsEl.appendChild(del);
-            }
-
-            function ensureDeleteConfirmation() {
-                var existing = document.getElementById('syllentras-chat-confirm');
-                if (existing) return existing;
-
-                var confirm = document.createElement('div');
-                confirm.id = 'syllentras-chat-confirm';
-                confirm.hidden = true;
-                confirm.setAttribute('role', 'dialog');
-                confirm.setAttribute('aria-label', 'Confirm conversation deletion');
-                confirm.innerHTML =
-                    '<div id="syllentras-chat-confirm-text"></div>' +
-                    '<div class="syllentras-confirm-actions">' +
-                    '<button type="button" class="syllentras-confirm-delete">Delete</button>' +
-                    '<button type="button" class="syllentras-confirm-cancel">Cancel</button>' +
-                    '</div>';
-                document.getElementById('syllentras-chat-main').insertBefore(confirm, document.getElementById('syllentras-chat-active-meta'));
-
-                confirm.querySelector('.syllentras-confirm-delete').addEventListener('click', confirmDeleteConversation);
-                confirm.querySelector('.syllentras-confirm-cancel').addEventListener('click', cancelDeleteConversation);
-                confirm.addEventListener('keydown', function (e) {
-                    if (e.key === 'Escape') {
+                item.addEventListener('keydown', function (e) {
+                    if (e.key === 'Enter' || e.key === ' ') {
                         e.preventDefault();
-                        cancelDeleteConversation();
+                        openConversationById(conversation.id);
                     }
                 });
-
-                return confirm;
+                item.querySelector('.syllentras-conversation-menu-btn').addEventListener('click', function (e) {
+                    e.stopPropagation();
+                    showConversationMenu(e.currentTarget, conversation);
+                });
+                conversationsEl.appendChild(item);
             }
 
             function ensureNewConversationPrompt() {
@@ -974,6 +1115,78 @@ class before_footer {
                 return prompt;
             }
 
+            function closeConversationMenu() {
+                if (openMenu) {
+                    openMenu.remove();
+                    openMenu = null;
+                }
+                Array.from(conversationsEl.querySelectorAll('.syllentras-conversation-menu-btn.open')).forEach(function (btn) {
+                    btn.classList.remove('open');
+                });
+            }
+
+            function showConversationMenu(anchor, conversation) {
+                closeConversationMenu();
+                anchor.classList.add('open');
+
+                var menu = document.createElement('div');
+                menu.className = 'syllentras-conversation-menu';
+                menu.setAttribute('role', 'menu');
+                addMenuAction(menu, 'Rename', function () { showRenameModal(conversation); }, conversation.type !== 'manual');
+                addMenuAction(menu, conversation.pinned ? 'Unpin' : 'Pin', function () { togglePinConversation(conversation); });
+                addMenuAction(menu, 'Export', function () { showExportModal(conversation); });
+                addMenuAction(menu, 'Delete', function () { deleteConversation(conversation); }, false, true);
+                document.body.appendChild(menu);
+
+                var rect = anchor.getBoundingClientRect();
+                menu.style.left = Math.max(8, rect.right - 124) + 'px';
+                menu.style.top = Math.min(window.innerHeight - menu.offsetHeight - 8, rect.bottom + 4) + 'px';
+                openMenu = menu;
+            }
+
+            function addMenuAction(menu, label, handler, disabled, danger) {
+                var button = document.createElement('button');
+                button.type = 'button';
+                button.className = 'syllentras-menu-action' + (danger ? ' danger' : '');
+                button.textContent = label;
+                button.disabled = !!disabled;
+                button.addEventListener('click', function (e) {
+                    e.stopPropagation();
+                    closeConversationMenu();
+                    if (!button.disabled) handler();
+                });
+                menu.appendChild(button);
+            }
+
+            function showModal(title, bodyNode, actions) {
+                closeConversationMenu();
+                modal.querySelector('#syllentras-modal-title').textContent = title;
+                var body = modal.querySelector('#syllentras-modal-body');
+                var actionArea = modal.querySelector('#syllentras-modal-actions');
+                body.innerHTML = '';
+                actionArea.innerHTML = '';
+                if (typeof bodyNode === 'string') {
+                    body.textContent = bodyNode;
+                } else {
+                    body.appendChild(bodyNode);
+                }
+                actions.forEach(function (action) {
+                    var button = document.createElement('button');
+                    button.type = 'button';
+                    button.className = action.className || 'syllentras-modal-secondary';
+                    button.textContent = action.label;
+                    button.addEventListener('click', action.onClick);
+                    actionArea.appendChild(button);
+                });
+                modal.hidden = false;
+                var firstButton = actionArea.querySelector('button');
+                if (firstButton) firstButton.focus();
+            }
+
+            function closeModal() {
+                modal.hidden = true;
+            }
+
             function updateActiveConversationButtons() {
                 Array.from(conversationsEl.querySelectorAll('.syllentras-conversation-item')).forEach(function (item) {
                     item.classList.toggle('active', item.dataset.conversationId === conversationId);
@@ -982,18 +1195,20 @@ class before_footer {
 
             function deleteConversation(conversation) {
                 var title = conversation.title || 'this conversation';
-                var confirm = ensureDeleteConfirmation();
                 pendingDeleteConversation = conversation;
-                confirm.querySelector('#syllentras-chat-confirm-text').textContent =
-                    'Delete "' + title + '" and its history? Course content will not be deleted.';
-                confirm.hidden = false;
-                confirm.querySelector('.syllentras-confirm-cancel').focus();
+                showModal(
+                    'Delete conversation',
+                    'Delete "' + title + '" and its history? Course content will not be deleted.',
+                    [
+                        { label: 'Cancel', className: 'syllentras-modal-secondary', onClick: cancelDeleteConversation },
+                        { label: 'Delete', className: 'syllentras-modal-danger', onClick: confirmDeleteConversation }
+                    ]
+                );
             }
 
             function cancelDeleteConversation() {
-                var confirm = ensureDeleteConfirmation();
                 pendingDeleteConversation = null;
-                confirm.hidden = true;
+                closeModal();
             }
 
             function confirmDeleteConversation() {
@@ -1013,6 +1228,171 @@ class before_footer {
                     }
                     return loadConversations();
                 });
+            }
+
+            function showRenameModal(conversation) {
+                var wrapper = document.createElement('div');
+                wrapper.textContent = 'Enter a new name for this conversation.';
+                var inputEl = document.createElement('input');
+                inputEl.type = 'text';
+                inputEl.maxLength = 120;
+                inputEl.value = conversation.title || '';
+                var error = document.createElement('div');
+                error.className = 'syllentras-modal-error';
+                error.hidden = true;
+                wrapper.appendChild(inputEl);
+                wrapper.appendChild(error);
+
+                showModal('Rename conversation', wrapper, [
+                    { label: 'Cancel', className: 'syllentras-modal-secondary', onClick: closeModal },
+                    {
+                        label: 'Rename',
+                        className: 'syllentras-modal-primary',
+                        onClick: function () {
+                            var title = inputEl.value.trim();
+                            if (!title) {
+                                error.textContent = 'Please enter a conversation name.';
+                                error.hidden = false;
+                                inputEl.focus();
+                                return;
+                            }
+                            updateConversation(conversation.id, { title: title })
+                                .then(function (updated) {
+                                    closeModal();
+                                    if (conversation.id === conversationId) setActiveConversation(updated);
+                                    return loadConversations();
+                                })
+                                .catch(function () {
+                                    error.textContent = 'Could not rename this conversation.';
+                                    error.hidden = false;
+                                });
+                        }
+                    }
+                ]);
+                inputEl.focus();
+                inputEl.select();
+            }
+
+            function togglePinConversation(conversation) {
+                updateConversation(conversation.id, { pinned: !conversation.pinned })
+                    .then(function (updated) {
+                        if (conversation.id === conversationId) activeConversation = updated;
+                        return loadConversations();
+                    });
+            }
+
+            function updateConversation(id, changes) {
+                return fetchJson('/conversations/' + encodeURIComponent(id)
+                    + '?moodleUserId=' + encodeURIComponent(moodleUserId), {
+                    method: 'PATCH',
+                    body: JSON.stringify(changes)
+                });
+            }
+
+            function showExportModal(conversation) {
+                fetchConversationMessages(conversation.id)
+                    .then(function (messages) {
+                        var exportText = formatConversationExport(conversation, messages);
+                        var wrapper = document.createElement('div');
+                        wrapper.textContent = 'Copy or download this conversation.';
+                        var textArea = document.createElement('textarea');
+                        textArea.readOnly = true;
+                        textArea.value = exportText;
+                        wrapper.appendChild(textArea);
+
+                        showModal('Export conversation', wrapper, [
+                            { label: 'Close', className: 'syllentras-modal-secondary', onClick: closeModal },
+                            {
+                                label: 'Copy',
+                                className: 'syllentras-modal-primary',
+                                onClick: function () {
+                                    copyText(exportText);
+                                }
+                            },
+                            {
+                                label: 'Download',
+                                className: 'syllentras-modal-primary',
+                                onClick: function () {
+                                    downloadText(safeFileName(conversation.title || 'conversation') + '.txt', exportText);
+                                }
+                            }
+                        ]);
+                        textArea.focus();
+                        textArea.select();
+                    })
+                    .catch(function () {
+                        showModal('Export conversation', 'Could not load this conversation for export.', [
+                            { label: 'Close', className: 'syllentras-modal-secondary', onClick: closeModal }
+                        ]);
+                    });
+            }
+
+            function fetchConversationMessages(id) {
+                var all = [];
+                function loadPage(before) {
+                    var path = '/conversations/' + encodeURIComponent(id)
+                        + '/messages?moodleUserId=' + encodeURIComponent(moodleUserId)
+                        + '&limit=100';
+                    if (before) path += '&before=' + encodeURIComponent(before);
+                    return fetchJson(path).then(function (page) {
+                        var messages = page.messages || [];
+                        all = messages.concat(all);
+                        if (page.hasMore && messages.length) {
+                            return loadPage(messages[0].createdAt);
+                        }
+                        return all;
+                    });
+                }
+                return loadPage();
+            }
+
+            function formatConversationExport(conversation, messages) {
+                var lines = [
+                    conversation.title || 'Conversation',
+                    conversation.tag || '',
+                    courseName ? 'Course: ' + courseName : '',
+                    'Exported: ' + new Date().toLocaleString(),
+                    ''
+                ].filter(function (line, index) { return index < 4 ? line !== '' : true; });
+
+                messages.forEach(function (message) {
+                    var role = message.role === 'assistant' ? 'Assistant' : 'User';
+                    var date = message.createdAt ? new Date(message.createdAt).toLocaleString() : '';
+                    lines.push('[' + role + (date ? ' - ' + date : '') + ']');
+                    lines.push(message.content || '');
+                    lines.push('');
+                });
+
+                return lines.join('\n').trim() + '\n';
+            }
+
+            function copyText(text) {
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    navigator.clipboard.writeText(text);
+                    return;
+                }
+
+                var temp = document.createElement('textarea');
+                temp.value = text;
+                document.body.appendChild(temp);
+                temp.select();
+                document.execCommand('copy');
+                temp.remove();
+            }
+
+            function downloadText(filename, text) {
+                var blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+                var link = document.createElement('a');
+                link.href = URL.createObjectURL(blob);
+                link.download = filename;
+                document.body.appendChild(link);
+                link.click();
+                URL.revokeObjectURL(link.href);
+                link.remove();
+            }
+
+            function safeFileName(name) {
+                return name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'conversation';
             }
 
             function showNewConversationPrompt() {
@@ -1259,6 +1639,43 @@ class before_footer {
                 savePanelLayout();
             });
 
+            sidebarResizer.addEventListener('pointerdown', function (e) {
+                if (isMobileLayout()) return;
+                isResizingSidebar = true;
+                sidebarResizer.classList.add('resizing');
+                e.preventDefault();
+            });
+
+            document.addEventListener('pointermove', function (e) {
+                if (!isResizingSidebar) return;
+                var sidebarRect = sidebar.getBoundingClientRect();
+                setSidebarWidth(e.clientX - sidebarRect.left);
+            });
+
+            document.addEventListener('pointerup', function () {
+                if (!isResizingSidebar) return;
+                isResizingSidebar = false;
+                sidebarResizer.classList.remove('resizing');
+                saveSidebarWidth();
+            });
+
+            document.addEventListener('click', function (e) {
+                if (openMenu && !openMenu.contains(e.target) && !e.target.closest('.syllentras-conversation-menu-btn')) {
+                    closeConversationMenu();
+                }
+            });
+
+            modal.addEventListener('click', function (e) {
+                if (e.target === modal) closeModal();
+            });
+
+            document.addEventListener('keydown', function (e) {
+                if (e.key === 'Escape') {
+                    closeConversationMenu();
+                    if (!modal.hidden) closeModal();
+                }
+            });
+
             window.addEventListener('resize', clampCurrentPanelLayout);
 
             if (window.ResizeObserver) {
@@ -1270,6 +1687,7 @@ class before_footer {
             }
 
             applyExpandedState();
+            applyStoredSidebarWidth();
             loadConversations();
             installSectionButtons();
             if (document.readyState === 'loading') {

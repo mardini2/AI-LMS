@@ -2,6 +2,7 @@ import {
   Controller,
   Delete,
   Get,
+  Patch,
   Post,
   Body,
   Param,
@@ -16,6 +17,7 @@ import { ListConversationsQueryDto } from './dto/list-conversations-query.dto';
 import { SearchConversationsQueryDto } from './dto/search-conversations-query.dto';
 import { DeleteConversationQueryDto } from './dto/delete-conversation-query.dto';
 import { OpenConversationDto } from './dto/open-conversation.dto';
+import { UpdateConversationDto } from './dto/update-conversation.dto';
 
 @Controller('conversations')
 export class ConversationController {
@@ -93,7 +95,20 @@ export class ConversationController {
     @Param('id', ParseUUIDPipe) id: string,
     @Query() query: DeleteConversationQueryDto,
   ) {
-    return this.conversationService.assertOwner(id, query.moodleUserId);
+    return this.conversationService.getSummary(id, query.moodleUserId);
+  }
+
+  @Patch(':id')
+  update(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Query() query: DeleteConversationQueryDto,
+    @Body() dto: UpdateConversationDto,
+  ) {
+    return this.conversationService.updateConversation(
+      id,
+      query.moodleUserId,
+      dto,
+    );
   }
 
   @Delete(':id')

@@ -41,6 +41,9 @@ export class Conversation {
   @Column({ type: 'varchar', length: 128, default: '#main' })
   tag: string;
 
+  @Column({ default: false })
+  pinned: boolean;
+
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;
 

@@ -30,6 +30,7 @@ export interface ConversationOpenOptions {
   sectionId?: number;
   sectionNumber?: number;
   sectionName?: string;
+  pinned?: boolean;
 }
 
 export interface ConversationSummary {
@@ -42,6 +43,7 @@ export interface ConversationSummary {
   sectionNumber?: number;
   sectionName?: string;
   tag: string;
+  pinned: boolean;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -87,6 +89,7 @@ export class ConversationService {
       sectionNumber: options.sectionNumber,
       sectionName,
       tag: tagForConversation(type, sectionName ?? title),
+      pinned: options.pinned ?? false,
     });
 
     return this.conversationRepo.save(conversation);
@@ -175,6 +178,7 @@ export class ConversationService {
     const conversations = await this.conversationRepo.find({
       where: { moodleUserId, courseId },
       order: {
+        pinned: 'DESC',
         type: 'ASC',
         sectionNumber: 'ASC',
         createdAt: 'ASC',
@@ -235,6 +239,34 @@ export class ConversationService {
     await this.conversationRepo.delete({ id });
   }
 
+  async updateConversation(
+    id: string,
+    moodleUserId: number,
+    changes: { title?: string; pinned?: boolean },
+  ): Promise<ConversationSummary> {
+    const conversation = await this.assertConversationOwner(id, moodleUserId);
+
+    if (changes.title !== undefined) {
+      const title = cleanText(changes.title);
+      if (!title) {
+        throw new BadRequestException('Conversation title cannot be empty');
+      }
+
+      if ((conversation.type ?? 'general') !== 'manual') {
+        throw new BadRequestException('Only user-created conversations can be renamed');
+      }
+
+      conversation.title = title;
+      conversation.tag = tagForConversation(conversation.type, title);
+    }
+
+    if (changes.pinned !== undefined) {
+      conversation.pinned = changes.pinned;
+    }
+
+    return toSummary(await this.conversationRepo.save(conversation));
+  }
+
   private async assertConversationOwner(
     conversationId: string,
     moodleUserId: number,
@@ -259,6 +291,15 @@ export class ConversationService {
     moodleUserId: number,
   ): Promise<Conversation> {
     return this.assertConversationOwner(conversationId, moodleUserId);
+  }
+
+  async getSummary(
+    conversationId: string,
+    moodleUserId: number,
+  ): Promise<ConversationSummary> {
+    return toSummary(
+      await this.assertConversationOwner(conversationId, moodleUserId),
+    );
   }
 
   async getMessagesPage(
@@ -411,6 +452,7 @@ function toSummary(conversation: Conversation): ConversationSummary {
     sectionNumber: conversation.sectionNumber,
     sectionName: conversation.sectionName,
     tag: tagForConversation(type, type === 'section' ? conversation.sectionName ?? title : title),
+    pinned: conversation.pinned ?? false,
     createdAt: conversation.createdAt,
     updatedAt: conversation.updatedAt,
   };
