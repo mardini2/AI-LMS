@@ -137,7 +137,7 @@ export class ContextService {
   private async getCourseDocuments(
     courseId: number,
   ): Promise<CourseContextDocument[]> {
-    const cacheKey = `course_context_documents_v3_${courseId}`;
+    const cacheKey = `course_context_documents_v4_${courseId}`;
     const cached = await this.cache.get<CourseContextDocument[]>(cacheKey);
     if (cached) {
       this.logger.debug(`Course document cache hit for course ${courseId}`);
@@ -252,6 +252,27 @@ export class ContextService {
               text: stripHtml(assignment.intro),
             });
           }
+
+          for (const attachment of assignment?.introattachments ?? []) {
+            if (!attachment.fileurl) {
+              continue;
+            }
+            const fileDocument = await this.fetchFileDocument(
+              moduleBase,
+              {
+                type: 'file',
+                filename: attachment.filename,
+                filepath: attachment.filepath,
+                fileurl: attachment.fileurl,
+                mimetype: attachment.mimetype,
+                timemodified: attachment.timemodified,
+              },
+              module.modname,
+            );
+            if (fileDocument) {
+              documents.push(fileDocument);
+            }
+          }
         }
 
         if (module.modname === 'forum') {
@@ -314,9 +335,10 @@ export class ContextService {
 
   private async fetchAssignments(courseId: number): Promise<MoodleAssignment[]> {
     try {
+      console.log('fetchAssignments running');
       const response = await this.callMoodleApi<MoodleAssignmentsResponse>(
         'mod_assign_get_assignments',
-        { courseids: [courseId] },
+        { courseids: [courseId], includenotenrolledcourses: 1 },
       );
       return response.courses.flatMap((course) => course.assignments ?? []);
     } catch (err) {
@@ -793,10 +815,19 @@ interface MoodlePage {
   timemodified?: number;
 }
 
+interface MoodleAssignmentAttachment {
+  filename?: string;
+  filepath?: string;
+  fileurl?: string;
+  mimetype?: string;
+  timemodified?: number;
+}
+
 interface MoodleAssignment {
   cmid: number;
   name: string;
   intro?: string;
+  introattachments?: MoodleAssignmentAttachment[];
   timemodified?: number;
 }
 
