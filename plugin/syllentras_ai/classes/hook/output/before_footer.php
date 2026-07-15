@@ -592,9 +592,14 @@ class before_footer {
             }
             #syllentras-chat-input {
                 flex: 1;
-                resize: none;
+                line-height: 1.35;
+                max-height: 180px;
+                min-height: 42px;
+                resize: vertical;
                 border: 1px solid #ccc;
                 border-radius: 6px;
+                box-sizing: border-box;
+                overflow: auto;
                 padding: 6px 10px;
                 font-size: 14px;
                 font-family: inherit;
@@ -721,6 +726,10 @@ class before_footer {
                 return 'syllentras_sidebar_width_' + moodleUserId;
             }
 
+            function inputHeightStorageKey() {
+                return 'syllentras_input_height_' + moodleUserId;
+            }
+
             function isMobileLayout() {
                 return mobileLayout.matches;
             }
@@ -808,6 +817,19 @@ class before_footer {
                 localStorage.setItem(sidebarWidthStorageKey(), String(Math.round(sidebar.getBoundingClientRect().width)));
             }
 
+            function applyStoredInputHeight() {
+                var stored = parseInt(localStorage.getItem(inputHeightStorageKey()) || '', 10);
+                if (!Number.isNaN(stored)) setInputHeight(stored);
+            }
+
+            function setInputHeight(height) {
+                input.style.height = clamp(height, 42, 180) + 'px';
+            }
+
+            function saveInputHeight() {
+                localStorage.setItem(inputHeightStorageKey(), String(Math.round(input.getBoundingClientRect().height)));
+            }
+
             function applyStoredLayout(normalSize) {
                 if (isMobileLayout()) return;
                 var stored = loadStoredLayout(normalSize);
@@ -854,6 +876,7 @@ class before_footer {
                 btn.hidden = true;
                 applyStoredLayout();
                 applyStoredSidebarWidth();
+                applyStoredInputHeight();
                 applyExpandedState(false);
                 clampCurrentPanelLayout();
             }
@@ -1028,9 +1051,9 @@ class before_footer {
 
             function renderConversationList(conversations) {
                 conversationsEl.innerHTML = '';
-                var pinned = conversations.filter(function (c) { return c.pinned; });
+                var pinned = conversations.filter(function (c) { return c.pinned && c.type !== 'general'; });
+                renderConversationGroup('Main', conversations.filter(function (c) { return c.type === 'general'; }));
                 if (pinned.length) renderConversationGroup('Pinned', pinned);
-                renderConversationGroup('Main', conversations.filter(function (c) { return !c.pinned && c.type === 'general'; }));
                 renderConversationGroup('Course Sections', conversations.filter(function (c) { return !c.pinned && c.type === 'section'; }));
                 renderConversationGroup('Other Conversations', conversations.filter(function (c) { return !c.pinned && c.type === 'manual'; }));
                 updateActiveConversationButtons();
@@ -1133,7 +1156,7 @@ class before_footer {
                 menu.className = 'syllentras-conversation-menu';
                 menu.setAttribute('role', 'menu');
                 addMenuAction(menu, 'Rename', function () { showRenameModal(conversation); }, conversation.type !== 'manual');
-                addMenuAction(menu, conversation.pinned ? 'Unpin' : 'Pin', function () { togglePinConversation(conversation); });
+                addMenuAction(menu, conversation.pinned ? 'Unpin' : 'Pin', function () { togglePinConversation(conversation); }, conversation.type === 'general');
                 addMenuAction(menu, 'Export', function () { showExportModal(conversation); });
                 addMenuAction(menu, 'Delete', function () { deleteConversation(conversation); }, false, true);
                 document.body.appendChild(menu);
@@ -1278,6 +1301,11 @@ class before_footer {
                     .then(function (updated) {
                         if (conversation.id === conversationId) activeConversation = updated;
                         return loadConversations();
+                    })
+                    .catch(function () {
+                        showModal('Pin conversation', 'Could not update the pinned state. Please refresh the page and try again.', [
+                            { label: 'Close', className: 'syllentras-modal-secondary', onClick: closeModal }
+                        ]);
                     });
             }
 
@@ -1682,12 +1710,17 @@ class before_footer {
                 new ResizeObserver(function () {
                     if (!isDraggingPanel) clampCurrentPanelLayout();
                 }).observe(panel);
+                new ResizeObserver(function () {
+                    saveInputHeight();
+                }).observe(input);
             } else {
                 panel.addEventListener('mouseup', scheduleLayoutSave);
+                input.addEventListener('mouseup', saveInputHeight);
             }
 
             applyExpandedState();
             applyStoredSidebarWidth();
+            applyStoredInputHeight();
             loadConversations();
             installSectionButtons();
             if (document.readyState === 'loading') {
