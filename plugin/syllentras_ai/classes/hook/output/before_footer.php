@@ -1217,8 +1217,20 @@ class before_footer {
             }
 
             function deleteConversation(conversation) {
-                var title = conversation.title || 'this conversation';
                 pendingDeleteConversation = conversation;
+                if (conversation.type === 'general') {
+                    showModal(
+                        'Clear Main history?',
+                        'Clear all messages in Main? The conversation will stay available. Course content will not be deleted.',
+                        [
+                            { label: 'Cancel', className: 'syllentras-modal-secondary', onClick: cancelDeleteConversation },
+                            { label: 'Clear', className: 'syllentras-modal-danger', onClick: confirmDeleteConversation }
+                        ]
+                    );
+                    return;
+                }
+
+                var title = conversation.title || 'this conversation';
                 showModal(
                     'Delete conversation',
                     'Delete "' + title + '" and its history? Course content will not be deleted.',
@@ -1242,7 +1254,17 @@ class before_footer {
 
                 fetchJson('/conversations/' + encodeURIComponent(conversation.id)
                     + '?moodleUserId=' + encodeURIComponent(moodleUserId), { method: 'DELETE' })
-                .then(function () {
+                .then(function (result) {
+                    if (result && result.cleared) {
+                        if (conversation.id === conversationId) {
+                            clearMessages();
+                            if (result.conversation) {
+                                activeConversation = result.conversation;
+                            }
+                        }
+                        return loadConversations();
+                    }
+
                     if (conversation.id === conversationId) {
                         clearMessages();
                         conversationId = null;

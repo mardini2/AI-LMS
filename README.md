@@ -327,9 +327,11 @@ Search conversation titles, tags, section names, and message content.
 
 ### `DELETE /conversations/:id`
 
-Delete one conversation and its message history. Moodle course content and ingestion data are not deleted.
+Delete one conversation and its message history. For the general/Main conversation, messages are cleared and the conversation row is kept so Main always remains available. Moodle course content and ingestion data are not deleted.
 
 **Query:** `moodleUserId`
+
+**Response:** `{ "deleted": true }` for section/manual conversations, or `{ "cleared": true, "conversation": { ... } }` when clearing Main.
 
 ---
 

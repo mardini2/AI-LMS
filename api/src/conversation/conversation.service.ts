@@ -58,6 +58,10 @@ export interface ConversationSearchResult {
   };
 }
 
+export type DeleteConversationResult =
+  | { cleared: true; conversation: ConversationSummary }
+  | { deleted: true };
+
 @Injectable()
 export class ConversationService {
   constructor(
@@ -234,9 +238,22 @@ export class ConversationService {
     });
   }
 
-  async deleteConversation(id: string, moodleUserId: number): Promise<void> {
-    await this.assertConversationOwner(id, moodleUserId);
+  async deleteConversation(
+    id: string,
+    moodleUserId: number,
+  ): Promise<DeleteConversationResult> {
+    const conversation = await this.assertConversationOwner(id, moodleUserId);
+
+    // Main (general) is a singleton — clear history instead of removing it.
+    if ((conversation.type ?? 'general') === 'general') {
+      await this.messageRepo.delete({ conversationId: id });
+      conversation.updatedAt = new Date();
+      const saved = await this.conversationRepo.save(conversation);
+      return { cleared: true, conversation: toSummary(saved) };
+    }
+
     await this.conversationRepo.delete({ id });
+    return { deleted: true };
   }
 
   async updateConversation(
