@@ -60,6 +60,7 @@ class before_footer {
                         <span id="syllentras-chat-course" class="syllentras-chat-subtitle"></span>
                     </div>
                     <div class="syllentras-chat-header-actions">
+                        <button id="syllentras-chat-reset" aria-label="Reset layout" title="Reset layout">&#x21BA;</button>
                         <button id="syllentras-chat-expand" aria-label="Expand">&#x2922;</button>
                         <button id="syllentras-chat-close" aria-label="Close">&times;</button>
                     </div>
@@ -257,6 +258,7 @@ class before_footer {
                 align-items: center;
             }
             #syllentras-chat-expand,
+            #syllentras-chat-reset,
             #syllentras-chat-close {
                 background: none;
                 border: none;
@@ -264,7 +266,8 @@ class before_footer {
                 cursor: pointer;
                 line-height: 1;
             }
-            #syllentras-chat-expand {
+            #syllentras-chat-expand,
+            #syllentras-chat-reset {
                 font-size: 16px;
                 padding: 0 4px;
             }
@@ -760,11 +763,16 @@ class before_footer {
             var MESSAGES_MIN_HEIGHT = 120;
             var PANEL_CHROME_HEIGHT = 130;
             var PANEL_MIN_HEIGHT = PANEL_CHROME_HEIGHT + MESSAGES_MIN_HEIGHT + INPUT_MAX_HEIGHT;
+            var PANEL_DEFAULT_WIDTH = 620;
+            var PANEL_DEFAULT_HEIGHT = 520;
+            var PANEL_DEFAULT_RIGHT = 24;
+            var PANEL_DEFAULT_BOTTOM = 88;
 
             var btn       = document.getElementById('syllentras-chat-btn');
             var panel     = document.getElementById('syllentras-chat-panel');
             var close     = document.getElementById('syllentras-chat-close');
             var expandBtn = document.getElementById('syllentras-chat-expand');
+            var resetBtn  = document.getElementById('syllentras-chat-reset');
             var input     = document.getElementById('syllentras-chat-input');
             var send      = document.getElementById('syllentras-chat-send');
             var msgs      = document.getElementById('syllentras-chat-messages');
@@ -807,6 +815,7 @@ class before_footer {
             var isExpanded = localStorage.getItem('syllentras_expanded') === '1';
             var SIDEBAR_MIN_WIDTH = 150;
             var SIDEBAR_MAX_WIDTH = 340;
+            var SIDEBAR_DEFAULT_WIDTH = 190;
 
             function layoutStorageKey() {
                 return 'syllentras_layout_' + moodleUserId;
@@ -922,6 +931,31 @@ class before_footer {
 
             function saveInputHeight() {
                 localStorage.setItem(inputHeightStorageKey(), String(Math.round(input.getBoundingClientRect().height)));
+            }
+
+            function getDefaultPanelRect() {
+                return normalizePanelRect({
+                    left: window.innerWidth - PANEL_DEFAULT_WIDTH - PANEL_DEFAULT_RIGHT,
+                    top: window.innerHeight - PANEL_DEFAULT_HEIGHT - PANEL_DEFAULT_BOTTOM,
+                    width: PANEL_DEFAULT_WIDTH,
+                    height: PANEL_DEFAULT_HEIGHT
+                });
+            }
+
+            function resetPanelLayout() {
+                if (isMobileLayout()) return;
+
+                isExpanded = false;
+                localStorage.setItem('syllentras_expanded', '0');
+                panel.classList.remove('expanded');
+                expandBtn.innerHTML = '&#x2922;';
+                expandBtn.setAttribute('aria-label', 'Expand');
+                setPanelRect(getDefaultPanelRect());
+                savePanelLayout();
+                setSidebarWidth(SIDEBAR_DEFAULT_WIDTH);
+                saveSidebarWidth();
+                setInputHeight(INPUT_MIN_HEIGHT);
+                saveInputHeight();
             }
 
             function applyStoredLayout(normalSize) {
@@ -1722,6 +1756,8 @@ class before_footer {
                 localStorage.setItem('syllentras_expanded', isExpanded ? '1' : '0');
                 applyExpandedState(isExpanded);
             });
+
+            resetBtn.addEventListener('click', resetPanelLayout);
 
             btn.addEventListener('click', function () {
                 openConversation({ type: 'general', title: 'Main' });
