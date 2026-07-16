@@ -102,6 +102,15 @@ class before_footer {
                         <div id="syllentras-modal-actions" class="syllentras-modal-actions"></div>
                     </div>
                 </div>
+
+                <div class="syllentras-panel-resize-handle" data-edge="n" role="separator" aria-label="Resize panel from top" aria-orientation="horizontal"></div>
+                <div class="syllentras-panel-resize-handle" data-edge="s" role="separator" aria-label="Resize panel from bottom" aria-orientation="horizontal"></div>
+                <div class="syllentras-panel-resize-handle" data-edge="e" role="separator" aria-label="Resize panel from right" aria-orientation="vertical"></div>
+                <div class="syllentras-panel-resize-handle" data-edge="w" role="separator" aria-label="Resize panel from left" aria-orientation="vertical"></div>
+                <div class="syllentras-panel-resize-handle" data-edge="ne" role="separator" aria-label="Resize panel from top-right corner"></div>
+                <div class="syllentras-panel-resize-handle" data-edge="nw" role="separator" aria-label="Resize panel from top-left corner"></div>
+                <div class="syllentras-panel-resize-handle" data-edge="se" role="separator" aria-label="Resize panel from bottom-right corner"></div>
+                <div class="syllentras-panel-resize-handle" data-edge="sw" role="separator" aria-label="Resize panel from bottom-left corner"></div>
             </div>
         </div>
 
@@ -147,7 +156,68 @@ class before_footer {
                 display: flex;
                 flex-direction: column;
                 overflow: hidden;
-                resize: both;
+            }
+            .syllentras-panel-resize-handle {
+                position: absolute;
+                z-index: 10;
+                background: transparent;
+                touch-action: none;
+            }
+            .syllentras-panel-resize-handle[data-edge="n"] {
+                top: 0;
+                left: 8px;
+                right: 8px;
+                height: 8px;
+                cursor: n-resize;
+            }
+            .syllentras-panel-resize-handle[data-edge="s"] {
+                bottom: 0;
+                left: 8px;
+                right: 8px;
+                height: 8px;
+                cursor: s-resize;
+            }
+            .syllentras-panel-resize-handle[data-edge="e"] {
+                top: 8px;
+                right: 0;
+                bottom: 8px;
+                width: 8px;
+                cursor: e-resize;
+            }
+            .syllentras-panel-resize-handle[data-edge="w"] {
+                top: 8px;
+                left: 0;
+                bottom: 8px;
+                width: 8px;
+                cursor: w-resize;
+            }
+            .syllentras-panel-resize-handle[data-edge="ne"],
+            .syllentras-panel-resize-handle[data-edge="nw"],
+            .syllentras-panel-resize-handle[data-edge="se"],
+            .syllentras-panel-resize-handle[data-edge="sw"] {
+                width: 12px;
+                height: 12px;
+                z-index: 11;
+            }
+            .syllentras-panel-resize-handle[data-edge="ne"] {
+                top: 0;
+                right: 0;
+                cursor: ne-resize;
+            }
+            .syllentras-panel-resize-handle[data-edge="nw"] {
+                top: 0;
+                left: 0;
+                cursor: nw-resize;
+            }
+            .syllentras-panel-resize-handle[data-edge="se"] {
+                bottom: 0;
+                right: 0;
+                cursor: se-resize;
+            }
+            .syllentras-panel-resize-handle[data-edge="sw"] {
+                bottom: 0;
+                left: 0;
+                cursor: sw-resize;
             }
             #syllentras-chat-panel[hidden] { display: none; }
             #syllentras-chat-header {
@@ -634,7 +704,6 @@ class before_footer {
                     height: auto !important;
                     max-height: calc(100vh - 104px);
                     min-width: 0;
-                    resize: none;
                 }
                 #syllentras-chat-header {
                     cursor: default;
@@ -649,7 +718,8 @@ class before_footer {
                     border-right: none;
                     border-bottom: 1px solid #e0e0e0;
                 }
-                #syllentras-chat-sidebar-resizer {
+                #syllentras-chat-sidebar-resizer,
+                .syllentras-panel-resize-handle {
                     display: none;
                 }
                 #syllentras-chat-input-row {
@@ -706,9 +776,14 @@ class before_footer {
             var loadingOlder = false;
             var layoutSaveTimer = null;
             var isDraggingPanel = false;
+            var isResizingPanel = false;
             var isResizingSidebar = false;
             var dragOffsetX = 0;
             var dragOffsetY = 0;
+            var resizeEdge = null;
+            var resizeStartX = 0;
+            var resizeStartY = 0;
+            var resizeStartRect = null;
             var mobileLayout = window.matchMedia('(max-width: 700px)');
             var isExpanded = localStorage.getItem('syllentras_expanded') === '1';
             var SIDEBAR_MIN_WIDTH = 150;
@@ -1658,7 +1733,7 @@ class before_footer {
             });
 
             header.addEventListener('pointerdown', function (e) {
-                if (isMobileLayout() || e.button !== 0 || e.target.closest('button')) return;
+                if (isMobileLayout() || e.button !== 0 || e.target.closest('button') || e.target.closest('.syllentras-panel-resize-handle')) return;
 
                 var rect = panel.getBoundingClientRect();
                 isDraggingPanel = true;
@@ -1674,6 +1749,49 @@ class before_footer {
             });
 
             document.addEventListener('pointermove', function (e) {
+                if (isResizingPanel && resizeStartRect && resizeEdge) {
+                    var dx = e.clientX - resizeStartX;
+                    var dy = e.clientY - resizeStartY;
+                    var maxWidth = Math.max(1, window.innerWidth - PANEL_MARGIN * 2);
+                    var maxHeight = Math.max(1, window.innerHeight - PANEL_MARGIN * 2);
+                    var minWidth = Math.min(PANEL_MIN_WIDTH, maxWidth);
+                    var minHeight = Math.min(PANEL_MIN_HEIGHT, maxHeight);
+                    var next = {
+                        left: resizeStartRect.left,
+                        top: resizeStartRect.top,
+                        width: resizeStartRect.width,
+                        height: resizeStartRect.height
+                    };
+                    var right = resizeStartRect.left + resizeStartRect.width;
+                    var bottom = resizeStartRect.top + resizeStartRect.height;
+
+                    if (resizeEdge.indexOf('e') !== -1) {
+                        next.width = clamp(
+                            resizeStartRect.width + dx,
+                            minWidth,
+                            Math.max(minWidth, window.innerWidth - resizeStartRect.left - PANEL_MARGIN)
+                        );
+                    }
+                    if (resizeEdge.indexOf('w') !== -1) {
+                        next.left = clamp(resizeStartRect.left + dx, PANEL_MARGIN, right - minWidth);
+                        next.width = right - next.left;
+                    }
+                    if (resizeEdge.indexOf('s') !== -1) {
+                        next.height = clamp(
+                            resizeStartRect.height + dy,
+                            minHeight,
+                            Math.max(minHeight, window.innerHeight - resizeStartRect.top - PANEL_MARGIN)
+                        );
+                    }
+                    if (resizeEdge.indexOf('n') !== -1) {
+                        next.top = clamp(resizeStartRect.top + dy, PANEL_MARGIN, bottom - minHeight);
+                        next.height = bottom - next.top;
+                    }
+
+                    setPanelRect(normalizePanelRect(next));
+                    return;
+                }
+
                 if (!isDraggingPanel) return;
                 setPanelRect(normalizePanelRect({
                     left: e.clientX - dragOffsetX,
@@ -1684,9 +1802,37 @@ class before_footer {
             });
 
             document.addEventListener('pointerup', function () {
+                if (isResizingPanel) {
+                    isResizingPanel = false;
+                    resizeEdge = null;
+                    resizeStartRect = null;
+                    savePanelLayout();
+                    return;
+                }
                 if (!isDraggingPanel) return;
                 isDraggingPanel = false;
                 savePanelLayout();
+            });
+
+            Array.prototype.forEach.call(panel.querySelectorAll('.syllentras-panel-resize-handle'), function (handle) {
+                handle.addEventListener('pointerdown', function (e) {
+                    if (isMobileLayout() || e.button !== 0) return;
+                    var rect = panel.getBoundingClientRect();
+                    isResizingPanel = true;
+                    resizeEdge = handle.getAttribute('data-edge');
+                    resizeStartX = e.clientX;
+                    resizeStartY = e.clientY;
+                    resizeStartRect = {
+                        left: rect.left,
+                        top: rect.top,
+                        width: rect.width,
+                        height: rect.height
+                    };
+                    setPanelRect(normalizePanelRect(resizeStartRect));
+                    if (handle.setPointerCapture) handle.setPointerCapture(e.pointerId);
+                    e.preventDefault();
+                    e.stopPropagation();
+                });
             });
 
             sidebarResizer.addEventListener('pointerdown', function (e) {
@@ -1730,7 +1876,7 @@ class before_footer {
 
             if (window.ResizeObserver) {
                 new ResizeObserver(function () {
-                    if (!isDraggingPanel) clampCurrentPanelLayout();
+                    if (!isDraggingPanel && !isResizingPanel) clampCurrentPanelLayout();
                 }).observe(panel);
                 new ResizeObserver(function () {
                     saveInputHeight();
