@@ -19,6 +19,14 @@ export interface CourseContextFilter {
   sectionName?: string;
 }
 
+export interface StudentPlacement {
+  sectionId: number;
+  sectionNum: number;
+  groupId: number;
+  groupName: string;
+  availabilityJson: string;
+}
+
 interface CourseContextDocument {
   courseId: number;
   courseName?: string;
@@ -132,6 +140,41 @@ export class ContextService {
       );
       return [];
     }
+  }
+
+  /**
+   * Ensure the shared AI Content section and private student group exist.
+   * Idempotent Moodle write used by Path A (and later Path B quiz creation).
+   */
+  async ensureStudentPlacement(
+    courseId: number,
+    moodleUserId: number,
+  ): Promise<StudentPlacement> {
+    if (courseId <= 1) {
+      throw new Error('courseId must be a real course (greater than 1)');
+    }
+    if (moodleUserId < 1) {
+      throw new Error('moodleUserId must be a positive integer');
+    }
+
+    const result = await this.callMoodleApi<{
+      sectionid: number;
+      sectionnum: number;
+      groupid: number;
+      groupname: string;
+      availabilityjson: string;
+    }>('local_syllentras_ai_ensure_student_placement', {
+      courseid: courseId,
+      userid: moodleUserId,
+    });
+
+    return {
+      sectionId: result.sectionid,
+      sectionNum: result.sectionnum,
+      groupId: result.groupid,
+      groupName: result.groupname,
+      availabilityJson: result.availabilityjson,
+    };
   }
 
   private async getCourseDocuments(

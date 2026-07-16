@@ -2,6 +2,17 @@
 
 defined('MOODLE_INTERNAL') || die();
 
+$functions = [
+    'local_syllentras_ai_ensure_student_placement' => [
+        'classname' => 'local_syllentras_ai\external\ensure_student_placement',
+        'methodname' => 'execute',
+        'description' => 'Ensure the shared AI Content section and a private per-student group exist',
+        'type' => 'write',
+        'capabilities' => 'local/syllentras_ai:manageplacement',
+        'ajax' => false,
+    ],
+];
+
 // The API uses Moodle's built-in external functions directly. Keeping them in a
 // plugin-owned service lets the token download files from webservice/pluginfile.php.
 $services = [
@@ -16,6 +27,7 @@ $services = [
             'mod_forum_get_forum_discussions',
             'mod_forum_get_forums_by_courses',
             'mod_page_get_pages_by_courses',
+            'local_syllentras_ai_ensure_student_placement',
         ],
         'restrictedusers' => 0,
         'enabled' => 1,

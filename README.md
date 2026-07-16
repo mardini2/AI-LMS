@@ -127,7 +127,7 @@ The API needs a token to call Moodle's REST API for course content. Navigate to 
 Site administration → Users → Permissions → Define roles → Add a new role:
 - Name: `Web Service`, Short name: `webservice`, Archetype: None
 - Check **System** under "Context types where this role may be assigned"
-- Allow these capabilities: `webservice/rest:use`, `moodle/course:view`, `moodle/course:viewhiddencourses`, `mod/page:view`
+- Allow these capabilities: `webservice/rest:use`, `moodle/course:view`, `moodle/course:viewhiddencourses`, `mod/page:view`, `local/syllentras_ai:manageplacement`
 
 Assign role: Site administration → Users → Permissions → Assign system roles → **Web Service** → add `syllentras_api`
 
@@ -137,7 +137,8 @@ The API token acts as `syllentras_api`, not the logged-in student. That user mus
 
 Site administration → Users → Permissions → **Assign system roles** → **Manager** → add `syllentras_api`
 
-> When you add `syllentras_api` as an authorised user on the external service, Moodle may warn about missing `moodle/course:update`. Ignore that — the API only reads data and must not have write access. `moodle/course:viewhiddencourses` on the Web Service role (above) is worth keeping so hidden courses remain readable.
+> When you add `syllentras_api` as an authorised user on the external service, Moodle may warn about missing `moodle/course:update`. For **read-only** course content that warning is fine. For **AI Content placement** (Path A below), `syllentras_api` needs write-related capabilities — Manager at system level covers most of them; also allow `local/syllentras_ai:manageplacement` on the Web Service or Manager role.
+
 
 **Create the external service** (Step 5)
 
@@ -164,6 +165,7 @@ On the new service page → Add functions:
 | `mod_forum_get_forums_by_courses` | Returns a list of forum instances in a provided set of courses, if no courses are provided then all the forum instances the user has access to will be returned. | `mod/forum:viewdiscussion` |
 | `mod_page_get_pages_by_courses` | Returns a list of pages in a provided list of courses, if no list is provided all pages that the user can view will be returned. | `mod/page:view` |
 | `mod_page_view_page` | Simulate the view.php web interface page: trigger events, completion, etc... | `mod/page:view` |
+| `local_syllentras_ai_ensure_student_placement` | Ensure shared AI Content section + private student group (Path A) | `local/syllentras_ai:manageplacement` |
 
 **Add the API user as an authorised user** (Step 7)
 
@@ -184,6 +186,40 @@ Then do a full restart to pick up the new token:
 .\dev.ps1 down
 .\dev.ps1 up
 ```
+
+### 9. AI Content placement (Path A) — admin checklist
+
+Path A lets the API ensure a shared **AI Content** section and a private per-student group so later features (practice quizzes) can place activities only that student and instructors can see. Quiz creation and chat confirmation are **Path B** (not built yet).
+
+After pulling plugin changes that bump `local_syllentras_ai` version:
+
+1. **Upgrade and purge**
+   ```powershell
+   .\dev.ps1 moodle-upgrade
+   .\dev.ps1 moodle-purge
+   ```
+   Or open Site administration → Notifications and complete the upgrade.
+
+2. **Confirm the WS function is on your token’s service**  
+   Site administration → Server → Web services → External services → open the service used by `MOODLE_TOKEN` (plugin service shortname `syllentras_ai`, or the manual **Syllentras AI Service** from step 8).  
+   Ensure `local_syllentras_ai_ensure_student_placement` is listed. If missing, **Add functions** and select it. Recreate the token only if you switch services.
+
+3. **Capability `local/syllentras_ai:manageplacement`**  
+   Allow it on the role used by `syllentras_api` (Web Service and/or Manager). Manager archetype already allows it after upgrade if you use Manager; a custom Web Service role needs the capability checked explicitly.
+
+4. **Enable restricted access (site)**  
+   Site administration → Advanced features → **Enable restricted access** → Save.  
+   (Needed when Path B attaches group restrictions to activities; turn it on now.)
+
+5. **Smoke test** (API must not be in `NODE_ENV=production`):
+   ```powershell
+   curl -X POST http://localhost:3000/moodle/placement/ensure `
+     -H "Content-Type: application/json" `
+     -d '{"courseId":2,"moodleUserId":3}'
+   ```
+   Use a real course id and an enrolled student’s Moodle user id. Expect JSON with `sectionId`, `sectionNum`, `groupId`, `groupName`, `availabilityJson`. In the course, confirm section **AI Content** and group `Syllentras AI — {userid}`.
+
+You do **not** create sections/groups by hand — the web service does that idempotently.
 
 ---
 
