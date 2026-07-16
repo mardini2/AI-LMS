@@ -83,6 +83,7 @@ class before_footer {
                         <div id="syllentras-chat-messages" role="log" aria-live="polite">
                             <div id="syllentras-chat-load-more" hidden>Loading...</div>
                         </div>
+                        <div id="syllentras-chat-input-resizer" role="separator" aria-label="Resize message input" aria-orientation="horizontal"></div>
                         <div id="syllentras-chat-input-row">
                             <textarea
                                 id="syllentras-chat-input"
@@ -147,7 +148,7 @@ class before_footer {
                 width: 620px;
                 height: 520px;
                 min-width: 360px;
-                min-height: 360px;
+                min-height: 430px;
                 max-width: calc(100vw - 32px);
                 max-height: calc(100vh - 32px);
                 background: #fff;
@@ -584,7 +585,7 @@ class before_footer {
                 display: flex;
                 flex-direction: column;
                 gap: 8px;
-                min-height: 180px;
+                min-height: 120px;
             }
             #syllentras-chat-load-more {
                 align-self: center;
@@ -654,18 +655,28 @@ class before_footer {
                 background: #ffeaea;
                 color: #c00;
             }
+            #syllentras-chat-input-resizer {
+                flex: 0 0 6px;
+                cursor: row-resize;
+                background: #e0e0e0;
+                touch-action: none;
+            }
+            #syllentras-chat-input-resizer:hover,
+            #syllentras-chat-input-resizer.resizing {
+                background: #b9d6f2;
+            }
             #syllentras-chat-input-row {
                 display: flex;
                 gap: 8px;
                 padding: 10px 12px;
-                border-top: 1px solid #e0e0e0;
             }
             #syllentras-chat-input {
                 flex: 1;
                 line-height: 1.35;
                 max-height: 180px;
                 min-height: 42px;
-                resize: vertical;
+                height: 42px;
+                resize: none;
                 border: 1px solid #ccc;
                 border-radius: 6px;
                 box-sizing: border-box;
@@ -682,7 +693,7 @@ class before_footer {
                 padding: 6px 14px;
                 cursor: pointer;
                 font-size: 14px;
-                align-self: flex-end;
+                align-self: center;
             }
             #syllentras-chat-send:disabled { opacity: 0.5; cursor: not-allowed; }
             .syllentras-section-chat-btn {
@@ -744,7 +755,11 @@ class before_footer {
             var PAGE_SIZE = 30;
             var PANEL_MARGIN = 16;
             var PANEL_MIN_WIDTH = 360;
-            var PANEL_MIN_HEIGHT = 360;
+            var INPUT_MIN_HEIGHT = 42;
+            var INPUT_MAX_HEIGHT = 180;
+            var MESSAGES_MIN_HEIGHT = 120;
+            var PANEL_CHROME_HEIGHT = 130;
+            var PANEL_MIN_HEIGHT = PANEL_CHROME_HEIGHT + MESSAGES_MIN_HEIGHT + INPUT_MAX_HEIGHT;
 
             var btn       = document.getElementById('syllentras-chat-btn');
             var panel     = document.getElementById('syllentras-chat-panel');
@@ -758,6 +773,7 @@ class before_footer {
             var header    = document.getElementById('syllentras-chat-header');
             var sidebar   = document.getElementById('syllentras-chat-sidebar');
             var sidebarResizer = document.getElementById('syllentras-chat-sidebar-resizer');
+            var inputResizer = document.getElementById('syllentras-chat-input-resizer');
             var modal     = document.getElementById('syllentras-chat-modal');
             var conversationsEl = document.getElementById('syllentras-chat-conversations');
             var searchInput = document.getElementById('syllentras-chat-search');
@@ -778,12 +794,15 @@ class before_footer {
             var isDraggingPanel = false;
             var isResizingPanel = false;
             var isResizingSidebar = false;
+            var isResizingInput = false;
             var dragOffsetX = 0;
             var dragOffsetY = 0;
             var resizeEdge = null;
             var resizeStartX = 0;
             var resizeStartY = 0;
             var resizeStartRect = null;
+            var inputResizeStartY = 0;
+            var inputResizeStartHeight = 0;
             var mobileLayout = window.matchMedia('(max-width: 700px)');
             var isExpanded = localStorage.getItem('syllentras_expanded') === '1';
             var SIDEBAR_MIN_WIDTH = 150;
@@ -898,7 +917,7 @@ class before_footer {
             }
 
             function setInputHeight(height) {
-                input.style.height = clamp(height, 42, 180) + 'px';
+                input.style.height = clamp(height, INPUT_MIN_HEIGHT, INPUT_MAX_HEIGHT) + 'px';
             }
 
             function saveInputHeight() {
@@ -1855,6 +1874,29 @@ class before_footer {
                 saveSidebarWidth();
             });
 
+            inputResizer.addEventListener('pointerdown', function (e) {
+                if (e.button !== 0) return;
+                isResizingInput = true;
+                inputResizeStartY = e.clientY;
+                inputResizeStartHeight = input.getBoundingClientRect().height;
+                inputResizer.classList.add('resizing');
+                if (inputResizer.setPointerCapture) inputResizer.setPointerCapture(e.pointerId);
+                e.preventDefault();
+            });
+
+            document.addEventListener('pointermove', function (e) {
+                if (!isResizingInput) return;
+                // Dragging the divider up grows the input; down shrinks it.
+                setInputHeight(inputResizeStartHeight - (e.clientY - inputResizeStartY));
+            });
+
+            document.addEventListener('pointerup', function () {
+                if (!isResizingInput) return;
+                isResizingInput = false;
+                inputResizer.classList.remove('resizing');
+                saveInputHeight();
+            });
+
             document.addEventListener('click', function (e) {
                 if (openMenu && !openMenu.contains(e.target) && !e.target.closest('.syllentras-conversation-menu-btn')) {
                     closeConversationMenu();
@@ -1878,12 +1920,8 @@ class before_footer {
                 new ResizeObserver(function () {
                     if (!isDraggingPanel && !isResizingPanel) clampCurrentPanelLayout();
                 }).observe(panel);
-                new ResizeObserver(function () {
-                    saveInputHeight();
-                }).observe(input);
             } else {
                 panel.addEventListener('mouseup', scheduleLayoutSave);
-                input.addEventListener('mouseup', saveInputHeight);
             }
 
             applyExpandedState();
