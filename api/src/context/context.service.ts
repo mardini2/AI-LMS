@@ -27,6 +27,25 @@ export interface StudentPlacement {
   availabilityJson: string;
 }
 
+export interface PracticeQuizQuestionAnswer {
+  text: string;
+  fraction: number;
+}
+
+export interface PracticeQuizQuestion {
+  type: 'multichoice' | 'truefalse';
+  name: string;
+  questiontext: string;
+  answers: PracticeQuizQuestionAnswer[];
+}
+
+export interface CreatedPracticeQuiz {
+  quizId: number;
+  cmId: number;
+  name: string;
+  viewUrl: string;
+}
+
 interface CourseContextDocument {
   courseId: number;
   courseName?: string;
@@ -175,6 +194,77 @@ export class ContextService {
       groupName: result.groupname,
       availabilityJson: result.availabilityjson,
     };
+  }
+
+  /**
+   * Create a private practice quiz for one student in the AI Content section.
+   */
+  async createPracticeQuiz(input: {
+    courseId: number;
+    moodleUserId: number;
+    name: string;
+    intro?: string;
+    questions: PracticeQuizQuestion[];
+  }): Promise<CreatedPracticeQuiz> {
+    if (input.courseId <= 1) {
+      throw new Error('courseId must be a real course (greater than 1)');
+    }
+    if (input.moodleUserId < 1) {
+      throw new Error('moodleUserId must be a positive integer');
+    }
+    if (!input.questions.length) {
+      throw new Error('At least one question is required');
+    }
+
+    await this.ensureStudentPlacement(input.courseId, input.moodleUserId);
+
+    const result = await this.callMoodleApi<{
+      quizid: number;
+      cmid: number;
+      name: string;
+      viewurl: string;
+    }>(
+      'local_syllentras_ai_create_practice_quiz',
+      {
+        courseid: input.courseId,
+        userid: input.moodleUserId,
+        name: input.name,
+        intro: input.intro ?? '',
+        questions: input.questions.map((q) => ({
+          type: q.type,
+          name: q.name,
+          questiontext: q.questiontext,
+          answers: q.answers.map((a) => ({
+            text: a.text,
+            fraction: a.fraction,
+          })),
+        })),
+      },
+      'POST',
+    );
+
+    return {
+      quizId: result.quizid,
+      cmId: result.cmid,
+      name: result.name,
+      viewUrl: this.toPublicMoodleUrl(result.viewurl),
+    };
+  }
+
+  /** Rewrite docker-internal Moodle hosts so browser links work. */
+  private toPublicMoodleUrl(rawUrl: string): string {
+    try {
+      const parsed = new URL(rawUrl);
+      if (parsed.hostname === 'webserver') {
+        const [host, port] = this.moodleHost.split(':');
+        parsed.hostname = host || 'localhost';
+        parsed.port = port || '8000';
+        parsed.protocol = 'http:';
+      }
+      return parsed.toString();
+    } catch {
+      return rawUrl;
+    }
   }
 
   private async getCourseDocuments(
@@ -572,19 +662,33 @@ export class ContextService {
   private async callMoodleApi<T>(
     wsfunction: string,
     params: Record<string, unknown>,
+    method: 'GET' | 'POST' = 'GET',
   ): Promise<T> {
     const url = new URL(`${this.moodleUrl}/webservice/rest/server.php`);
-    url.searchParams.set('wstoken', this.moodleToken);
-    url.searchParams.set('wsfunction', wsfunction);
-    url.searchParams.set('moodlewsrestformat', 'json');
+    const bodyParams = new URLSearchParams();
+    bodyParams.set('wstoken', this.moodleToken);
+    bodyParams.set('wsfunction', wsfunction);
+    bodyParams.set('moodlewsrestformat', 'json');
 
     for (const [key, value] of Object.entries(params)) {
-      this.appendParams(url.searchParams, key, value);
+      this.appendParams(bodyParams, key, value);
     }
 
     const hostHeader =
       url.hostname === 'webserver' ? this.moodleHost : undefined;
-    const { status, body } = await this.httpGet(url, hostHeader);
+
+    let status: number;
+    let body: string;
+
+    if (method === 'POST') {
+      ({ status, body } = await this.httpPostForm(url, bodyParams, hostHeader));
+    } else {
+      for (const [key, value] of bodyParams.entries()) {
+        url.searchParams.set(key, value);
+      }
+      ({ status, body } = await this.httpGet(url, hostHeader));
+    }
+
     if (status < 200 || status >= 300) {
       throw new Error(`Moodle API error: ${status}`);
     }
@@ -612,7 +716,7 @@ export class ContextService {
   ): void {
     if (Array.isArray(value)) {
       value.forEach((v, i) => {
-        searchParams.set(`${key}[${i}]`, String(v));
+        this.appendParams(searchParams, `${key}[${i}]`, v);
       });
       return;
     }
@@ -627,6 +731,46 @@ export class ContextService {
     }
 
     searchParams.set(key, String(value));
+  }
+
+  private httpPostForm(
+    url: URL,
+    form: URLSearchParams,
+    hostHeader?: string,
+  ): Promise<{ status: number; body: string }> {
+    const requestFn = url.protocol === 'https:' ? httpsRequest : httpRequest;
+    const payload = form.toString();
+
+    return new Promise((resolve, reject) => {
+      const req = requestFn(
+        {
+          hostname: url.hostname,
+          port: url.port || (url.protocol === 'https:' ? 443 : 80),
+          path: url.pathname,
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'Content-Length': Buffer.byteLength(payload),
+            ...(hostHeader ? { Host: hostHeader } : {}),
+          },
+        },
+        (res) => {
+          const chunks: Buffer[] = [];
+          res.on('data', (chunk: Buffer) => {
+            chunks.push(chunk);
+          });
+          res.on('end', () => {
+            resolve({
+              status: res.statusCode ?? 500,
+              body: Buffer.concat(chunks).toString('utf8'),
+            });
+          });
+        },
+      );
+      req.on('error', reject);
+      req.write(payload);
+      req.end();
+    });
   }
 
   private httpGet(

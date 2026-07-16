@@ -165,7 +165,8 @@ On the new service page → Add functions:
 | `mod_forum_get_forums_by_courses` | Returns a list of forum instances in a provided set of courses, if no courses are provided then all the forum instances the user has access to will be returned. | `mod/forum:viewdiscussion` |
 | `mod_page_get_pages_by_courses` | Returns a list of pages in a provided list of courses, if no list is provided all pages that the user can view will be returned. | `mod/page:view` |
 | `mod_page_view_page` | Simulate the view.php web interface page: trigger events, completion, etc... | `mod/page:view` |
-| `local_syllentras_ai_ensure_student_placement` | Ensure shared AI Content section + private student group (Path A) | `local/syllentras_ai:manageplacement` |
+| `local_syllentras_ai_ensure_student_placement` | Ensure shared AI Content section + private student group | `local/syllentras_ai:manageplacement` |
+| `local_syllentras_ai_create_practice_quiz` | Create a private practice quiz for one student | `local/syllentras_ai:manageplacement` |
 
 **Add the API user as an authorised user** (Step 7)
 
@@ -187,11 +188,9 @@ Then do a full restart to pick up the new token:
 .\dev.ps1 up
 ```
 
-### 9. AI Content placement (Path A) — admin checklist
+### 9. AI Content and practice quizzes — admin checklist
 
-Path A lets the API ensure a shared **AI Content** section and a private per-student group so later features (practice quizzes) can place activities only that student and instructors can see. Quiz creation and chat confirmation are **Path B** (not built yet).
-
-After pulling plugin changes that bump `local_syllentras_ai` version:
+After installing or upgrading the plugin, complete these Moodle admin steps so the chat can place private **AI Content** and create practice quizzes:
 
 1. **Upgrade and purge**
    ```powershell
@@ -200,26 +199,21 @@ After pulling plugin changes that bump `local_syllentras_ai` version:
    ```
    Or open Site administration → Notifications and complete the upgrade.
 
-2. **Confirm the WS function is on your token’s service**  
-   Site administration → Server → Web services → External services → open the service used by `MOODLE_TOKEN` (plugin service shortname `syllentras_ai`, or the manual **Syllentras AI Service** from step 8).  
-   Ensure `local_syllentras_ai_ensure_student_placement` is listed. If missing, **Add functions** and select it. Recreate the token only if you switch services.
+2. **Confirm both WS functions are on your token’s service**  
+   Site administration → Server → Web services → External services → open the service used by `MOODLE_TOKEN` (plugin shortname `syllentras_ai`, or the manual **Syllentras AI Service** from step 8).  
+   Ensure these are listed (Add functions if missing):
+   - `local_syllentras_ai_ensure_student_placement`
+   - `local_syllentras_ai_create_practice_quiz`  
+   Recreate the token only if you switch services. Moodle may warn about quiz/question capabilities for `syllentras_api`; with **Manager** at system level those are usually covered.
 
 3. **Capability `local/syllentras_ai:manageplacement`**  
-   Allow it on the role used by `syllentras_api` (Web Service and/or Manager). Manager archetype already allows it after upgrade if you use Manager; a custom Web Service role needs the capability checked explicitly.
+   Allow it on the role used by `syllentras_api` (Web Service and/or Manager). Manager archetype usually gains it on upgrade; a custom Web Service role needs it checked explicitly.
 
 4. **Enable restricted access (site)**  
    Site administration → Advanced features → **Enable restricted access** → Save.  
-   (Needed when Path B attaches group restrictions to activities; turn it on now.)
+   Required so practice quizzes can be limited to one student’s group.
 
-5. **Smoke test** (API must not be in `NODE_ENV=production`):
-   ```powershell
-   curl -X POST http://localhost:3000/moodle/placement/ensure `
-     -H "Content-Type: application/json" `
-     -d '{"courseId":2,"moodleUserId":3}'
-   ```
-   Use a real course id and an enrolled student’s Moodle user id. Expect JSON with `sectionId`, `sectionNum`, `groupId`, `groupName`, `availabilityJson`. In the course, confirm section **AI Content** and group `Syllentras AI — {userid}`.
-
-You do **not** create sections/groups by hand — the web service does that idempotently.
+Sections and groups are created automatically by the web service — no need to create them by hand.
 
 ---
 

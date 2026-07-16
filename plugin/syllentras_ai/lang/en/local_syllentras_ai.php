@@ -16,3 +16,4 @@ $string['privacy:metadata'] = 'The Syllentras AI plugin sends course content and
 $string['syllentras_ai:manageplacement'] = 'Manage Syllentras AI content placement (section and private groups)';
 $string['syllentras_ai:manageplacement_help'] = 'Allows ensuring the shared AI Content section and per-student private groups used for AI-generated course activities.';
 $string['usernotenrolled'] = 'The user is not enrolled in this course.';
+$string['practicequizintro'] = 'Practice quiz created by Syllentras AI. This does not count toward your course grade.';

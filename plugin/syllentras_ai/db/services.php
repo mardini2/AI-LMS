@@ -11,6 +11,14 @@ $functions = [
         'capabilities' => 'local/syllentras_ai:manageplacement',
         'ajax' => false,
     ],
+    'local_syllentras_ai_create_practice_quiz' => [
+        'classname' => 'local_syllentras_ai\external\create_practice_quiz',
+        'methodname' => 'execute',
+        'description' => 'Create a private practice quiz in the AI Content section for one student',
+        'type' => 'write',
+        'capabilities' => 'local/syllentras_ai:manageplacement',
+        'ajax' => false,
+    ],
 ];
 
 // The API uses Moodle's built-in external functions directly. Keeping them in a
@@ -28,6 +36,7 @@ $services = [
             'mod_forum_get_forums_by_courses',
             'mod_page_get_pages_by_courses',
             'local_syllentras_ai_ensure_student_placement',
+            'local_syllentras_ai_create_practice_quiz',
         ],
         'restrictedusers' => 0,
         'enabled' => 1,

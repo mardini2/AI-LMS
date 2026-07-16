@@ -9,6 +9,7 @@ import { ConversationModule } from './conversation/conversation.module';
 import { ContextModule } from './context/context.module';
 import { Conversation } from './conversation/entities/conversation.entity';
 import { Message } from './conversation/entities/message.entity';
+import { PendingAction } from './chat/entities/pending-action.entity';
 
 @Module({
   imports: [
@@ -34,7 +35,7 @@ import { Message } from './conversation/entities/message.entity';
       useFactory: (config: ConfigService) => ({
         type: 'postgres',
         url: config.get<string>('DATABASE_URL'),
-        entities: [Conversation, Message],
+        entities: [Conversation, Message, PendingAction],
         synchronize: config.get('NODE_ENV') !== 'production',
         ssl: config.get('NODE_ENV') === 'production'
           ? { rejectUnauthorized: false }

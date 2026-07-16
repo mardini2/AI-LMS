@@ -658,6 +658,48 @@ class before_footer {
                 background: #ffeaea;
                 color: #c00;
             }
+            .syllentras-pending-action {
+                margin-top: 10px;
+                padding: 10px 12px;
+                border: 1px solid #c5d8ef;
+                border-radius: 8px;
+                background: #f4f8fc;
+            }
+            .syllentras-pending-summary {
+                margin: 0 0 10px;
+                font-size: 13px;
+                line-height: 1.4;
+                color: #234;
+            }
+            .syllentras-pending-summary strong {
+                display: block;
+                margin-bottom: 4px;
+            }
+            .syllentras-pending-actions {
+                display: flex;
+                gap: 8px;
+                flex-wrap: wrap;
+            }
+            .syllentras-pending-actions button {
+                border: 0;
+                border-radius: 6px;
+                padding: 6px 12px;
+                cursor: pointer;
+                font-size: 13px;
+            }
+            .syllentras-pending-confirm {
+                background: #0b5fff;
+                color: #fff;
+            }
+            .syllentras-pending-confirm:disabled,
+            .syllentras-pending-cancel:disabled {
+                opacity: 0.6;
+                cursor: default;
+            }
+            .syllentras-pending-cancel {
+                background: #e8eef5;
+                color: #234;
+            }
             #syllentras-chat-input-resizer {
                 flex: 0 0 6px;
                 cursor: row-resize;
@@ -1015,6 +1057,115 @@ class before_footer {
                 el.innerHTML = DOMPurify.sanitize(raw);
             }
 
+            function clearPendingActionUi(root) {
+                var scope = root || msgs;
+                Array.from(scope.querySelectorAll('.syllentras-pending-action')).forEach(function (node) {
+                    node.remove();
+                });
+            }
+
+            function attachPendingAction(messageEl, pendingAction) {
+                if (!messageEl || !pendingAction || !pendingAction.id) return;
+                clearPendingActionUi(messageEl);
+
+                var wrap = document.createElement('div');
+                wrap.className = 'syllentras-pending-action';
+                wrap.dataset.actionId = pendingAction.id;
+
+                var summary = document.createElement('div');
+                summary.className = 'syllentras-pending-summary';
+                summary.innerHTML = '<strong></strong><div></div><div></div>';
+                summary.querySelector('strong').textContent = pendingAction.title || 'Practice quiz';
+                summary.children[1].textContent = (pendingAction.questionCount || '?')
+                    + ' questions (multiple choice and true/false)';
+                summary.children[2].textContent = 'Covers: ' + (pendingAction.scopeSummary || 'course material');
+                wrap.appendChild(summary);
+
+                var actions = document.createElement('div');
+                actions.className = 'syllentras-pending-actions';
+
+                var confirmBtn = document.createElement('button');
+                confirmBtn.type = 'button';
+                confirmBtn.className = 'syllentras-pending-confirm';
+                confirmBtn.textContent = 'Confirm';
+
+                var cancelBtn = document.createElement('button');
+                cancelBtn.type = 'button';
+                cancelBtn.className = 'syllentras-pending-cancel';
+                cancelBtn.textContent = 'Cancel';
+
+                function setBusy(busy) {
+                    confirmBtn.disabled = busy;
+                    cancelBtn.disabled = busy;
+                    confirmBtn.textContent = busy ? 'Creating…' : 'Confirm';
+                }
+
+                confirmBtn.addEventListener('click', function () {
+                    setBusy(true);
+                    fetchJson('/chat/actions/confirm', {
+                        method: 'POST',
+                        body: JSON.stringify({
+                            actionId: pendingAction.id,
+                            moodleUserId: moodleUserId
+                        })
+                    })
+                    .then(function (data) {
+                        clearPendingActionUi(messageEl);
+                        if (data.response) {
+                            appendMessage('assistant', data.response);
+                        }
+                        return loadConversations();
+                    })
+                    .catch(function () {
+                        setBusy(false);
+                        appendMessage('error', 'Could not create the practice quiz. Please try again.');
+                    });
+                });
+
+                cancelBtn.addEventListener('click', function () {
+                    setBusy(true);
+                    fetchJson('/chat/actions/cancel', {
+                        method: 'POST',
+                        body: JSON.stringify({
+                            actionId: pendingAction.id,
+                            moodleUserId: moodleUserId
+                        })
+                    })
+                    .then(function (data) {
+                        clearPendingActionUi(messageEl);
+                        if (data.response) {
+                            appendMessage('assistant', data.response);
+                        }
+                    })
+                    .catch(function () {
+                        setBusy(false);
+                        appendMessage('error', 'Could not cancel that request. Please try again.');
+                    });
+                });
+
+                actions.appendChild(confirmBtn);
+                actions.appendChild(cancelBtn);
+                wrap.appendChild(actions);
+                messageEl.appendChild(wrap);
+                msgs.scrollTop = msgs.scrollHeight;
+            }
+
+            function loadPendingActionForConversation() {
+                if (!conversationId || !moodleUserId) return Promise.resolve();
+                return fetchJson('/chat/actions/pending?conversationId='
+                    + encodeURIComponent(conversationId)
+                    + '&moodleUserId=' + encodeURIComponent(moodleUserId))
+                .then(function (data) {
+                    if (!data.pendingAction) return;
+                    var assistants = msgs.querySelectorAll('.syllentras-msg.assistant');
+                    var last = assistants.length ? assistants[assistants.length - 1] : null;
+                    if (last) {
+                        attachPendingAction(last, data.pendingAction);
+                    }
+                })
+                .catch(function () { /* ignore */ });
+            }
+
             function createMessageElement(role, text, createdAt) {
                 var div = document.createElement('div');
                 div.className = 'syllentras-msg ' + role;
@@ -1093,6 +1244,7 @@ class before_footer {
                         hasMore = !!page.hasMore;
                         scrollToBottom();
                     }
+                    return loadPendingActionForConversation();
                 })
                 .catch(function () {
                     appendMessage('error', 'Could not load chat history.', { scroll: false });
@@ -1680,6 +1832,9 @@ class before_footer {
                     renderAssistantContent(loadingEl, data.response);
                     loadingEl.dataset.createdAt = new Date().toISOString();
                     conversationId = data.conversationId || conversationId;
+                    if (data.pendingAction) {
+                        attachPendingAction(loadingEl, data.pendingAction);
+                    }
                     return loadConversations();
                 })
                 .catch(function () {

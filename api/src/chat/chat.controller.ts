@@ -1,6 +1,15 @@
-import { Controller, Post, Body } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Post,
+  Query,
+  ParseIntPipe,
+  ParseUUIDPipe,
+} from '@nestjs/common';
 import { ChatService } from './chat.service';
 import { SendMessageDto } from './dto/send-message.dto';
+import { CancelActionDto, ConfirmActionDto } from './dto/action.dto';
 
 @Controller('chat')
 export class ChatController {
@@ -8,15 +17,40 @@ export class ChatController {
 
   /**
    * POST /chat/message
-   * Accepts a student message and returns an AI-generated response grounded
-   * in the course material. Creates a new conversation if no conversationId
-   * is supplied, and always persists both turns to the database.
-   *
-   * Body: { courseId, message, conversationId?, history? }
-   * Returns: { response, conversationId }
    */
   @Post('message')
   sendMessage(@Body() dto: SendMessageDto) {
     return this.chatService.sendMessage(dto);
+  }
+
+  /**
+   * POST /chat/actions/confirm
+   */
+  @Post('actions/confirm')
+  confirmAction(@Body() dto: ConfirmActionDto) {
+    return this.chatService.confirmAction(dto.actionId, dto.moodleUserId);
+  }
+
+  /**
+   * POST /chat/actions/cancel
+   */
+  @Post('actions/cancel')
+  cancelAction(@Body() dto: CancelActionDto) {
+    return this.chatService.cancelAction(dto.actionId, dto.moodleUserId);
+  }
+
+  /**
+   * GET /chat/actions/pending?conversationId=&moodleUserId=
+   */
+  @Get('actions/pending')
+  async getPending(
+    @Query('conversationId', ParseUUIDPipe) conversationId: string,
+    @Query('moodleUserId', ParseIntPipe) moodleUserId: number,
+  ) {
+    const pendingAction = await this.chatService.getPendingAction(
+      conversationId,
+      moodleUserId,
+    );
+    return { pendingAction };
   }
 }
