@@ -27,11 +27,35 @@ export interface PendingActionDto {
   scopeSummary: string;
 }
 
+export interface ReviewOfferDto {
+  actionId: string;
+  quizId: number;
+  title: string;
+  score: number;
+  maxScore: number;
+  wrongCount: number;
+  total: number;
+  scoreLabel: string;
+}
+
+export interface ReviewBlockDto {
+  slot: number;
+  question: string;
+  studentAnswer: string;
+  rightAnswer: string;
+  why: string;
+  citationTitle: string;
+  citationSnippet?: string;
+  citationUrl?: string;
+}
+
 export interface ChatResponse {
   response: string;
   conversationId: string;
   pendingAction?: PendingActionDto;
   quizUrl?: string;
+  reviewOffer?: ReviewOfferDto;
+  review?: ReviewBlockDto[];
 }
 
 const QUIZ_QUESTION_COUNT_MIN = 5;
@@ -313,7 +337,11 @@ export class ChatService {
       questions,
     });
 
-    await this.pendingActionService.markConfirmed(actionId);
+    await this.pendingActionService.markConfirmedWithQuiz(actionId, {
+      quizId: quiz.quizId,
+      cmId: quiz.cmId,
+      viewUrl: quiz.viewUrl,
+    });
 
     const responseText = [
       `Your practice quiz **${quiz.name}** is ready.`,
@@ -377,6 +405,211 @@ export class ChatService {
       questionCount: action.payload.questionCount,
       scopeSummary: action.payload.scopeSummary,
     };
+  }
+
+  async getReviewOffer(
+    conversationId: string,
+    moodleUserId: number,
+  ): Promise<ReviewOfferDto | null> {
+    await this.conversationService.assertOwner(conversationId, moodleUserId);
+    const action =
+      await this.pendingActionService.getConfirmedPracticeQuizForConversation(
+        conversationId,
+        moodleUserId,
+      );
+    if (!action?.payload.quizId) {
+      return null;
+    }
+
+    try {
+      const review = await this.contextService.getPracticeAttemptReview(
+        action.payload.quizId,
+        moodleUserId,
+      );
+      if (!review.hasAttempt) {
+        return null;
+      }
+
+      const explainedAttemptId = action.payload.explainedAttemptId ?? null;
+      if (review.attemptId === explainedAttemptId) {
+        return null;
+      }
+
+      const wrong = review.questions.filter((q) => !q.iscorrect);
+      const total = review.questions.length || action.payload.questionCount;
+      const score = Math.round(review.score);
+      const maxScore = Math.round(review.maxScore) || total;
+
+      if (wrong.length === 0) {
+        // Perfect score — record this attempt so we don't keep prompting.
+        await this.pendingActionService.markExplained(
+          action.id,
+          review.attemptId,
+        );
+        return null;
+      }
+
+      return {
+        actionId: action.id,
+        quizId: action.payload.quizId,
+        title: action.payload.title,
+        score,
+        maxScore,
+        wrongCount: wrong.length,
+        total,
+        scoreLabel: `${score}/${maxScore}`,
+      };
+    } catch (err) {
+      this.logger.warn(
+        `Failed to load review offer for conversation ${conversationId}: ${String(err)}`,
+      );
+      return null;
+    }
+  }
+
+  async explainWrongAnswers(
+    conversationId: string,
+    moodleUserId: number,
+  ): Promise<ChatResponse> {
+    await this.conversationService.assertOwner(conversationId, moodleUserId);
+    const action =
+      await this.pendingActionService.getConfirmedPracticeQuizForConversation(
+        conversationId,
+        moodleUserId,
+      );
+    if (!action?.payload.quizId) {
+      throw new BadRequestException(
+        'No practice quiz ready for review in this conversation',
+      );
+    }
+
+    const attempt = await this.contextService.getPracticeAttemptReview(
+      action.payload.quizId,
+      moodleUserId,
+    );
+    if (!attempt.hasAttempt) {
+      throw new BadRequestException(
+        'Finish the practice quiz in Moodle first, then ask me to explain',
+      );
+    }
+
+    const wrong = attempt.questions.filter((q) => !q.iscorrect);
+    if (wrong.length === 0) {
+      await this.pendingActionService.markExplained(
+        action.id,
+        attempt.attemptId,
+      );
+      const responseText =
+        'Nice work — you got everything right on that practice quiz. Nothing to walk through!';
+      await this.conversationService.appendMessages(conversationId, [
+        { role: 'assistant', content: responseText },
+      ]);
+      return { response: responseText, conversationId };
+    }
+
+    const filter = {
+      sectionId: action.payload.sectionId,
+      sectionNumber: action.payload.sectionNumber,
+      sectionName: action.payload.sectionName,
+    };
+
+    const reviewBlocks: ReviewBlockDto[] = [];
+    for (const q of wrong) {
+      const query = `${q.questiontext} ${q.rightanswer}`.trim();
+      const [material, citation] = await Promise.all([
+        this.contextService.getContext(action.courseId, query, filter),
+        this.contextService.findBestCitation(action.courseId, query, filter),
+      ]);
+      const why = await this.generateWrongAnswerExplanation({
+        questiontext: q.questiontext,
+        studentanswer: q.studentanswer,
+        rightanswer: q.rightanswer,
+        courseMaterial: material,
+      });
+
+      reviewBlocks.push({
+        slot: q.slot,
+        question: q.questiontext || q.name,
+        studentAnswer: q.studentanswer || '(no answer)',
+        rightAnswer: q.rightanswer || '(unavailable)',
+        why,
+        citationTitle: citation?.title ?? 'Course material',
+        citationSnippet: citation?.snippet,
+        citationUrl: citation?.url,
+      });
+    }
+
+    await this.pendingActionService.markExplained(
+      action.id,
+      attempt.attemptId,
+    );
+
+    const score = Math.round(attempt.score);
+    const maxScore = Math.round(attempt.maxScore) || attempt.questions.length;
+    const responseText = buildReviewMessage({
+      title: action.payload.title,
+      score,
+      maxScore,
+      blocks: reviewBlocks,
+    });
+
+    await this.conversationService.appendMessages(conversationId, [
+      { role: 'assistant', content: responseText },
+    ]);
+
+    return {
+      response: responseText,
+      conversationId,
+      review: reviewBlocks,
+    };
+  }
+
+  private async generateWrongAnswerExplanation(input: {
+    questiontext: string;
+    studentanswer: string;
+    rightanswer: string;
+    courseMaterial: string;
+  }): Promise<string> {
+    const model = this.genAI.getGenerativeModel({
+      model: 'gemini-3.1-flash-lite',
+      generationConfig: {
+        responseMimeType: 'application/json',
+        responseSchema: {
+          type: SchemaType.OBJECT,
+          properties: {
+            why: { type: SchemaType.STRING },
+          },
+          required: ['why'],
+        },
+      },
+    });
+
+    const prompt = [
+      'Explain why the student missed this practice-quiz question.',
+      'Write 2-3 short sentences, clear and encouraging.',
+      'Use only the course material below. If the material is thin, still explain from the correct answer without inventing course facts.',
+      '',
+      `Question: ${input.questiontext}`,
+      `Student answered: ${input.studentanswer}`,
+      `Correct answer: ${input.rightanswer}`,
+      '',
+      'Course material:',
+      '---',
+      (input.courseMaterial || '').slice(0, 20000),
+      '---',
+    ].join('\n');
+
+    const result = await model.generateContent(prompt);
+    try {
+      const parsed = JSON.parse(result.response.text()) as { why?: string };
+      const why = (parsed.why ?? '').trim();
+      if (why) {
+        return why;
+      }
+    } catch {
+      // fall through
+    }
+    return `The correct answer is "${input.rightanswer}". Your answer ("${input.studentanswer}") did not match. Review the related course section and try a similar question again.`;
   }
 
   private async generatePracticeQuestions(input: {
@@ -497,6 +730,44 @@ function buildProposalMessage(input: {
   );
 
   return lines.join('\n');
+}
+
+function buildReviewMessage(input: {
+  title: string;
+  score: number;
+  maxScore: number;
+  blocks: ReviewBlockDto[];
+}): string {
+  const lines = [
+    `### Practice quiz review — ${input.title}`,
+    `**Score:** ${input.score}/${input.maxScore} · Walking through **${input.blocks.length}** wrong answer(s)`,
+    '',
+  ];
+
+  input.blocks.forEach((block) => {
+    lines.push(`**${block.slot}. ❌ ${block.question}**`);
+    lines.push(
+      `You answered: *${block.studentAnswer}* · Correct: *${block.rightAnswer}*`,
+    );
+    lines.push('');
+    lines.push(`**Why:** ${block.why}`);
+    lines.push('');
+    if (block.citationUrl) {
+      lines.push(
+        `**From your course:** [${block.citationTitle}](${block.citationUrl})`,
+      );
+    } else {
+      lines.push(`**From your course:** ${block.citationTitle}`);
+    }
+    if (block.citationSnippet) {
+      lines.push(`> ${block.citationSnippet}`);
+    }
+    lines.push('');
+    lines.push('---');
+    lines.push('');
+  });
+
+  return lines.join('\n').trim();
 }
 
 function normalizeQuestion(

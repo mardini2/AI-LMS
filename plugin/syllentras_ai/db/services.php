@@ -19,6 +19,14 @@ $functions = [
         'capabilities' => 'local/syllentras_ai:manageplacement',
         'ajax' => false,
     ],
+    'local_syllentras_ai_get_practice_attempt_review' => [
+        'classname' => 'local_syllentras_ai\external\get_practice_attempt_review',
+        'methodname' => 'execute',
+        'description' => 'Get the latest finished practice-quiz attempt with per-question results',
+        'type' => 'read',
+        'capabilities' => 'local/syllentras_ai:manageplacement',
+        'ajax' => false,
+    ],
 ];
 
 // The API uses Moodle's built-in external functions directly. Keeping them in a
@@ -37,6 +45,7 @@ $services = [
             'mod_page_get_pages_by_courses',
             'local_syllentras_ai_ensure_student_placement',
             'local_syllentras_ai_create_practice_quiz',
+            'local_syllentras_ai_get_practice_attempt_review',
         ],
         'restrictedusers' => 0,
         'enabled' => 1,

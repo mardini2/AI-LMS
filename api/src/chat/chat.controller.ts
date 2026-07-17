@@ -9,7 +9,11 @@ import {
 } from '@nestjs/common';
 import { ChatService } from './chat.service';
 import { SendMessageDto } from './dto/send-message.dto';
-import { CancelActionDto, ConfirmActionDto } from './dto/action.dto';
+import {
+  CancelActionDto,
+  ConfirmActionDto,
+  ExplainReviewDto,
+} from './dto/action.dto';
 
 @Controller('chat')
 export class ChatController {
@@ -52,5 +56,31 @@ export class ChatController {
       moodleUserId,
     );
     return { pendingAction };
+  }
+
+  /**
+   * GET /chat/actions/review-offer?conversationId=&moodleUserId=
+   */
+  @Get('actions/review-offer')
+  async getReviewOffer(
+    @Query('conversationId', ParseUUIDPipe) conversationId: string,
+    @Query('moodleUserId', ParseIntPipe) moodleUserId: number,
+  ) {
+    const offer = await this.chatService.getReviewOffer(
+      conversationId,
+      moodleUserId,
+    );
+    return { offer };
+  }
+
+  /**
+   * POST /chat/actions/review-explain
+   */
+  @Post('actions/review-explain')
+  explainReview(@Body() dto: ExplainReviewDto) {
+    return this.chatService.explainWrongAnswers(
+      dto.conversationId,
+      dto.moodleUserId,
+    );
   }
 }

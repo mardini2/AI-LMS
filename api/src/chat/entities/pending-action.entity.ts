@@ -20,6 +20,12 @@ export interface PracticeQuizPayload {
   sectionId?: number;
   sectionNumber?: number;
   sectionName?: string;
+  quizId?: number;
+  cmId?: number;
+  viewUrl?: string;
+  /** @deprecated Prefer explainedAttemptId */
+  explainedAt?: string | null;
+  explainedAttemptId?: number | null;
 }
 
 @Entity('pending_actions')

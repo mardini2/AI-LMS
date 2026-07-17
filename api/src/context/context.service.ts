@@ -46,6 +46,26 @@ export interface CreatedPracticeQuiz {
   viewUrl: string;
 }
 
+export interface PracticeAttemptQuestion {
+  slot: number;
+  name: string;
+  questiontext: string;
+  studentanswer: string;
+  rightanswer: string;
+  iscorrect: boolean;
+  mark: number;
+  maxmark: number;
+}
+
+export interface PracticeAttemptReview {
+  hasAttempt: boolean;
+  attemptId: number;
+  state: string;
+  score: number;
+  maxScore: number;
+  questions: PracticeAttemptQuestion[];
+}
+
 interface CourseContextDocument {
   courseId: number;
   courseName?: string;
@@ -96,6 +116,38 @@ export class ContextService {
 
     const documents = await this.getCourseDocuments(courseId);
     return formatDocumentsForPrompt(documents, filter, question);
+  }
+
+  /**
+   * Pick the best course document to cite for a question/topic.
+   */
+  async findBestCitation(
+    courseId: number,
+    question: string,
+    filter: CourseContextFilter = {},
+  ): Promise<{ title: string; url?: string; snippet: string } | null> {
+    if (courseId <= 1) {
+      return null;
+    }
+
+    const documents = await this.getCourseDocuments(courseId);
+    const best = pickBestDocument(documents, filter, question);
+    if (!best?.text?.trim()) {
+      return null;
+    }
+
+    const title =
+      best.moduleName?.trim() ||
+      best.sectionName?.trim() ||
+      best.fileName?.trim() ||
+      'Course material';
+    const url =
+      best.source && /^https?:\/\//i.test(best.source)
+        ? this.toBrowserCitationUrl(best.source)
+        : undefined;
+    const snippet = best.text.replace(/\s+/g, ' ').trim().slice(0, 220);
+
+    return { title, url, snippet };
   }
 
   async resolveCourseName(
@@ -251,6 +303,60 @@ export class ContextService {
     };
   }
 
+  /**
+   * Latest finished attempt review for a practice quiz (including wrong answers).
+   */
+  async getPracticeAttemptReview(
+    quizId: number,
+    moodleUserId: number,
+  ): Promise<PracticeAttemptReview> {
+    if (quizId < 1) {
+      throw new Error('quizId must be a positive integer');
+    }
+    if (moodleUserId < 1) {
+      throw new Error('moodleUserId must be a positive integer');
+    }
+
+    const result = await this.callMoodleApi<{
+      hasattempt: boolean | number;
+      attemptid: number;
+      state: string;
+      score: number;
+      maxscore: number;
+      questions: Array<{
+        slot: number;
+        name: string;
+        questiontext: string;
+        studentanswer: string;
+        rightanswer: string;
+        iscorrect: boolean | number;
+        mark: number;
+        maxmark: number;
+      }>;
+    }>('local_syllentras_ai_get_practice_attempt_review', {
+      quizid: quizId,
+      userid: moodleUserId,
+    });
+
+    return {
+      hasAttempt: Boolean(result.hasattempt),
+      attemptId: result.attemptid,
+      state: result.state ?? '',
+      score: Number(result.score) || 0,
+      maxScore: Number(result.maxscore) || 0,
+      questions: (result.questions ?? []).map((q) => ({
+        slot: q.slot,
+        name: q.name,
+        questiontext: q.questiontext,
+        studentanswer: q.studentanswer,
+        rightanswer: q.rightanswer,
+        iscorrect: Boolean(q.iscorrect),
+        mark: Number(q.mark) || 0,
+        maxmark: Number(q.maxmark) || 0,
+      })),
+    };
+  }
+
   /** Rewrite docker-internal Moodle hosts so browser links work. */
   private toPublicMoodleUrl(rawUrl: string): string {
     try {
@@ -261,6 +367,25 @@ export class ContextService {
         parsed.port = port || '8000';
         parsed.protocol = 'http:';
       }
+      return parsed.toString();
+    } catch {
+      return rawUrl;
+    }
+  }
+
+  /**
+   * Convert Moodle webservice file URLs into normal browser pluginfile links.
+   * webservice/pluginfile.php requires a token; logged-in students use /pluginfile.php.
+   */
+  private toBrowserCitationUrl(rawUrl: string): string {
+    try {
+      const parsed = new URL(this.toPublicMoodleUrl(rawUrl));
+      parsed.pathname = parsed.pathname.replace(
+        /\/webservice\/pluginfile\.php\b/i,
+        '/pluginfile.php',
+      );
+      parsed.searchParams.delete('token');
+      parsed.searchParams.delete('forcedownload');
       return parsed.toString();
     } catch {
       return rawUrl;
@@ -875,6 +1000,27 @@ function formatDocumentsForPrompt(
   filter: CourseContextFilter,
   question: string,
 ): string {
+  return orderDocuments(documents, filter, question)
+    .slice(0, 80)
+    .map(formatDocument)
+    .join('\n\n')
+    .trim();
+}
+
+function pickBestDocument(
+  documents: CourseContextDocument[],
+  filter: CourseContextFilter,
+  question: string,
+): CourseContextDocument | null {
+  const ordered = orderDocuments(documents, filter, question);
+  return ordered[0] ?? null;
+}
+
+function orderDocuments(
+  documents: CourseContextDocument[],
+  filter: CourseContextFilter,
+  question: string,
+): CourseContextDocument[] {
   const matching = documents.filter((doc) => matchesSection(doc, filter));
   const other = documents.filter((doc) => !matchesSection(doc, filter));
   const questionTerms = question
@@ -882,19 +1028,20 @@ function formatDocumentsForPrompt(
     .split(/\W+/)
     .filter((term) => term.length > 3);
 
-  const ordered =
-    matching.length > 0
-      ? [
-          ...matching.sort((a, b) => relevanceScore(b, questionTerms) - relevanceScore(a, questionTerms)),
-          ...other.sort((a, b) => relevanceScore(b, questionTerms) - relevanceScore(a, questionTerms)),
-        ]
-      : documents.sort((a, b) => relevanceScore(b, questionTerms) - relevanceScore(a, questionTerms));
+  if (matching.length > 0) {
+    return [
+      ...matching.sort(
+        (a, b) => relevanceScore(b, questionTerms) - relevanceScore(a, questionTerms),
+      ),
+      ...other.sort(
+        (a, b) => relevanceScore(b, questionTerms) - relevanceScore(a, questionTerms),
+      ),
+    ];
+  }
 
-  return ordered
-    .slice(0, 80)
-    .map(formatDocument)
-    .join('\n\n')
-    .trim();
+  return documents.sort(
+    (a, b) => relevanceScore(b, questionTerms) - relevanceScore(a, questionTerms),
+  );
 }
 
 function matchesSection(

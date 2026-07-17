@@ -20,3 +20,13 @@ export class CancelActionDto {
   @Min(1)
   moodleUserId: number;
 }
+
+export class ExplainReviewDto {
+  @IsUUID()
+  conversationId: string;
+
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  moodleUserId: number;
+}

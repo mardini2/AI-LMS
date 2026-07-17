@@ -167,6 +167,7 @@ On the new service page → Add functions:
 | `mod_page_view_page` | Simulate the view.php web interface page: trigger events, completion, etc... | `mod/page:view` |
 | `local_syllentras_ai_ensure_student_placement` | Ensure shared AI Content section + private student group | `local/syllentras_ai:manageplacement` |
 | `local_syllentras_ai_create_practice_quiz` | Create a private practice quiz for one student | `local/syllentras_ai:manageplacement` |
+| `local_syllentras_ai_get_practice_attempt_review` | Get finished practice-quiz attempt results for review | `local/syllentras_ai:manageplacement` |
 
 **Add the API user as an authorised user** (Step 7)
 
@@ -203,7 +204,8 @@ After installing or upgrading the plugin, complete these Moodle admin steps so t
    Site administration → Server → Web services → External services → open the service used by `MOODLE_TOKEN` (plugin shortname `syllentras_ai`, or the manual **Syllentras AI Service** from step 8).  
    Ensure these are listed (Add functions if missing):
    - `local_syllentras_ai_ensure_student_placement`
-   - `local_syllentras_ai_create_practice_quiz`  
+   - `local_syllentras_ai_create_practice_quiz`
+   - `local_syllentras_ai_get_practice_attempt_review`  
    Recreate the token only if you switch services. Moodle may warn about quiz/question capabilities for `syllentras_api`; with **Manager** at system level those are usually covered.
 
 3. **Capability `local/syllentras_ai:manageplacement`**  

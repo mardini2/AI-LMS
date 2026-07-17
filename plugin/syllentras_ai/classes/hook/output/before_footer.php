@@ -700,6 +700,32 @@ class before_footer {
                 background: #e8eef5;
                 color: #234;
             }
+            .syllentras-review-offer {
+                margin-top: 10px;
+                padding: 10px 12px;
+                border: 1px solid #c9e0c9;
+                border-radius: 8px;
+                background: #f3faf3;
+            }
+            .syllentras-review-offer .syllentras-pending-summary {
+                margin: 0 0 10px;
+                font-size: 13px;
+                line-height: 1.4;
+                color: #234;
+            }
+            .syllentras-review-explain {
+                background: #1f7a3f;
+                color: #fff;
+                border: 0;
+                border-radius: 6px;
+                padding: 6px 12px;
+                cursor: pointer;
+                font-size: 13px;
+            }
+            .syllentras-review-explain:disabled {
+                opacity: 0.6;
+                cursor: default;
+            }
             #syllentras-chat-input-resizer {
                 flex: 0 0 6px;
                 cursor: row-resize;
@@ -1055,11 +1081,15 @@ class before_footer {
                 el.classList.add('syllentras-markdown');
                 var raw = marked.parse(text, { breaks: true });
                 el.innerHTML = DOMPurify.sanitize(raw);
+                Array.from(el.querySelectorAll('a[href]')).forEach(function (anchor) {
+                    anchor.setAttribute('target', '_blank');
+                    anchor.setAttribute('rel', 'noopener noreferrer');
+                });
             }
 
             function clearPendingActionUi(root) {
                 var scope = root || msgs;
-                Array.from(scope.querySelectorAll('.syllentras-pending-action')).forEach(function (node) {
+                Array.from(scope.querySelectorAll('.syllentras-pending-action, .syllentras-review-offer')).forEach(function (node) {
                     node.remove();
                 });
             }
@@ -1114,7 +1144,7 @@ class before_footer {
                         if (data.response) {
                             appendMessage('assistant', data.response);
                         }
-                        return loadConversations();
+                        return loadConversations().then(loadReviewOfferForConversation);
                     })
                     .catch(function () {
                         setBusy(false);
@@ -1161,6 +1191,76 @@ class before_footer {
                     var last = assistants.length ? assistants[assistants.length - 1] : null;
                     if (last) {
                         attachPendingAction(last, data.pendingAction);
+                    }
+                })
+                .catch(function () { /* ignore */ });
+            }
+
+            function attachReviewOffer(messageEl, offer) {
+                if (!messageEl || !offer || !offer.actionId) return;
+                Array.from(messageEl.querySelectorAll('.syllentras-review-offer')).forEach(function (node) {
+                    node.remove();
+                });
+
+                var wrap = document.createElement('div');
+                wrap.className = 'syllentras-review-offer';
+                wrap.dataset.actionId = offer.actionId;
+
+                var summary = document.createElement('div');
+                summary.className = 'syllentras-pending-summary';
+                summary.innerHTML = '<strong></strong><div></div><div></div>';
+                summary.querySelector('strong').textContent = 'Want me to walk through what you missed?';
+                summary.children[1].textContent = 'You got ' + (offer.scoreLabel || (offer.score + '/' + offer.maxScore))
+                    + ' on "' + (offer.title || 'your practice quiz') + '".';
+                summary.children[2].textContent = 'I can explain the ' + offer.wrongCount
+                    + ' wrong answer' + (offer.wrongCount === 1 ? '' : 's')
+                    + ' using your course materials.';
+                wrap.appendChild(summary);
+
+                var explainBtn = document.createElement('button');
+                explainBtn.type = 'button';
+                explainBtn.className = 'syllentras-review-explain';
+                explainBtn.textContent = 'Explain my wrong answers';
+
+                explainBtn.addEventListener('click', function () {
+                    explainBtn.disabled = true;
+                    explainBtn.textContent = 'Explaining…';
+                    fetchJson('/chat/actions/review-explain', {
+                        method: 'POST',
+                        body: JSON.stringify({
+                            conversationId: conversationId,
+                            moodleUserId: moodleUserId
+                        })
+                    })
+                    .then(function (data) {
+                        wrap.remove();
+                        if (data.response) {
+                            appendMessage('assistant', data.response);
+                        }
+                    })
+                    .catch(function () {
+                        explainBtn.disabled = false;
+                        explainBtn.textContent = 'Explain my wrong answers';
+                        appendMessage('error', 'Could not explain your wrong answers. Please try again.');
+                    });
+                });
+
+                wrap.appendChild(explainBtn);
+                messageEl.appendChild(wrap);
+                msgs.scrollTop = msgs.scrollHeight;
+            }
+
+            function loadReviewOfferForConversation() {
+                if (!conversationId || !moodleUserId) return Promise.resolve();
+                return fetchJson('/chat/actions/review-offer?conversationId='
+                    + encodeURIComponent(conversationId)
+                    + '&moodleUserId=' + encodeURIComponent(moodleUserId))
+                .then(function (data) {
+                    if (!data.offer) return;
+                    var assistants = msgs.querySelectorAll('.syllentras-msg.assistant');
+                    var last = assistants.length ? assistants[assistants.length - 1] : null;
+                    if (last) {
+                        attachReviewOffer(last, data.offer);
                     }
                 })
                 .catch(function () { /* ignore */ });
@@ -1244,7 +1344,7 @@ class before_footer {
                         hasMore = !!page.hasMore;
                         scrollToBottom();
                     }
-                    return loadPendingActionForConversation();
+                    return loadPendingActionForConversation().then(loadReviewOfferForConversation);
                 })
                 .catch(function () {
                     appendMessage('error', 'Could not load chat history.', { scroll: false });
