@@ -34,6 +34,11 @@ export interface ChatResponse {
   quizUrl?: string;
 }
 
+const QUIZ_QUESTION_COUNT_MIN = 5;
+const QUIZ_QUESTION_COUNT_AUTO_MAX = 15; // when AI chooses
+const QUIZ_QUESTION_COUNT_EXPLICIT_MAX = 40; // when student specifies
+const QUIZ_QUESTION_COUNT_DEFAULT = 10; // fallback if invalid
+
 const PROPOSE_PRACTICE_QUIZ_TOOL: FunctionDeclaration = {
   name: 'propose_practice_quiz',
   description:
@@ -52,10 +57,16 @@ const PROPOSE_PRACTICE_QUIZ_TOOL: FunctionDeclaration = {
       },
       questionCount: {
         type: SchemaType.INTEGER,
-        description: 'Number of questions to generate (5–15)',
+        description:
+          `Number of questions to generate. If the student did not specify a count, choose a sensible number between ${QUIZ_QUESTION_COUNT_MIN} and ${QUIZ_QUESTION_COUNT_AUTO_MAX}. If they explicitly asked for a count, pass their requested number even if it exceeds ${QUIZ_QUESTION_COUNT_EXPLICIT_MAX} (the system will cap it).`,
+      },
+      countSpecifiedByStudent: {
+        type: SchemaType.BOOLEAN,
+        description:
+          'True only when the student explicitly stated how many questions they want. False when you are choosing the count yourself.',
       },
     },
-    required: ['title', 'scopeSummary', 'questionCount'],
+    required: ['title', 'scopeSummary', 'questionCount', 'countSpecifiedByStudent'],
   },
 };
 
@@ -189,8 +200,21 @@ export class ChatService {
         title?: string;
         scopeSummary?: string;
         questionCount?: number;
+        countSpecifiedByStudent?: boolean;
       };
-      const questionCount = clampQuestionCount(args.questionCount);
+      const requestedCount =
+        typeof args.questionCount === 'number'
+          ? args.questionCount
+          : Number(args.questionCount);
+      const countSpecifiedByStudent = args.countSpecifiedByStudent === true;
+      const questionCount = clampQuestionCount(
+        requestedCount,
+        countSpecifiedByStudent,
+      );
+      const exceededMax =
+        countSpecifiedByStudent &&
+        Number.isFinite(requestedCount) &&
+        Math.round(requestedCount) > QUIZ_QUESTION_COUNT_EXPLICIT_MAX;
       const title =
         (args.title ?? '').trim() || 'Practice quiz';
       const scopeSummary =
@@ -223,6 +247,7 @@ export class ChatService {
         title,
         questionCount,
         scopeSummary,
+        requestedCount: exceededMax ? Math.round(requestedCount) : undefined,
       });
     } else {
       try {
@@ -429,20 +454,27 @@ export class ChatService {
   }
 }
 
-function clampQuestionCount(value: unknown): number {
+function clampQuestionCount(
+  value: unknown,
+  countSpecifiedByStudent: boolean,
+): number {
   const n = typeof value === 'number' ? value : Number(value);
   if (!Number.isFinite(n)) {
-    return 10;
+    return QUIZ_QUESTION_COUNT_DEFAULT;
   }
-  return Math.min(15, Math.max(5, Math.round(n)));
+  const max = countSpecifiedByStudent
+    ? QUIZ_QUESTION_COUNT_EXPLICIT_MAX
+    : QUIZ_QUESTION_COUNT_AUTO_MAX;
+  return Math.min(max, Math.max(QUIZ_QUESTION_COUNT_MIN, Math.round(n)));
 }
 
 function buildProposalMessage(input: {
   title: string;
   questionCount: number;
   scopeSummary: string;
+  requestedCount?: number;
 }): string {
-  return [
+  const lines = [
     `I can create a **private practice quiz** in Moodle for you.`,
     '',
     `**${input.title}**`,
@@ -450,9 +482,21 @@ function buildProposalMessage(input: {
     `- Covers: ${input.scopeSummary}`,
     `- Practice only — will **not** count toward your course grade`,
     `- Placed under **AI Content** (only you and instructors can see it)`,
+  ];
+
+  if (input.requestedCount != null) {
+    lines.push(
+      '',
+      `You asked for **${input.requestedCount}** questions, but I can only create quizzes with up to **${QUIZ_QUESTION_COUNT_EXPLICIT_MAX}** questions. This plan uses ${input.questionCount}.`,
+    );
+  }
+
+  lines.push(
     '',
     'Nothing will be created until you press **Confirm**. Use **Cancel** to discard this plan.',
-  ].join('\n');
+  );
+
+  return lines.join('\n');
 }
 
 function normalizeQuestion(
@@ -505,7 +549,9 @@ function buildSystemPrompt(ctx: {
 
   if (ctx.canProposeQuiz) {
     lines.push(
-      'When the student clearly asks you to create/make/generate a practice quiz in Moodle, call the propose_practice_quiz tool with a sensible title, scopeSummary, and questionCount between 5 and 15.',
+      'When the student clearly asks you to create/make/generate a practice quiz in Moodle, call the propose_practice_quiz tool with a sensible title, scopeSummary, and questionCount.',
+      `If the student did not say how many questions they want, choose a good count between ${QUIZ_QUESTION_COUNT_MIN} and ${QUIZ_QUESTION_COUNT_AUTO_MAX} and set countSpecifiedByStudent to false.`,
+      `If the student explicitly stated a question count, pass their requested number (even if above ${QUIZ_QUESTION_COUNT_EXPLICIT_MAX}) and set countSpecifiedByStudent to true. Still call the tool — the system will cap the count and explain the limit in the proposal.`,
       'Do not claim a quiz already exists. Creation happens only after the student confirms in the UI.',
       'For normal Q&A that is not a create-quiz request, answer normally without calling the tool.',
     );
