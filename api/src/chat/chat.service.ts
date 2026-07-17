@@ -17,7 +17,8 @@ import { ContextService } from '../context/context.service';
 import type {
   CourseContextFilter,
   PracticeQuizQuestion,
-} from '../context/context.service';
+} from '../context/context.types';
+import { PracticeQuizMoodleService } from '../context/practice-quiz-moodle.service';
 import { ConversationService } from '../conversation/conversation.service';
 import { PendingActionService } from './pending-action.service';
 import type { PracticeQuizPayload } from './entities/pending-action.entity';
@@ -106,6 +107,7 @@ export class ChatService {
   constructor(
     private readonly config: ConfigService,
     private readonly contextService: ContextService,
+    private readonly practiceQuizMoodle: PracticeQuizMoodleService,
     private readonly conversationService: ConversationService,
     private readonly pendingActionService: PendingActionService,
   ) {
@@ -354,7 +356,7 @@ export class ChatService {
       courseMaterial: scrubQuizGenerationContext(courseMaterial),
     });
 
-    const quiz = await this.contextService.createPracticeQuiz({
+    const quiz = await this.practiceQuizMoodle.createPracticeQuiz({
       courseId: action.courseId,
       moodleUserId,
       name: title,
@@ -450,7 +452,7 @@ export class ChatService {
     }
 
     try {
-      const review = await this.contextService.getPracticeAttemptReview(
+      const review = await this.practiceQuizMoodle.getPracticeAttemptReview(
         action.payload.quizId,
         moodleUserId,
       );
@@ -511,7 +513,7 @@ export class ChatService {
       );
     }
 
-    const attempt = await this.contextService.getPracticeAttemptReview(
+    const attempt = await this.practiceQuizMoodle.getPracticeAttemptReview(
       action.payload.quizId,
       moodleUserId,
     );

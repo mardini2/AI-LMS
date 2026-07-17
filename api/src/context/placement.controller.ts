@@ -7,8 +7,8 @@ import {
   Post,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { ContextService } from './context.service';
 import { EnsurePlacementDto } from './dto/ensure-placement.dto';
+import { PracticeQuizMoodleService } from './practice-quiz-moodle.service';
 
 /**
  * Dev/smoke-test endpoints for Moodle AI Content placement (Path A).
@@ -17,7 +17,7 @@ import { EnsurePlacementDto } from './dto/ensure-placement.dto';
 @Controller('moodle/placement')
 export class PlacementController {
   constructor(
-    private readonly contextService: ContextService,
+    private readonly practiceQuizMoodle: PracticeQuizMoodleService,
     private readonly config: ConfigService,
   ) {}
 
@@ -34,7 +34,7 @@ export class PlacementController {
     }
 
     try {
-      return await this.contextService.ensureStudentPlacement(
+      return await this.practiceQuizMoodle.ensureStudentPlacement(
         dto.courseId,
         dto.moodleUserId,
       );
