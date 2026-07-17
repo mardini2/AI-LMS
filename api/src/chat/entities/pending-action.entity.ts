@@ -20,6 +20,9 @@ export interface PracticeQuizPayload {
   sectionId?: number;
   sectionNumber?: number;
   sectionName?: string;
+  /** Resolved Moodle section ids when the quiz is hard-scoped to specific weeks/modules. */
+  sectionIds?: number[];
+  sectionNumbers?: number[];
   quizId?: number;
   cmId?: number;
   viewUrl?: string;

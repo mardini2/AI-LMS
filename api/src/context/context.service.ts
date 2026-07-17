@@ -17,6 +17,23 @@ export interface CourseContextFilter {
   sectionId?: number;
   sectionNumber?: number;
   sectionName?: string;
+  sectionIds?: number[];
+  sectionNumbers?: number[];
+  /** When true with any section constraint, exclude out-of-scope documents entirely. */
+  hardSectionScope?: boolean;
+}
+
+export interface ResolvedSectionScope {
+  sectionIds: number[];
+  sectionNumbers: number[];
+  /** True when the scope named specific weeks/sections but none matched the course. */
+  unresolvedSpecificScope?: boolean;
+}
+
+export interface ConversationSectionHint {
+  sectionId?: number;
+  sectionNumber?: number;
+  sectionName?: string;
 }
 
 export interface StudentPlacement {
@@ -136,11 +153,7 @@ export class ContextService {
       return null;
     }
 
-    const title =
-      best.moduleName?.trim() ||
-      best.sectionName?.trim() ||
-      best.fileName?.trim() ||
-      'Course material';
+    const title = formatCitationTitle(best);
     const url =
       best.source && /^https?:\/\//i.test(best.source)
         ? this.toBrowserCitationUrl(best.source)
@@ -148,6 +161,112 @@ export class ContextService {
     const snippet = best.text.replace(/\s+/g, ' ').trim().slice(0, 220);
 
     return { title, url, snippet };
+  }
+
+  /**
+   * Resolve a practice-quiz scopeSummary to Moodle sections when the student
+   * named specific weeks/sections. Returns empty arrays for general topics.
+   *
+   * "Week N" matches section *names* only (never Moodle topic index).
+   * "Section N" matches Moodle topic index. Topic/resource titles are ignored.
+   */
+  async resolveSectionsFromScope(
+    courseId: number,
+    scopeSummary: string,
+    conversationHint: ConversationSectionHint = {},
+  ): Promise<ResolvedSectionScope> {
+    if (courseId <= 1) {
+      return { sectionIds: [], sectionNumbers: [] };
+    }
+
+    const documents = await this.getCourseDocuments(courseId);
+    const sections = uniqueCourseSections(documents);
+    if (sections.length === 0) {
+      return { sectionIds: [], sectionNumbers: [] };
+    }
+
+    const scope = (scopeSummary ?? '').trim();
+    const weekNumbers = extractWeekNumbers(scope);
+    const sectionIndexNumbers = extractSectionIndexNumbers(scope);
+    const matched = new Map<number, CourseSectionMeta>();
+
+    for (const section of sections) {
+      if (sectionNameMatchesWeekNumbers(section.sectionName, weekNumbers)) {
+        matched.set(section.sectionId, section);
+      }
+    }
+
+    for (const section of sections) {
+      if (sectionIndexNumbers.has(section.sectionNumber)) {
+        matched.set(section.sectionId, section);
+      }
+    }
+
+    for (const section of sections) {
+      if (
+        section.sectionName &&
+        scopeIncludesSectionName(scope, section.sectionName)
+      ) {
+        matched.set(section.sectionId, section);
+      }
+    }
+
+    if (matched.size > 0) {
+      const list = [...matched.values()];
+      this.logger.log(
+        `Resolved quiz scope to [${list
+          .map((s) => s.sectionName ?? `section ${s.sectionNumber}`)
+          .join(', ')}] for course ${courseId}`,
+      );
+      return {
+        sectionIds: list.map((s) => s.sectionId),
+        sectionNumbers: list.map((s) => s.sectionNumber),
+      };
+    }
+
+    // Specific weeks/sections named but nothing matched — do not guess by index.
+    if (weekNumbers.size > 0 || sectionIndexNumbers.size > 0) {
+      this.logger.warn(
+        `Could not resolve scope "${scope}" to Moodle sections for course ${courseId}` +
+          (weekNumbers.size > 0
+            ? ` (weeks: ${[...weekNumbers].join(', ')})`
+            : '') +
+          (sectionIndexNumbers.size > 0
+            ? ` (section indexes: ${[...sectionIndexNumbers].join(', ')})`
+            : ''),
+      );
+      return {
+        sectionIds: [],
+        sectionNumbers: [],
+        unresolvedSpecificScope: true,
+      };
+    }
+
+    // Section conversation + no explicit week/section names → scope to that section.
+    if (
+      conversationHint.sectionId ||
+      conversationHint.sectionNumber !== undefined ||
+      conversationHint.sectionName
+    ) {
+      const hintMatches = sections.filter(
+        (s) =>
+          (conversationHint.sectionId &&
+            s.sectionId === conversationHint.sectionId) ||
+          (conversationHint.sectionNumber !== undefined &&
+            s.sectionNumber === conversationHint.sectionNumber) ||
+          (conversationHint.sectionName &&
+            s.sectionName?.toLowerCase() ===
+              conversationHint.sectionName.toLowerCase()),
+      );
+      if (hintMatches.length > 0) {
+        return {
+          sectionIds: hintMatches.map((s) => s.sectionId),
+          sectionNumbers: hintMatches.map((s) => s.sectionNumber),
+        };
+      }
+    }
+
+    return { sectionIds: [], sectionNumbers: [] };
   }
 
   async resolveCourseName(
@@ -1027,20 +1146,27 @@ function orderDocuments(
     .toLowerCase()
     .split(/\W+/)
     .filter((term) => term.length > 3);
+  const byRelevance = (a: CourseContextDocument, b: CourseContextDocument) =>
+    relevanceScore(b, questionTerms) - relevanceScore(a, questionTerms);
 
-  if (matching.length > 0) {
-    return [
-      ...matching.sort(
-        (a, b) => relevanceScore(b, questionTerms) - relevanceScore(a, questionTerms),
-      ),
-      ...other.sort(
-        (a, b) => relevanceScore(b, questionTerms) - relevanceScore(a, questionTerms),
-      ),
-    ];
+  if (filter.hardSectionScope && hasSectionConstraint(filter)) {
+    return matching.sort(byRelevance);
   }
 
-  return documents.sort(
-    (a, b) => relevanceScore(b, questionTerms) - relevanceScore(a, questionTerms),
+  if (matching.length > 0) {
+    return [...matching.sort(byRelevance), ...other.sort(byRelevance)];
+  }
+
+  return documents.sort(byRelevance);
+}
+
+function hasSectionConstraint(filter: CourseContextFilter): boolean {
+  return !!(
+    filter.sectionId ||
+    filter.sectionNumber !== undefined ||
+    filter.sectionName ||
+    (filter.sectionIds && filter.sectionIds.length > 0) ||
+    (filter.sectionNumbers && filter.sectionNumbers.length > 0)
   );
 }
 
@@ -1048,6 +1174,22 @@ function matchesSection(
   doc: CourseContextDocument,
   filter: CourseContextFilter,
 ): boolean {
+  if (
+    filter.sectionIds?.length &&
+    doc.sectionId !== undefined &&
+    filter.sectionIds.includes(doc.sectionId)
+  ) {
+    return true;
+  }
+
+  if (
+    filter.sectionNumbers?.length &&
+    doc.sectionNumber !== undefined &&
+    filter.sectionNumbers.includes(doc.sectionNumber)
+  ) {
+    return true;
+  }
+
   if (filter.sectionId && doc.sectionId === filter.sectionId) {
     return true;
   }
@@ -1065,6 +1207,117 @@ function matchesSection(
   );
 }
 
+interface CourseSectionMeta {
+  sectionId: number;
+  sectionNumber: number;
+  sectionName?: string;
+}
+
+function uniqueCourseSections(
+  documents: CourseContextDocument[],
+): CourseSectionMeta[] {
+  const byId = new Map<number, CourseSectionMeta>();
+  for (const doc of documents) {
+    if (doc.sectionId === undefined || doc.sectionNumber === undefined) {
+      continue;
+    }
+    if (!byId.has(doc.sectionId)) {
+      byId.set(doc.sectionId, {
+        sectionId: doc.sectionId,
+        sectionNumber: doc.sectionNumber,
+        sectionName: doc.sectionName,
+      });
+    }
+  }
+  return [...byId.values()];
+}
+
+function extractNumbersFromPatterns(
+  scope: string,
+  rangePatterns: RegExp[],
+  singlePatterns: RegExp[],
+): Set<number> {
+  const numbers = new Set<number>();
+  if (!scope) {
+    return numbers;
+  }
+
+  for (const pattern of rangePatterns) {
+    for (const match of scope.matchAll(pattern)) {
+      const start = Number(match[1]);
+      const end = Number(match[2]);
+      if (!Number.isFinite(start) || !Number.isFinite(end)) {
+        continue;
+      }
+      const lo = Math.min(start, end);
+      const hi = Math.max(start, end);
+      for (let n = lo; n <= hi; n++) {
+        numbers.add(n);
+      }
+    }
+  }
+
+  for (const pattern of singlePatterns) {
+    for (const match of scope.matchAll(pattern)) {
+      const n = Number(match[1]);
+      if (Number.isFinite(n)) {
+        numbers.add(n);
+      }
+    }
+  }
+
+  return numbers;
+}
+
+/** Numbers from "week(s) N" / "weeks N-M" — match section names, not Moodle index. */
+function extractWeekNumbers(scope: string): Set<number> {
+  return extractNumbersFromPatterns(
+    scope,
+    [
+      /\bweeks?\s+(\d+)\s*[-–—]\s*(\d+)\b/gi,
+      /\bweeks?\s+(\d+)\s+to\s+(\d+)\b/gi,
+    ],
+    [/\bweeks?\s+(\d+)\b/gi],
+  );
+}
+
+/** Numbers from "section(s) N" — match Moodle topic index. */
+function extractSectionIndexNumbers(scope: string): Set<number> {
+  return extractNumbersFromPatterns(
+    scope,
+    [
+      /\bsections?\s+(\d+)\s*[-–—]\s*(\d+)\b/gi,
+      /\bsections?\s+(\d+)\s+to\s+(\d+)\b/gi,
+    ],
+    [/\bsections?\s+(\d+)\b/gi],
+  );
+}
+
+function sectionNameMatchesWeekNumbers(
+  sectionName: string | undefined,
+  numbers: Set<number>,
+): boolean {
+  if (!sectionName || numbers.size === 0) {
+    return false;
+  }
+  for (const n of numbers) {
+    const weekRe = new RegExp(`\\bweek\\s*0*${n}\\b`, 'i');
+    const shortRe = new RegExp(`\\bw\\s*0*${n}\\b`, 'i');
+    if (weekRe.test(sectionName) || shortRe.test(sectionName)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function scopeIncludesSectionName(scope: string, sectionName: string): boolean {
+  const name = sectionName.trim();
+  if (name.length < 4) {
+    return false;
+  }
+  return scope.toLowerCase().includes(name.toLowerCase());
+}
+
 function relevanceScore(
   doc: CourseContextDocument,
   questionTerms: string[],
@@ -1076,18 +1329,42 @@ function relevanceScore(
   );
 }
 
+function formatCitationTitle(doc: CourseContextDocument): string {
+  const section = doc.sectionName?.trim();
+  const resource =
+    doc.moduleName?.trim() || doc.fileName?.trim() || undefined;
+
+  if (section && resource && section.toLowerCase() !== resource.toLowerCase()) {
+    return `${section} — ${resource}`;
+  }
+  return section || resource || 'Course material';
+}
+
 function formatDocument(doc: CourseContextDocument): string {
+  const sectionLabel = doc.sectionName?.trim() || 'Course';
+  const resourceLabel = doc.moduleName?.trim() || doc.fileName?.trim();
+  const heading = resourceLabel
+    ? `### Course section: ${sectionLabel} / ${resourceLabel}`
+    : `### Course section: ${sectionLabel}`;
+
   const meta = [
     `type=${doc.contentType}`,
     doc.courseName ? `course=${doc.courseName}` : undefined,
-    doc.sectionName ? `section=${doc.sectionName}` : undefined,
+    `course_section=${sectionLabel}`,
     doc.moduleName ? `module=${doc.moduleName}` : undefined,
     doc.fileName ? `file=${doc.fileName}` : undefined,
     doc.source ? `source=${doc.source}` : undefined,
-    doc.lastUpdated ? `updated=${new Date(doc.lastUpdated * 1000).toISOString()}` : undefined,
+    doc.lastUpdated
+      ? `updated=${new Date(doc.lastUpdated * 1000).toISOString()}`
+      : undefined,
   ].filter(Boolean);
 
-  return `### ${doc.sectionName ?? 'Course'}${doc.moduleName ? ` / ${doc.moduleName}` : ''}\nMetadata: ${meta.join('; ')}\n${doc.text}`;
+  return [
+    heading,
+    'Note: resource/topic numbers in titles are not course week numbers; use course_section above.',
+    `Metadata: ${meta.join('; ')}`,
+    doc.text,
+  ].join('\n');
 }
 
 function formatForumPostText(post: MoodleForumPost): string {

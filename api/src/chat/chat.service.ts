@@ -14,9 +14,13 @@ import {
   type Tool,
 } from '@google/generative-ai';
 import { ContextService } from '../context/context.service';
-import type { PracticeQuizQuestion } from '../context/context.service';
+import type {
+  CourseContextFilter,
+  PracticeQuizQuestion,
+} from '../context/context.service';
 import { ConversationService } from '../conversation/conversation.service';
 import { PendingActionService } from './pending-action.service';
+import type { PracticeQuizPayload } from './entities/pending-action.entity';
 import { SendMessageDto } from './dto/send-message.dto';
 
 export interface PendingActionDto {
@@ -306,26 +310,48 @@ export class ChatService {
     const { title, scopeSummary, questionCount, sectionId, sectionNumber, sectionName } =
       action.payload;
 
+    const resolved = await this.contextService.resolveSectionsFromScope(
+      action.courseId,
+      scopeSummary,
+      { sectionId, sectionNumber, sectionName },
+    );
+    if (resolved.unresolvedSpecificScope) {
+      throw new BadRequestException(
+        `Could not match "${scopeSummary}" to course week/section names. ` +
+          'Try using the exact Moodle section titles (for example "Week 13"), or ask for a general topic quiz.',
+      );
+    }
+    const filter = buildPracticeQuizContextFilter({
+      ...action.payload,
+      sectionIds: resolved.sectionIds,
+      sectionNumbers: resolved.sectionNumbers,
+    });
+
     const courseMaterial = await this.contextService.getContext(
       action.courseId,
       `${title} ${scopeSummary}`,
-      { sectionId, sectionNumber, sectionName },
+      filter,
     );
 
     if (!courseMaterial.trim()) {
       throw new BadRequestException(
-        'No course material available to generate quiz questions',
+        resolved.sectionIds.length > 0
+          ? 'No course material found in the requested weeks/sections to generate quiz questions'
+          : 'No course material available to generate quiz questions',
       );
     }
 
     this.logger.log(
-      `Generating ${questionCount} practice questions for action ${actionId}`,
+      `Generating ${questionCount} practice questions for action ${actionId}` +
+        (resolved.sectionIds.length > 0
+          ? ` (hard-scoped to sections [${resolved.sectionNumbers.join(', ')}])`
+          : ' (course-wide scope)'),
     );
     const questions = await this.generatePracticeQuestions({
       title,
       scopeSummary,
       questionCount,
-      courseMaterial,
+      courseMaterial: scrubQuizGenerationContext(courseMaterial),
     });
 
     const quiz = await this.contextService.createPracticeQuiz({
@@ -341,6 +367,8 @@ export class ChatService {
       quizId: quiz.quizId,
       cmId: quiz.cmId,
       viewUrl: quiz.viewUrl,
+      sectionIds: resolved.sectionIds,
+      sectionNumbers: resolved.sectionNumbers,
     });
 
     const responseText = [
@@ -507,11 +535,7 @@ export class ChatService {
       return { response: responseText, conversationId };
     }
 
-    const filter = {
-      sectionId: action.payload.sectionId,
-      sectionNumber: action.payload.sectionNumber,
-      sectionName: action.payload.sectionName,
-    };
+    const filter = await this.resolvePracticeQuizFilter(action);
 
     const reviewBlocks: ReviewBlockDto[] = [];
     for (const q of wrong) {
@@ -562,6 +586,35 @@ export class ChatService {
       conversationId,
       review: reviewBlocks,
     };
+  }
+
+  /**
+   * Prefer persisted sectionIds from confirm; re-resolve for older actions.
+   */
+  private async resolvePracticeQuizFilter(action: {
+    courseId: number;
+    payload: PracticeQuizPayload;
+  }): Promise<CourseContextFilter> {
+    const payload = action.payload;
+    if (payload.sectionIds && payload.sectionIds.length > 0) {
+      return buildPracticeQuizContextFilter(payload);
+    }
+
+    const resolved = await this.contextService.resolveSectionsFromScope(
+      action.courseId,
+      payload.scopeSummary,
+      {
+        sectionId: payload.sectionId,
+        sectionNumber: payload.sectionNumber,
+        sectionName: payload.sectionName,
+      },
+    );
+
+    return buildPracticeQuizContextFilter({
+      ...payload,
+      sectionIds: resolved.sectionIds,
+      sectionNumbers: resolved.sectionNumbers,
+    });
   }
 
   private async generateWrongAnswerExplanation(input: {
@@ -658,33 +711,136 @@ export class ChatService {
       },
     });
 
-    const prompt = [
-      `Create exactly ${input.questionCount} practice quiz questions for: ${input.title}`,
-      `Scope: ${input.scopeSummary}`,
-      'Use only multiple choice (exactly one correct answer, fraction 1.0) or true/false.',
-      'For true/false, answers must be exactly two entries with text "True" and "False".',
-      'For multichoice, provide 3–4 options; exactly one answer has fraction 1.0, others 0.',
-      'Ground every question strictly in the course material below.',
-      '',
-      'Course material:',
-      '---',
-      input.courseMaterial.slice(0, 60000),
-      '---',
-    ].join('\n');
+    const parseAndNormalize = (raw: string): PracticeQuizQuestion[] => {
+      const parsed = JSON.parse(raw) as { questions?: PracticeQuizQuestion[] };
+      return (parsed.questions ?? [])
+        .map(normalizeQuestion)
+        .filter((q): q is PracticeQuizQuestion => q !== null);
+    };
 
-    const result = await model.generateContent(prompt);
-    const raw = result.response.text();
-    const parsed = JSON.parse(raw) as { questions?: PracticeQuizQuestion[] };
-    const questions = (parsed.questions ?? [])
-      .map(normalizeQuestion)
-      .filter((q): q is PracticeQuizQuestion => q !== null)
-      .slice(0, input.questionCount);
+    const qualityRules = [
+      'Question quality rules:',
+      '- Test concepts, procedures, definitions, and trade-offs from the technical material.',
+      '- Prefer substantive readings (notes/PDFs) over exam topic lists or syllabi when both appear.',
+      '- Forbidden: which week/section covered a topic; final-exam / syllabus / topic-list membership; "according to the course outline"; calendar or admin trivia.',
+      '- Forbidden: exam logistics — format (MC/WR), point values, duration, grading weights, "the exam includes…", how the exam is scored. Technical questions about subject matter are fine; questions about the exam as an assessment are not.',
+      '- Forbidden: URLs, HTML, markdown links, or "click here" anywhere in question or answer text. Plain text only.',
+    ];
 
-    if (questions.length < 1) {
+    const buildPrompt = (
+      count: number,
+      alreadyAccepted: PracticeQuizQuestion[],
+    ): string => {
+      const lines = [
+        `Create exactly ${count} practice quiz questions for: ${input.title}`,
+        `Scope: ${input.scopeSummary}`,
+        'Use only multiple choice (exactly one correct answer, fraction 1.0) or true/false.',
+        'For true/false, answers must be exactly two entries with text "True" and "False".',
+        'For multichoice, provide 3–4 options; exactly one answer has fraction 1.0, others 0.',
+        'Ground every question strictly in the course material below.',
+        '',
+        ...qualityRules,
+      ];
+
+      if (alreadyAccepted.length > 0) {
+        lines.push(
+          '- These questions are replacements for rejected ones. Do not repeat or paraphrase any of the following already-accepted questions:',
+          ...alreadyAccepted.map((q, i) => `  ${i + 1}. ${q.questiontext}`),
+        );
+      }
+
+      lines.push(
+        '',
+        'Course material:',
+        '---',
+        input.courseMaterial.slice(0, 60000),
+        '---',
+      );
+      return lines.join('\n');
+    };
+
+    const accepted: PracticeQuizQuestion[] = [];
+    const seenKeys = new Set<string>();
+    const maxAttempts = 3;
+
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      const needed = input.questionCount - accepted.length;
+      if (needed <= 0) {
+        break;
+      }
+
+      const batch = parseAndNormalize(
+        (
+          await model.generateContent(buildPrompt(needed, accepted))
+        ).response.text(),
+      );
+
+      let added = 0;
+      for (const q of batch) {
+        if (accepted.length >= input.questionCount) {
+          break;
+        }
+        const key = questionDedupeKey(q.questiontext);
+        if (seenKeys.has(key)) {
+          continue;
+        }
+        seenKeys.add(key);
+        accepted.push(q);
+        added += 1;
+      }
+
+      this.logger.log(
+        `Practice quiz gen attempt ${attempt + 1}: +${added} unique ` +
+          `(${accepted.length}/${input.questionCount} total)`,
+      );
+
+      if (accepted.length >= input.questionCount) {
+        break;
+      }
+    }
+
+    if (accepted.length < 1) {
       throw new BadRequestException('Failed to generate quiz questions');
     }
-    return questions;
+    if (accepted.length < input.questionCount) {
+      throw new BadRequestException(
+        `Could only produce ${accepted.length} of ${input.questionCount} valid concept questions. ` +
+          'Try again, or ask for fewer questions.',
+      );
+    }
+
+    return accepted.slice(0, input.questionCount);
   }
+}
+
+function buildPracticeQuizContextFilter(
+  payload: Pick<
+    PracticeQuizPayload,
+    | 'sectionId'
+    | 'sectionNumber'
+    | 'sectionName'
+    | 'sectionIds'
+    | 'sectionNumbers'
+  >,
+): CourseContextFilter {
+  const sectionIds = payload.sectionIds?.filter((id) => id > 0) ?? [];
+  const sectionNumbers = payload.sectionNumbers ?? [];
+  const hardScoped = sectionIds.length > 0 || sectionNumbers.length > 0;
+
+  if (hardScoped) {
+    return {
+      sectionIds,
+      sectionNumbers,
+      hardSectionScope: true,
+    };
+  }
+
+  // General topic — soft / course-wide (conversation section only as a soft boost).
+  return {
+    sectionId: payload.sectionId,
+    sectionNumber: payload.sectionNumber,
+    sectionName: payload.sectionName,
+  };
 }
 
 function clampQuestionCount(
@@ -770,18 +926,93 @@ function buildReviewMessage(input: {
   return lines.join('\n').trim();
 }
 
+function scrubQuizGenerationContext(material: string): string {
+  return material
+    .replace(/(?:^|;\s*)source=https?:\/\/[^\s;]+/gi, '')
+    .replace(/https?:\/\/[^\s)\]>"']+/gi, '')
+    .replace(/[ \t]{2,}/g, ' ')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+function stripLinksAndHtml(text: string): string {
+  return text
+    .replace(/\[([^\]]*)\]\((https?:\/\/[^)]+|mailto:[^)]+)\)/gi, '$1')
+    .replace(/<a\b[^>]*>([\s\S]*?)<\/a>/gi, '$1')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/https?:\/\/[^\s)\]>"']+/gi, '')
+    .replace(/www\.[^\s)\]>"']+/gi, '')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+}
+
+function containsUrl(text: string): boolean {
+  return /https?:\/\/|www\./i.test(text);
+}
+
+const META_QUESTION_PATTERNS: RegExp[] = [
+  /\bwhich\s+week\b/i,
+  /\bwhat\s+week\b/i,
+  /\bweek\s+\d+\s+of\s+the\s+course\b/i,
+  /\bweek\s+\d+\s+(?:focuses|covers|introduces|is\s+about)\b/i,
+  /\bcourse\s+focuses\s+on\b/i,
+  /\bfinal\s+exam\s+topics?\b/i,
+  /\bfinal\s+exam\b/i,
+  /\bmidterm\b/i,
+  /\blisted\s+as\s+a\s+topic\b/i,
+  /\bunder\s+the\s+['"]?.{0,40}section\s+of\s+the\s+final\b/i,
+  /\baccording\s+to\s+the\s+course\s+outline\b/i,
+  /\bsyllabus\b/i,
+  /\btopic[- ]list\b/i,
+  /\bwhich\s+section\s+(?:covers|of\s+the\s+course)\b/i,
+  /\bworth\s+\d+\s+points?\b/i,
+  /\bwritten\s+response\b/i,
+  /\b\(\s*WR\s*\)/i,
+  /\bexam\s+includes\b/i,
+  /\bmultiple\s+choice\s+section\b/i,
+  /\bgrading\b/i,
+  /\bhow\s+(?:is|are)\s+the\s+exam\b/i,
+  /\bexam\s+(?:format|duration|weight|scoring)\b/i,
+];
+
+function isMetaPracticeQuestion(questiontext: string, name: string): boolean {
+  const haystack = `${name}\n${questiontext}`;
+  return META_QUESTION_PATTERNS.some((re) => re.test(haystack));
+}
+
+function questionDedupeKey(questiontext: string): string {
+  return questiontext.toLowerCase().replace(/\s+/g, ' ').trim();
+}
+
 function normalizeQuestion(
   q: PracticeQuizQuestion,
 ): PracticeQuizQuestion | null {
   if (!q || (q.type !== 'multichoice' && q.type !== 'truefalse')) {
     return null;
   }
+
+  const name = stripLinksAndHtml(q.name || 'Practice question').slice(0, 200);
+  const questiontext = stripLinksAndHtml(q.questiontext || '');
+  if (!questiontext) {
+    return null;
+  }
+  if (containsUrl(name) || containsUrl(questiontext)) {
+    return null;
+  }
+  if (isMetaPracticeQuestion(questiontext, name)) {
+    return null;
+  }
+
   const answers = (q.answers ?? [])
     .map((a) => ({
-      text: String(a.text ?? '').trim(),
+      text: stripLinksAndHtml(String(a.text ?? '')),
       fraction: Number(a.fraction) > 0 ? 1 : 0,
     }))
     .filter((a) => a.text.length > 0);
+
+  if (answers.some((a) => containsUrl(a.text))) {
+    return null;
+  }
 
   if (q.type === 'truefalse') {
     const hasTrue = answers.some((a) => /^true$/i.test(a.text));
@@ -795,8 +1026,8 @@ function normalizeQuestion(
 
   return {
     type: q.type,
-    name: (q.name || 'Practice question').slice(0, 200),
-    questiontext: q.questiontext || '',
+    name: name || 'Practice question',
+    questiontext,
     answers,
   };
 }

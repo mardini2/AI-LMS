@@ -99,7 +99,13 @@ export class PendingActionService {
 
   async markConfirmedWithQuiz(
     actionId: string,
-    quiz: { quizId: number; cmId: number; viewUrl: string },
+    quiz: {
+      quizId: number;
+      cmId: number;
+      viewUrl: string;
+      sectionIds?: number[];
+      sectionNumbers?: number[];
+    },
   ): Promise<PendingAction> {
     const action = await this.repo.findOne({ where: { id: actionId } });
     if (!action) {
@@ -111,6 +117,12 @@ export class PendingActionService {
       quizId: quiz.quizId,
       cmId: quiz.cmId,
       viewUrl: quiz.viewUrl,
+      ...(quiz.sectionIds !== undefined
+        ? { sectionIds: quiz.sectionIds }
+        : {}),
+      ...(quiz.sectionNumbers !== undefined
+        ? { sectionNumbers: quiz.sectionNumbers }
+        : {}),
       explainedAt: null,
       explainedAttemptId: null,
     };
