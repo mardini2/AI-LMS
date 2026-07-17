@@ -9,75 +9,39 @@ import {
   GoogleGenerativeAI,
   HarmBlockThreshold,
   HarmCategory,
-  SchemaType,
   type Tool,
 } from '@google/generative-ai';
 import { ContextService } from '../context/context.service';
-import type {
-  CourseContextFilter,
-  PracticeQuizQuestion,
-} from '../context/context.types';
 import { PracticeQuizMoodleService } from '../context/practice-quiz-moodle.service';
 import { ConversationService } from '../conversation/conversation.service';
 import {
-  buildPracticeQuestionsPrompt,
   buildSystemPrompt,
-  buildWrongAnswerExplanationPrompt,
   PROPOSE_PRACTICE_QUIZ_TOOL,
   toGeminiHistory,
 } from './chat.prompts';
+import type {
+  ChatResponse,
+  PendingActionDto,
+  ReviewOfferDto,
+} from './chat.types';
 import { PendingActionService } from './pending-action.service';
-import type { PracticeQuizPayload } from './entities/pending-action.entity';
 import { SendMessageDto } from './dto/send-message.dto';
+import { PracticeQuizGenerationService } from './practice-quiz-generation.service';
+import { PracticeQuizReviewService } from './practice-quiz-review.service';
 import {
   buildPracticeQuizContextFilter,
   buildProposalMessage,
-  buildReviewMessage,
   clampQuestionCount,
-  normalizeQuestion,
-  questionDedupeKey,
   QUIZ_QUESTION_COUNT_EXPLICIT_MAX,
   scrubQuizGenerationContext,
 } from './practice-quiz.helpers';
 
-export interface PendingActionDto {
-  id: string;
-  type: 'practice_quiz';
-  title: string;
-  questionCount: number;
-  scopeSummary: string;
-}
-
-export interface ReviewOfferDto {
-  actionId: string;
-  quizId: number;
-  title: string;
-  score: number;
-  maxScore: number;
-  wrongCount: number;
-  total: number;
-  scoreLabel: string;
-}
-
-export interface ReviewBlockDto {
-  slot: number;
-  question: string;
-  studentAnswer: string;
-  rightAnswer: string;
-  why: string;
-  citationTitle: string;
-  citationSnippet?: string;
-  citationUrl?: string;
-}
-
-export interface ChatResponse {
-  response: string;
-  conversationId: string;
-  pendingAction?: PendingActionDto;
-  quizUrl?: string;
-  reviewOffer?: ReviewOfferDto;
-  review?: ReviewBlockDto[];
-}
+export type {
+  ChatResponse,
+  PendingActionDto,
+  ReviewBlockDto,
+  ReviewOfferDto,
+} from './chat.types';
 
 @Injectable()
 export class ChatService {
@@ -90,6 +54,8 @@ export class ChatService {
     private readonly practiceQuizMoodle: PracticeQuizMoodleService,
     private readonly conversationService: ConversationService,
     private readonly pendingActionService: PendingActionService,
+    private readonly practiceQuizGeneration: PracticeQuizGenerationService,
+    private readonly practiceQuizReview: PracticeQuizReviewService,
   ) {
     this.genAI = new GoogleGenerativeAI(
       this.config.get<string>('GEMINI_API_KEY')!,
@@ -225,8 +191,7 @@ export class ChatService {
         countSpecifiedByStudent &&
         Number.isFinite(requestedCount) &&
         Math.round(requestedCount) > QUIZ_QUESTION_COUNT_EXPLICIT_MAX;
-      const title =
-        (args.title ?? '').trim() || 'Practice quiz';
+      const title = (args.title ?? '').trim() || 'Practice quiz';
       const scopeSummary =
         (args.scopeSummary ?? '').trim() ||
         'Course material from the current conversation';
@@ -289,8 +254,14 @@ export class ChatService {
       throw new BadRequestException('Unsupported action type');
     }
 
-    const { title, scopeSummary, questionCount, sectionId, sectionNumber, sectionName } =
-      action.payload;
+    const {
+      title,
+      scopeSummary,
+      questionCount,
+      sectionId,
+      sectionNumber,
+      sectionName,
+    } = action.payload;
 
     const resolved = await this.contextService.resolveSectionsFromScope(
       action.courseId,
@@ -329,12 +300,13 @@ export class ChatService {
           ? ` (hard-scoped to sections [${resolved.sectionNumbers.join(', ')}])`
           : ' (course-wide scope)'),
     );
-    const questions = await this.generatePracticeQuestions({
-      title,
-      scopeSummary,
-      questionCount,
-      courseMaterial: scrubQuizGenerationContext(courseMaterial),
-    });
+    const questions =
+      await this.practiceQuizGeneration.generatePracticeQuestions({
+        title,
+        scopeSummary,
+        questionCount,
+        courseMaterial: scrubQuizGenerationContext(courseMaterial),
+      });
 
     const quiz = await this.practiceQuizMoodle.createPracticeQuiz({
       courseId: action.courseId,
@@ -421,324 +393,19 @@ export class ChatService {
     conversationId: string,
     moodleUserId: number,
   ): Promise<ReviewOfferDto | null> {
-    await this.conversationService.assertOwner(conversationId, moodleUserId);
-    const action =
-      await this.pendingActionService.getConfirmedPracticeQuizForConversation(
-        conversationId,
-        moodleUserId,
-      );
-    if (!action?.payload.quizId) {
-      return null;
-    }
-
-    try {
-      const review = await this.practiceQuizMoodle.getPracticeAttemptReview(
-        action.payload.quizId,
-        moodleUserId,
-      );
-      if (!review.hasAttempt) {
-        return null;
-      }
-
-      const explainedAttemptId = action.payload.explainedAttemptId ?? null;
-      if (review.attemptId === explainedAttemptId) {
-        return null;
-      }
-
-      const wrong = review.questions.filter((q) => !q.iscorrect);
-      const total = review.questions.length || action.payload.questionCount;
-      const score = Math.round(review.score);
-      const maxScore = Math.round(review.maxScore) || total;
-
-      if (wrong.length === 0) {
-        // Perfect score — record this attempt so we don't keep prompting.
-        await this.pendingActionService.markExplained(
-          action.id,
-          review.attemptId,
-        );
-        return null;
-      }
-
-      return {
-        actionId: action.id,
-        quizId: action.payload.quizId,
-        title: action.payload.title,
-        score,
-        maxScore,
-        wrongCount: wrong.length,
-        total,
-        scoreLabel: `${score}/${maxScore}`,
-      };
-    } catch (err) {
-      this.logger.warn(
-        `Failed to load review offer for conversation ${conversationId}: ${String(err)}`,
-      );
-      return null;
-    }
+    return this.practiceQuizReview.getReviewOffer(
+      conversationId,
+      moodleUserId,
+    );
   }
 
   async explainWrongAnswers(
     conversationId: string,
     moodleUserId: number,
   ): Promise<ChatResponse> {
-    await this.conversationService.assertOwner(conversationId, moodleUserId);
-    const action =
-      await this.pendingActionService.getConfirmedPracticeQuizForConversation(
-        conversationId,
-        moodleUserId,
-      );
-    if (!action?.payload.quizId) {
-      throw new BadRequestException(
-        'No practice quiz ready for review in this conversation',
-      );
-    }
-
-    const attempt = await this.practiceQuizMoodle.getPracticeAttemptReview(
-      action.payload.quizId,
+    return this.practiceQuizReview.explainWrongAnswers(
+      conversationId,
       moodleUserId,
     );
-    if (!attempt.hasAttempt) {
-      throw new BadRequestException(
-        'Finish the practice quiz in Moodle first, then ask me to explain',
-      );
-    }
-
-    const wrong = attempt.questions.filter((q) => !q.iscorrect);
-    if (wrong.length === 0) {
-      await this.pendingActionService.markExplained(
-        action.id,
-        attempt.attemptId,
-      );
-      const responseText =
-        'Nice work — you got everything right on that practice quiz. Nothing to walk through!';
-      await this.conversationService.appendMessages(conversationId, [
-        { role: 'assistant', content: responseText },
-      ]);
-      return { response: responseText, conversationId };
-    }
-
-    const filter = await this.resolvePracticeQuizFilter(action);
-
-    const reviewBlocks: ReviewBlockDto[] = [];
-    for (const q of wrong) {
-      const query = `${q.questiontext} ${q.rightanswer}`.trim();
-      const [material, citation] = await Promise.all([
-        this.contextService.getContext(action.courseId, query, filter),
-        this.contextService.findBestCitation(action.courseId, query, filter),
-      ]);
-      const why = await this.generateWrongAnswerExplanation({
-        questiontext: q.questiontext,
-        studentanswer: q.studentanswer,
-        rightanswer: q.rightanswer,
-        courseMaterial: material,
-      });
-
-      reviewBlocks.push({
-        slot: q.slot,
-        question: q.questiontext || q.name,
-        studentAnswer: q.studentanswer || '(no answer)',
-        rightAnswer: q.rightanswer || '(unavailable)',
-        why,
-        citationTitle: citation?.title ?? 'Course material',
-        citationSnippet: citation?.snippet,
-        citationUrl: citation?.url,
-      });
-    }
-
-    await this.pendingActionService.markExplained(
-      action.id,
-      attempt.attemptId,
-    );
-
-    const score = Math.round(attempt.score);
-    const maxScore = Math.round(attempt.maxScore) || attempt.questions.length;
-    const responseText = buildReviewMessage({
-      title: action.payload.title,
-      score,
-      maxScore,
-      blocks: reviewBlocks,
-    });
-
-    await this.conversationService.appendMessages(conversationId, [
-      { role: 'assistant', content: responseText },
-    ]);
-
-    return {
-      response: responseText,
-      conversationId,
-      review: reviewBlocks,
-    };
-  }
-
-  /**
-   * Prefer persisted sectionIds from confirm; re-resolve for older actions.
-   */
-  private async resolvePracticeQuizFilter(action: {
-    courseId: number;
-    payload: PracticeQuizPayload;
-  }): Promise<CourseContextFilter> {
-    const payload = action.payload;
-    if (payload.sectionIds && payload.sectionIds.length > 0) {
-      return buildPracticeQuizContextFilter(payload);
-    }
-
-    const resolved = await this.contextService.resolveSectionsFromScope(
-      action.courseId,
-      payload.scopeSummary,
-      {
-        sectionId: payload.sectionId,
-        sectionNumber: payload.sectionNumber,
-        sectionName: payload.sectionName,
-      },
-    );
-
-    return buildPracticeQuizContextFilter({
-      ...payload,
-      sectionIds: resolved.sectionIds,
-      sectionNumbers: resolved.sectionNumbers,
-    });
-  }
-
-  private async generateWrongAnswerExplanation(input: {
-    questiontext: string;
-    studentanswer: string;
-    rightanswer: string;
-    courseMaterial: string;
-  }): Promise<string> {
-    const model = this.genAI.getGenerativeModel({
-      model: 'gemini-3.1-flash-lite',
-      generationConfig: {
-        responseMimeType: 'application/json',
-        responseSchema: {
-          type: SchemaType.OBJECT,
-          properties: {
-            why: { type: SchemaType.STRING },
-          },
-          required: ['why'],
-        },
-      },
-    });
-
-    const prompt = buildWrongAnswerExplanationPrompt(input);
-
-    const result = await model.generateContent(prompt);
-    try {
-      const parsed = JSON.parse(result.response.text()) as { why?: string };
-      const why = (parsed.why ?? '').trim();
-      if (why) {
-        return why;
-      }
-    } catch {
-      // fall through
-    }
-    return `The correct answer is "${input.rightanswer}". Your answer ("${input.studentanswer}") did not match. Review the related course section and try a similar question again.`;
-  }
-
-  private async generatePracticeQuestions(input: {
-    title: string;
-    scopeSummary: string;
-    questionCount: number;
-    courseMaterial: string;
-  }): Promise<PracticeQuizQuestion[]> {
-    const model = this.genAI.getGenerativeModel({
-      model: 'gemini-3.1-flash-lite',
-      generationConfig: {
-        responseMimeType: 'application/json',
-        responseSchema: {
-          type: SchemaType.OBJECT,
-          properties: {
-            questions: {
-              type: SchemaType.ARRAY,
-              items: {
-                type: SchemaType.OBJECT,
-                properties: {
-                  type: {
-                    type: SchemaType.STRING,
-                    format: 'enum',
-                    enum: ['multichoice', 'truefalse'],
-                  },
-                  name: { type: SchemaType.STRING },
-                  questiontext: { type: SchemaType.STRING },
-                  answers: {
-                    type: SchemaType.ARRAY,
-                    items: {
-                      type: SchemaType.OBJECT,
-                      properties: {
-                        text: { type: SchemaType.STRING },
-                        fraction: { type: SchemaType.NUMBER },
-                      },
-                      required: ['text', 'fraction'],
-                    },
-                  },
-                },
-                required: ['type', 'name', 'questiontext', 'answers'],
-              },
-            },
-          },
-          required: ['questions'],
-        },
-      },
-    });
-
-    const parseAndNormalize = (raw: string): PracticeQuizQuestion[] => {
-      const parsed = JSON.parse(raw) as { questions?: PracticeQuizQuestion[] };
-      return (parsed.questions ?? [])
-        .map(normalizeQuestion)
-        .filter((q): q is PracticeQuizQuestion => q !== null);
-    };
-
-    const accepted: PracticeQuizQuestion[] = [];
-    const seenKeys = new Set<string>();
-    const maxAttempts = 3;
-
-    for (let attempt = 0; attempt < maxAttempts; attempt++) {
-      const needed = input.questionCount - accepted.length;
-      if (needed <= 0) {
-        break;
-      }
-
-      const batch = parseAndNormalize(
-        (
-          await model.generateContent(
-            buildPracticeQuestionsPrompt(input, needed, accepted),
-          )
-        ).response.text(),
-      );
-
-      let added = 0;
-      for (const q of batch) {
-        if (accepted.length >= input.questionCount) {
-          break;
-        }
-        const key = questionDedupeKey(q.questiontext);
-        if (seenKeys.has(key)) {
-          continue;
-        }
-        seenKeys.add(key);
-        accepted.push(q);
-        added += 1;
-      }
-
-      this.logger.log(
-        `Practice quiz gen attempt ${attempt + 1}: +${added} unique ` +
-          `(${accepted.length}/${input.questionCount} total)`,
-      );
-
-      if (accepted.length >= input.questionCount) {
-        break;
-      }
-    }
-
-    if (accepted.length < 1) {
-      throw new BadRequestException('Failed to generate quiz questions');
-    }
-    if (accepted.length < input.questionCount) {
-      throw new BadRequestException(
-        `Could only produce ${accepted.length} of ${input.questionCount} valid concept questions. ` +
-          'Try again, or ask for fewer questions.',
-      );
-    }
-
-    return accepted.slice(0, input.questionCount);
   }
 }

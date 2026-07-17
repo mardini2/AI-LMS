@@ -1,17 +1,6 @@
 import type { CourseContextFilter, PracticeQuizQuestion } from '../context/context.types';
+import type { ReviewBlockDto } from './chat.types';
 import type { PracticeQuizPayload } from './entities/pending-action.entity';
-
-/** Structural match for ReviewBlockDto — avoids importing chat.service. */
-export interface ReviewMessageBlock {
-  slot: number;
-  question: string;
-  studentAnswer: string;
-  rightAnswer: string;
-  why: string;
-  citationTitle: string;
-  citationSnippet?: string;
-  citationUrl?: string;
-}
 
 export const QUIZ_QUESTION_COUNT_MIN = 5;
 export const QUIZ_QUESTION_COUNT_AUTO_MAX = 15; // when AI chooses
@@ -97,7 +86,7 @@ export function buildReviewMessage(input: {
   title: string;
   score: number;
   maxScore: number;
-  blocks: ReviewMessageBlock[];
+  blocks: ReviewBlockDto[];
 }): string {
   const lines = [
     `### Practice quiz review — ${input.title}`,
