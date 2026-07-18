@@ -3,10 +3,10 @@ import {
   Injectable,
   Logger,
 } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
-import { GoogleGenerativeAI, SchemaType } from '@google/generative-ai';
+import { SchemaType } from '@google/generative-ai';
 import type { PracticeQuizQuestion } from '../context/context.types';
 import { buildPracticeQuestionsPrompt } from './chat.prompts';
+import { GeminiClient } from './gemini.client';
 import {
   normalizeQuestion,
   questionDedupeKey,
@@ -15,13 +15,8 @@ import {
 @Injectable()
 export class PracticeQuizGenerationService {
   private readonly logger = new Logger(PracticeQuizGenerationService.name);
-  private readonly genAI: GoogleGenerativeAI;
 
-  constructor(private readonly config: ConfigService) {
-    this.genAI = new GoogleGenerativeAI(
-      this.config.get<string>('GEMINI_API_KEY')!,
-    );
-  }
+  constructor(private readonly gemini: GeminiClient) {}
 
   async generatePracticeQuestions(input: {
     title: string;
@@ -29,8 +24,7 @@ export class PracticeQuizGenerationService {
     questionCount: number;
     courseMaterial: string;
   }): Promise<PracticeQuizQuestion[]> {
-    const model = this.genAI.getGenerativeModel({
-      model: 'gemini-3.1-flash-lite',
+    const model = this.gemini.getGenerativeModel({
       generationConfig: {
         responseMimeType: 'application/json',
         responseSchema: {

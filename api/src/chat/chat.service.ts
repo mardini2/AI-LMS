@@ -3,10 +3,8 @@ import {
   Injectable,
   Logger,
 } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import {
   FunctionCallingMode,
-  GoogleGenerativeAI,
   HarmBlockThreshold,
   HarmCategory,
   type Tool,
@@ -24,6 +22,7 @@ import type {
   PendingActionDto,
   ReviewOfferDto,
 } from './chat.types';
+import { GeminiClient } from './gemini.client';
 import { PendingActionService } from './pending-action.service';
 import { SendMessageDto } from './dto/send-message.dto';
 import { PracticeQuizGenerationService } from './practice-quiz-generation.service';
@@ -46,21 +45,16 @@ export type {
 @Injectable()
 export class ChatService {
   private readonly logger = new Logger(ChatService.name);
-  private readonly genAI: GoogleGenerativeAI;
 
   constructor(
-    private readonly config: ConfigService,
+    private readonly gemini: GeminiClient,
     private readonly contextService: ContextService,
     private readonly practiceQuizMoodle: PracticeQuizMoodleService,
     private readonly conversationService: ConversationService,
     private readonly pendingActionService: PendingActionService,
     private readonly practiceQuizGeneration: PracticeQuizGenerationService,
     private readonly practiceQuizReview: PracticeQuizReviewService,
-  ) {
-    this.genAI = new GoogleGenerativeAI(
-      this.config.get<string>('GEMINI_API_KEY')!,
-    );
-  }
+  ) {}
 
   async sendMessage(dto: SendMessageDto): Promise<ChatResponse> {
     const {
@@ -125,8 +119,7 @@ export class ChatService {
     const canProposeQuiz =
       Boolean(moodleUserId) && courseId > 1 && Boolean(courseMaterial);
 
-    const model = this.genAI.getGenerativeModel({
-      model: 'gemini-3.1-flash-lite',
+    const model = this.gemini.getGenerativeModel({
       systemInstruction: buildSystemPrompt({
         courseId,
         courseName: resolvedCourseName,

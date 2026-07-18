@@ -3,8 +3,7 @@ import {
   Injectable,
   Logger,
 } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
-import { GoogleGenerativeAI, SchemaType } from '@google/generative-ai';
+import { SchemaType } from '@google/generative-ai';
 import { ContextService } from '../context/context.service';
 import type { CourseContextFilter } from '../context/context.types';
 import { PracticeQuizMoodleService } from '../context/practice-quiz-moodle.service';
@@ -16,6 +15,7 @@ import type {
   ReviewOfferDto,
 } from './chat.types';
 import type { PracticeQuizPayload } from './entities/pending-action.entity';
+import { GeminiClient } from './gemini.client';
 import { PendingActionService } from './pending-action.service';
 import {
   buildPracticeQuizContextFilter,
@@ -25,19 +25,14 @@ import {
 @Injectable()
 export class PracticeQuizReviewService {
   private readonly logger = new Logger(PracticeQuizReviewService.name);
-  private readonly genAI: GoogleGenerativeAI;
 
   constructor(
-    private readonly config: ConfigService,
+    private readonly gemini: GeminiClient,
     private readonly contextService: ContextService,
     private readonly practiceQuizMoodle: PracticeQuizMoodleService,
     private readonly conversationService: ConversationService,
     private readonly pendingActionService: PendingActionService,
-  ) {
-    this.genAI = new GoogleGenerativeAI(
-      this.config.get<string>('GEMINI_API_KEY')!,
-    );
-  }
+  ) {}
 
   async getReviewOffer(
     conversationId: string,
@@ -227,8 +222,7 @@ export class PracticeQuizReviewService {
     rightanswer: string;
     courseMaterial: string;
   }): Promise<string> {
-    const model = this.genAI.getGenerativeModel({
-      model: 'gemini-3.1-flash-lite',
+    const model = this.gemini.getGenerativeModel({
       generationConfig: {
         responseMimeType: 'application/json',
         responseSchema: {
