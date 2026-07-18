@@ -6,17 +6,19 @@
     Wraps the docker compose command so team members don't need to remember
     the full -f flag syntax. Mirrors what moodle-docker-compose does internally.
 .PARAMETER Command
-    One of: up, down, restart, logs, ps, install-api
+    One of: up, down, restart, logs, ps, install-api,
+    moodle-install, moodle-upgrade, moodle-purge, rebuild-chat-js
 .EXAMPLE
     .\dev.ps1 up
     .\dev.ps1 down
     .\dev.ps1 logs
     .\dev.ps1 install-api
+    .\dev.ps1 rebuild-chat-js
 #>
 
 param(
     [Parameter(Position = 0)]
-    [ValidateSet("up", "down", "restart", "logs", "ps", "install-api", "moodle-install", "moodle-upgrade", "moodle-purge")]
+    [ValidateSet("up", "down", "restart", "logs", "ps", "install-api", "moodle-install", "moodle-upgrade", "moodle-purge", "rebuild-chat-js")]
     [string]$Command = "up"
 )
 
@@ -119,5 +121,17 @@ switch ($Command) {
         Write-Host "Purging all Moodle caches (required after hook/capability definition changes)..." -ForegroundColor Cyan
         Invoke-Expression "$compose exec webserver php admin/cli/purge_caches.php"
         Write-Host "Done." -ForegroundColor Green
+    }
+    "rebuild-chat-js" {
+        Write-Host "Rebuilding Syllentras chat widget bundle (boot.js)..." -ForegroundColor Cyan
+        python "plugin/syllentras_ai/js/_build_boot.py"
+        if ($LASTEXITCODE -ne 0) {
+            throw "Chat JS rebuild failed (exit $LASTEXITCODE)."
+        }
+        Write-Host "Running Moodle plugin upgrade (no-op if version.php unchanged)..." -ForegroundColor Cyan
+        Invoke-Expression "$compose exec webserver php admin/cli/upgrade.php --non-interactive"
+        Write-Host "Purging all Moodle caches..." -ForegroundColor Cyan
+        Invoke-Expression "$compose exec webserver php admin/cli/purge_caches.php"
+        Write-Host "Done. Hard-refresh the Moodle page if it still looks stale." -ForegroundColor Green
     }
 }

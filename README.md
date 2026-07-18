@@ -228,6 +228,7 @@ Sections and groups are created automatically by the web service — no need to 
 .\dev.ps1 logs      # Stream all logs
 .\dev.ps1 ps        # Check service status
 .\dev.ps1 install-api # Reinstall API dependencies after package.json changes
+.\dev.ps1 rebuild-chat-js # Rebuild chat boot.js, upgrade plugin if needed, purge caches
 ```
 
 
@@ -236,6 +237,7 @@ Sections and groups are created automatically by the web service — no need to 
 | PHP logic files (`lib.php`, `classes/**`) | Refresh browser — live via bind mount     |
 | `db/hooks.php` or `db/access.php`         | `.\dev.ps1 moodle-purge`                  |
 | `version.php` bump or new DB schema       | `.\dev.ps1 moodle-upgrade`                |
+| `plugin/.../js/chat/*.js` (not `boot.js`) | `.\dev.ps1 rebuild-chat-js` then hard-refresh |
 | `api/src/` files                          | Container auto-reloads — no action needed |
 | `api/package.json`                        | `.\dev.ps1 install-api` or restart stack  |
 
@@ -254,7 +256,7 @@ Sections and groups are created automatically by the web service — no need to 
 
 1. Ensure `MOODLE_DOCKER_XDEBUG=1` in `.env` and services are running
 2. In VS Code: **Run and Debug** → select **"Listen: Xdebug (Moodle)"** → press F5
-3. Set breakpoints in `plugin/syllentras_ai/classes/hook/output/before_footer.php` — they will be hit on the next page load
+3. Set breakpoints in `plugin/syllentras_ai/js/chat/boot.js` (or the source modules under `js/chat/`) and `plugin/syllentras_ai/classes/hook/output/before_footer.php` — they will be hit on the next page load. After editing a `js/chat/` module (other than `boot.js`), run `.\dev.ps1 rebuild-chat-js` (rebuilds the bundle, runs Moodle upgrade if `version.php` changed, and purges caches), then hard-refresh the page.
 
 > Install recommended VS Code extensions when prompted (`.vscode/extensions.json`). The PHP Debug extension is required for Xdebug.
 

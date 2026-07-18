@@ -10,7 +10,7 @@
 #   .\dev.ps1 up
 #
 # Commands: up | down | restart | logs | ps | install-api |
-#           moodle-install | moodle-upgrade | moodle-purge
+#           moodle-install | moodle-upgrade | moodle-purge | rebuild-chat-js
 
 set -euo pipefail
 
@@ -106,8 +106,25 @@ case "$CMD" in
         $COMPOSE exec webserver php admin/cli/purge_caches.php
         echo "Done."
         ;;
+    rebuild-chat-js)
+        echo "Rebuilding Syllentras chat widget bundle (boot.js)..."
+        if command -v python3 >/dev/null 2>&1; then
+            PY=python3
+        elif command -v python >/dev/null 2>&1; then
+            PY=python
+        else
+            echo "ERROR: python3 or python is required to rebuild chat JS." >&2
+            exit 1
+        fi
+        "$PY" plugin/syllentras_ai/js/_build_boot.py
+        echo "Running Moodle plugin upgrade (no-op if version.php unchanged)..."
+        $COMPOSE exec webserver php admin/cli/upgrade.php --non-interactive
+        echo "Purging all Moodle caches..."
+        $COMPOSE exec webserver php admin/cli/purge_caches.php
+        echo "Done. Hard-refresh the Moodle page if it still looks stale."
+        ;;
     *)
-        echo "Usage: ./dev.sh {up|down|restart|logs|ps|install-api|moodle-install|moodle-upgrade|moodle-purge}"
+        echo "Usage: ./dev.sh {up|down|restart|logs|ps|install-api|moodle-install|moodle-upgrade|moodle-purge|rebuild-chat-js}"
         exit 1
         ;;
 esac
