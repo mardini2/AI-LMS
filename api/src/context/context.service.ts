@@ -37,6 +37,11 @@ import { MoodleClient } from './moodle-client.service';
 @Injectable()
 export class ContextService {
   private readonly logger = new Logger(ContextService.name);
+  /** In-flight fetches so concurrent callers share one Moodle ingest per course. */
+  private readonly inflightDocuments = new Map<
+    number,
+    Promise<CourseContextDocument[]>
+  >();
 
   constructor(
     private readonly moodle: MoodleClient,
@@ -263,12 +268,24 @@ export class ContextService {
       return cached;
     }
 
-    this.logger.log(
-      `Fetching structured course content from Moodle for ${courseId}`,
-    );
-    const documents = await this.fetchCourseDocuments(courseId);
-    await this.cache.set(cacheKey, documents);
-    return documents;
+    const existing = this.inflightDocuments.get(courseId);
+    if (existing) {
+      return existing;
+    }
+
+    const fetchPromise = (async () => {
+      this.logger.log(
+        `Fetching structured course content from Moodle for ${courseId}`,
+      );
+      const documents = await this.fetchCourseDocuments(courseId);
+      await this.cache.set(cacheKey, documents);
+      return documents;
+    })().finally(() => {
+      this.inflightDocuments.delete(courseId);
+    });
+
+    this.inflightDocuments.set(courseId, fetchPromise);
+    return fetchPromise;
   }
 
   private async fetchCourseDocuments(

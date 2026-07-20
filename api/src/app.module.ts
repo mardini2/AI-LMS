@@ -47,7 +47,7 @@ import { PendingAction } from './chat/entities/pending-action.entity';
     // ── In-memory cache for Moodle course content ─────────────────────────
     CacheModule.register({
       isGlobal: true,
-      ttl: 60 * 15, // 15 minutes
+      ttl: 15 * 60 * 1000, // 15 minutes (cache-manager v6 uses ms)
     }),
 
     // ── Feature modules ───────────────────────────────────────────────────
