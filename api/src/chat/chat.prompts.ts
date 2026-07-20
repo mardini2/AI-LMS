@@ -8,6 +8,11 @@ import {
   QUIZ_QUESTION_COUNT_EXPLICIT_MAX,
   QUIZ_QUESTION_COUNT_MIN,
 } from './practice-quiz.helpers';
+import {
+  FLASHCARD_COUNT_AUTO_MAX,
+  FLASHCARD_COUNT_EXPLICIT_MAX,
+  FLASHCARD_COUNT_MIN,
+} from './flashcards.helpers';
 
 export const PROPOSE_PRACTICE_QUIZ_TOOL: FunctionDeclaration = {
   name: 'propose_practice_quiz',
@@ -47,7 +52,7 @@ export const PROPOSE_PRACTICE_QUIZ_TOOL: FunctionDeclaration = {
 export const PROPOSE_STUDY_GUIDE_TOOL: FunctionDeclaration = {
   name: 'propose_study_guide',
   description:
-    'Propose creating a private Moodle study guide Page for the student. Call only when they clearly ask to create/make/generate a study guide, study notes, or review sheet in Moodle. Do not call for practice quizzes or ordinary Q&A.',
+    'Propose creating a private Moodle study guide Page for the student. Call only when they clearly ask to create/make/generate a study guide, study notes, or review sheet in Moodle. Do not call for practice quizzes, flashcards, or ordinary Q&A.',
   parameters: {
     type: SchemaType.OBJECT,
     properties: {
@@ -62,6 +67,41 @@ export const PROPOSE_STUDY_GUIDE_TOOL: FunctionDeclaration = {
       },
     },
     required: ['title', 'scopeSummary'],
+  },
+};
+
+export const PROPOSE_FLASHCARDS_TOOL: FunctionDeclaration = {
+  name: 'propose_flashcards',
+  description:
+    'Propose creating a private Moodle flashcards Page for the student. Call only when they clearly ask to create/make/generate flashcards or a flashcard deck in Moodle. Do not call for practice quizzes, study guides, or ordinary Q&A.',
+  parameters: {
+    type: SchemaType.OBJECT,
+    properties: {
+      title: {
+        type: SchemaType.STRING,
+        description: 'Short working title for the flashcard set',
+      },
+      scopeSummary: {
+        type: SchemaType.STRING,
+        description:
+          'What the flashcards cover, e.g. "Weeks 13–14: packing and rootkits"',
+      },
+      cardCount: {
+        type: SchemaType.INTEGER,
+        description: `Number of flashcards to generate. If the student did not specify a count, choose a sensible number between ${FLASHCARD_COUNT_MIN} and ${FLASHCARD_COUNT_AUTO_MAX}. If they explicitly asked for a count, pass their requested number even if it exceeds ${FLASHCARD_COUNT_EXPLICIT_MAX} (the system will cap it).`,
+      },
+      countSpecifiedByStudent: {
+        type: SchemaType.BOOLEAN,
+        description:
+          'True only when the student explicitly stated how many flashcards they want. False when you are choosing the count yourself.',
+      },
+    },
+    required: [
+      'title',
+      'scopeSummary',
+      'cardCount',
+      'countSpecifiedByStudent',
+    ],
   },
 };
 
@@ -88,8 +128,11 @@ export function buildSystemPrompt(ctx: {
       `If the student did not say how many questions they want, choose a good count between ${QUIZ_QUESTION_COUNT_MIN} and ${QUIZ_QUESTION_COUNT_AUTO_MAX} and set countSpecifiedByStudent to false.`,
       `If the student explicitly stated a question count, pass their requested number (even if above ${QUIZ_QUESTION_COUNT_EXPLICIT_MAX}) and set countSpecifiedByStudent to true. Still call the tool — the system will cap the count and explain the limit in the proposal.`,
       'When the student clearly asks you to create/make/generate a study guide, study notes, or review sheet in Moodle, call the propose_study_guide tool with a sensible title and scopeSummary.',
-      'Do not call both tools in one turn. Pick quiz vs study guide based on the request.',
-      'Do not claim a quiz or study guide already exists. Creation happens only after the student confirms in the UI.',
+      'When the student clearly asks you to create/make/generate flashcards or a flashcard deck in Moodle, call the propose_flashcards tool with a sensible title, scopeSummary, and cardCount.',
+      `If the student did not say how many flashcards they want, choose a good count between ${FLASHCARD_COUNT_MIN} and ${FLASHCARD_COUNT_AUTO_MAX} and set countSpecifiedByStudent to false.`,
+      `If the student explicitly stated a flashcard count, pass their requested number (even if above ${FLASHCARD_COUNT_EXPLICIT_MAX}) and set countSpecifiedByStudent to true.`,
+      'Do not call more than one create tool in one turn. Pick quiz vs study guide vs flashcards based on the request.',
+      'Do not claim a quiz, study guide, or flashcards already exist. Creation happens only after the student confirms in the UI.',
       'For normal Q&A that is not a create request, answer normally without calling a tool.',
     );
   } else {
@@ -231,6 +274,31 @@ export function buildStudyGuidePrompt(input: {
     'Forbidden: URLs, HTML, or markdown links in any field. Plain markdown only (headings in body are optional; section heading is separate).',
     'Aim for 4–8 focused sections. Keep each section concise and useful for studying.',
     'Ground every section strictly in the course material below.',
+    '',
+    'Course material:',
+    '---',
+    input.courseMaterial.slice(0, 60000),
+    '---',
+  ].join('\n');
+}
+
+export function buildFlashcardsPrompt(input: {
+  title: string;
+  scopeSummary: string;
+  courseMaterial: string;
+  cardCount: number;
+}): string {
+  return [
+    `Create exactly ${input.cardCount} flashcards for: ${input.title}`,
+    `Scope: ${input.scopeSummary}`,
+    'Return JSON with title and cards array. Each card has front (prompt/term/question) and back (concise answer).',
+    'Front: prefer a short term or stem under ~12–15 words (not a full exam-style sentence). Example: "Win x64: where do args 5+ go?" — not a long "Where are integer arguments passed if…". One line max; no multi-paragraph fronts.',
+    'Back: a plain concise answer — one or two short sentences, or a phrase. Light emphasis is OK.',
+    'Avoid bullet lists, headings, or mini-essays on the back; these cards are small and meant for quick self-check.',
+    'Prefer substantive readings (notes/PDFs) over exam topic lists or syllabi when both appear.',
+    'Forbidden: which week/section covered a topic; exam logistics (format, points, WR/MC sections, grading); syllabus trivia.',
+    'Forbidden: URLs, HTML, or markdown links in any field. Plain text or light markdown only.',
+    'Ground every card strictly in the course material below.',
     '',
     'Course material:',
     '---',

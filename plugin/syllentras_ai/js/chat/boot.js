@@ -306,20 +306,22 @@ function clearPendingActionUi(root) {
     });
 }
 
-function isStudyGuidePendingAction(pendingAction) {
-    if (!pendingAction) return false;
-    if (pendingAction.type === 'study_guide') return true;
-    if (pendingAction.type === 'practice_quiz') return false;
-    // Study-guide DTOs omit questionCount; quizzes always include a number.
-    return typeof pendingAction.questionCount !== 'number';
+function resolvePendingActionType(pendingAction) {
+    if (!pendingAction) return 'practice_quiz';
+    if (pendingAction.type === 'flashcards') return 'flashcards';
+    if (pendingAction.type === 'study_guide') return 'study_guide';
+    if (pendingAction.type === 'practice_quiz') return 'practice_quiz';
+    if (typeof pendingAction.cardCount === 'number') return 'flashcards';
+    // Study-guide DTOs omit questionCount/cardCount; quizzes always include a number.
+    if (typeof pendingAction.questionCount !== 'number') return 'study_guide';
+    return 'practice_quiz';
 }
 
 function attachPendingAction(messageEl, pendingAction) {
     if (!messageEl || !pendingAction || !pendingAction.id) return;
     clearPendingActionUi(messageEl);
 
-    var isStudyGuide = isStudyGuidePendingAction(pendingAction);
-    var actionType = isStudyGuide ? 'study_guide' : 'practice_quiz';
+    var actionType = resolvePendingActionType(pendingAction);
     var wrap = document.createElement('div');
     wrap.className = 'syllentras-pending-action';
     wrap.dataset.actionId = pendingAction.id;
@@ -328,10 +330,19 @@ function attachPendingAction(messageEl, pendingAction) {
     var summary = document.createElement('div');
     summary.className = 'syllentras-pending-summary';
     summary.innerHTML = '<strong></strong><div></div><div></div>';
+    var defaultTitle =
+        actionType === 'study_guide'
+            ? 'Study guide'
+            : actionType === 'flashcards'
+              ? 'Flashcards'
+              : 'Practice quiz';
     summary.querySelector('strong').textContent =
-        pendingAction.title || (isStudyGuide ? 'Study guide' : 'Practice quiz');
-    if (isStudyGuide) {
+        pendingAction.title || defaultTitle;
+    if (actionType === 'study_guide') {
         summary.children[1].textContent = 'Private study guide Page';
+    } else if (actionType === 'flashcards') {
+        summary.children[1].textContent =
+            (pendingAction.cardCount || '?') + ' flashcards (expand to reveal)';
     } else {
         summary.children[1].textContent = (pendingAction.questionCount || '?')
             + ' questions (multiple choice and true/false)';
@@ -360,9 +371,13 @@ function attachPendingAction(messageEl, pendingAction) {
 
     function createFailedMessage() {
         var kind = wrap.dataset.actionType || actionType;
-        return kind === 'study_guide'
-            ? 'Could not create the study guide. Please try again.'
-            : 'Could not create the practice quiz. Please try again.';
+        if (kind === 'study_guide') {
+            return 'Could not create the study guide. Please try again.';
+        }
+        if (kind === 'flashcards') {
+            return 'Could not create the flashcards. Please try again.';
+        }
+        return 'Could not create the practice quiz. Please try again.';
     }
 
     confirmBtn.addEventListener('click', function () {

@@ -6,7 +6,10 @@ import {
   Index,
 } from 'typeorm';
 
-export type PendingActionType = 'practice_quiz' | 'study_guide';
+export type PendingActionType =
+  | 'practice_quiz'
+  | 'study_guide'
+  | 'flashcards';
 export type PendingActionStatus =
   | 'pending'
   | 'confirmed'
@@ -44,7 +47,24 @@ export interface StudyGuidePayload {
   viewUrl?: string;
 }
 
-export type PendingActionPayload = PracticeQuizPayload | StudyGuidePayload;
+export interface FlashcardsPayload {
+  title: string;
+  scopeSummary: string;
+  cardCount: number;
+  sectionId?: number;
+  sectionNumber?: number;
+  sectionName?: string;
+  sectionIds?: number[];
+  sectionNumbers?: number[];
+  pageId?: number;
+  cmId?: number;
+  viewUrl?: string;
+}
+
+export type PendingActionPayload =
+  | PracticeQuizPayload
+  | StudyGuidePayload
+  | FlashcardsPayload;
 
 @Entity('pending_actions')
 @Index(['conversationId', 'status'])

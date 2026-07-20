@@ -9,6 +9,7 @@ import {
   PendingAction,
   PracticeQuizPayload,
   StudyGuidePayload,
+  FlashcardsPayload,
 } from './entities/pending-action.entity';
 
 const PENDING_TTL_MS = 20 * 60 * 1000;
@@ -70,6 +71,26 @@ export class PendingActionService {
     return this.repo.save(action);
   }
 
+  async createFlashcardsProposal(input: {
+    conversationId: string;
+    courseId: number;
+    moodleUserId: number;
+    payload: FlashcardsPayload;
+  }): Promise<PendingAction> {
+    await this.cancelOtherPending(input.conversationId);
+
+    const action = this.repo.create({
+      conversationId: input.conversationId,
+      courseId: input.courseId,
+      moodleUserId: input.moodleUserId,
+      type: 'flashcards',
+      payload: input.payload,
+      status: 'pending',
+      expiresAt: new Date(Date.now() + PENDING_TTL_MS),
+    });
+    return this.repo.save(action);
+  }
+
   async getPendingForConversation(
     conversationId: string,
     moodleUserId: number,
@@ -79,7 +100,7 @@ export class PendingActionService {
         conversationId,
         moodleUserId,
         status: 'pending',
-        type: In(['practice_quiz', 'study_guide']),
+        type: In(['practice_quiz', 'study_guide', 'flashcards']),
       },
       order: { createdAt: 'DESC' },
       take: 1,
@@ -173,10 +194,10 @@ export class PendingActionService {
     if (!action) {
       throw new NotFoundException('Pending action not found');
     }
-    if (action.type !== 'study_guide') {
-      throw new BadRequestException('Action is not a study guide');
+    if (action.type !== 'study_guide' && action.type !== 'flashcards') {
+      throw new BadRequestException('Action is not a private page content type');
     }
-    const payload = action.payload as StudyGuidePayload;
+    const payload = action.payload as StudyGuidePayload | FlashcardsPayload;
     action.status = 'confirmed';
     action.payload = {
       ...payload,

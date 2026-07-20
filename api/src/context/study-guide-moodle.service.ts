@@ -11,7 +11,20 @@ export class StudyGuideMoodleService {
   ) {}
 
   /**
-   * Create a private study guide Page for one student in the AI Content section.
+   * Create a private AI Content Page for one student (study guide, flashcards, etc.).
+   */
+  async createPrivatePage(input: {
+    courseId: number;
+    moodleUserId: number;
+    name: string;
+    intro?: string;
+    contentHtml: string;
+  }): Promise<CreatedStudyGuide> {
+    return this.createStudyGuide(input);
+  }
+
+  /**
+   * @deprecated Prefer createPrivatePage — same Moodle WS.
    */
   async createStudyGuide(input: {
     courseId: number;

@@ -17,6 +17,7 @@ import {
   buildSystemPrompt,
   PROPOSE_PRACTICE_QUIZ_TOOL,
   PROPOSE_STUDY_GUIDE_TOOL,
+  PROPOSE_FLASHCARDS_TOOL,
   toGeminiHistory,
 } from './chat.prompts';
 import type {
@@ -30,9 +31,11 @@ import { SendMessageDto } from './dto/send-message.dto';
 import { PracticeQuizGenerationService } from './practice-quiz-generation.service';
 import { PracticeQuizReviewService } from './practice-quiz-review.service';
 import { StudyGuideGenerationService } from './study-guide-generation.service';
+import { FlashcardsGenerationService } from './flashcards-generation.service';
 import type {
   PracticeQuizPayload,
   StudyGuidePayload,
+  FlashcardsPayload,
 } from './entities/pending-action.entity';
 import type { PendingAction } from './entities/pending-action.entity';
 import {
@@ -47,6 +50,13 @@ import {
   buildStudyGuideProposalMessage,
   scrubStudyGuideContext,
 } from './study-guide.helpers';
+import {
+  buildFlashcardsContextFilter,
+  buildFlashcardsProposalMessage,
+  clampCardCount,
+  FLASHCARD_COUNT_EXPLICIT_MAX,
+  scrubFlashcardsContext,
+} from './flashcards.helpers';
 
 export type {
   ChatResponse,
@@ -69,6 +79,7 @@ export class ChatService {
     private readonly practiceQuizGeneration: PracticeQuizGenerationService,
     private readonly practiceQuizReview: PracticeQuizReviewService,
     private readonly studyGuideGeneration: StudyGuideGenerationService,
+    private readonly flashcardsGeneration: FlashcardsGenerationService,
   ) {}
 
   async sendMessage(dto: SendMessageDto): Promise<ChatResponse> {
@@ -152,6 +163,7 @@ export class ChatService {
               functionDeclarations: [
                 PROPOSE_PRACTICE_QUIZ_TOOL,
                 PROPOSE_STUDY_GUIDE_TOOL,
+                PROPOSE_FLASHCARDS_TOOL,
               ],
             },
           ] as Tool[])
@@ -187,6 +199,9 @@ export class ChatService {
     );
     const proposeGuideCall = functionCalls.find(
       (call) => call.name === 'propose_study_guide',
+    );
+    const proposeFlashcardsCall = functionCalls.find(
+      (call) => call.name === 'propose_flashcards',
     );
 
     if (proposeQuizCall && moodleUserId && courseId > 1) {
@@ -273,12 +288,65 @@ export class ChatService {
       };
 
       responseText = buildStudyGuideProposalMessage({ title, scopeSummary });
+    } else if (proposeFlashcardsCall && moodleUserId && courseId > 1) {
+      const args = (proposeFlashcardsCall.args ?? {}) as {
+        title?: string;
+        scopeSummary?: string;
+        cardCount?: number;
+        countSpecifiedByStudent?: boolean;
+      };
+      const requestedCount =
+        typeof args.cardCount === 'number'
+          ? args.cardCount
+          : Number(args.cardCount);
+      const countSpecifiedByStudent = args.countSpecifiedByStudent === true;
+      const cardCount = clampCardCount(
+        requestedCount,
+        countSpecifiedByStudent,
+      );
+      const exceededMax =
+        countSpecifiedByStudent &&
+        Number.isFinite(requestedCount) &&
+        Math.round(requestedCount) > FLASHCARD_COUNT_EXPLICIT_MAX;
+      const title = (args.title ?? '').trim() || 'Flashcards';
+      const scopeSummary =
+        (args.scopeSummary ?? '').trim() ||
+        'Course material from the current conversation';
+
+      const action = await this.pendingActionService.createFlashcardsProposal({
+        conversationId,
+        courseId,
+        moodleUserId,
+        payload: {
+          title,
+          scopeSummary,
+          cardCount,
+          sectionId: conversation.sectionId,
+          sectionNumber: conversation.sectionNumber,
+          sectionName: conversation.sectionName,
+        },
+      });
+
+      pendingAction = {
+        id: action.id,
+        type: 'flashcards',
+        title,
+        cardCount,
+        scopeSummary,
+      };
+
+      responseText = buildFlashcardsProposalMessage({
+        title,
+        scopeSummary,
+        cardCount,
+        requestedCount: exceededMax ? Math.round(requestedCount) : undefined,
+      });
     } else {
       try {
         responseText = result.response.text();
       } catch {
         responseText =
-          'I can help with course questions, or create a private practice quiz or study guide in Moodle when you ask for one.';
+          'I can help with course questions, or create a private practice quiz, study guide, or flashcards in Moodle when you ask for one.';
       }
     }
 
@@ -304,6 +372,9 @@ export class ChatService {
     }
     if (action.type === 'study_guide') {
       return this.confirmStudyGuide(action, moodleUserId);
+    }
+    if (action.type === 'flashcards') {
+      return this.confirmFlashcards(action, moodleUserId);
     }
 
     throw new BadRequestException('Unsupported action type');
@@ -497,6 +568,104 @@ export class ChatService {
     };
   }
 
+  private async confirmFlashcards(
+    action: PendingAction,
+    moodleUserId: number,
+  ): Promise<ChatResponse> {
+    const payload = action.payload as FlashcardsPayload;
+    const {
+      title,
+      scopeSummary,
+      cardCount,
+      sectionId,
+      sectionNumber,
+      sectionName,
+    } = payload;
+
+    const resolved = await this.contextService.resolveSectionsFromScope(
+      action.courseId,
+      scopeSummary,
+      { sectionId, sectionNumber, sectionName },
+    );
+    if (resolved.unresolvedSpecificScope) {
+      throw new BadRequestException(
+        `Could not match "${scopeSummary}" to course week/section names. ` +
+          'Try using the exact Moodle section titles (for example "Week 13"), or ask for a general topic flashcard set.',
+      );
+    }
+    const filter = buildFlashcardsContextFilter({
+      ...payload,
+      sectionIds: resolved.sectionIds,
+      sectionNumbers: resolved.sectionNumbers,
+    });
+
+    const courseMaterial = await this.contextService.getContext(
+      action.courseId,
+      `${title} ${scopeSummary}`,
+      filter,
+    );
+
+    if (!courseMaterial.trim()) {
+      throw new BadRequestException(
+        resolved.sectionIds.length > 0
+          ? 'No course material found in the requested weeks/sections to generate flashcards'
+          : 'No course material available to generate flashcards',
+      );
+    }
+
+    this.logger.log(
+      `Generating ${cardCount} flashcards for action ${action.id}` +
+        (resolved.sectionIds.length > 0
+          ? ` (hard-scoped to sections [${resolved.sectionNumbers.join(', ')}])`
+          : ' (course-wide scope)'),
+    );
+
+    const { document, html } =
+      await this.flashcardsGeneration.generateFlashcards({
+        title,
+        scopeSummary,
+        cardCount,
+        courseMaterial: scrubFlashcardsContext(courseMaterial),
+      });
+
+    const page = await this.studyGuideMoodle.createPrivatePage({
+      courseId: action.courseId,
+      moodleUserId,
+      name: document.title || title,
+      intro:
+        'Flashcards created by Syllentras AI. This is a private practice aid and is not graded.',
+      contentHtml: html,
+    });
+
+    await this.pendingActionService.markConfirmedWithPage(action.id, {
+      pageId: page.pageId,
+      cmId: page.cmId,
+      viewUrl: page.viewUrl,
+      sectionIds: resolved.sectionIds,
+      sectionNumbers: resolved.sectionNumbers,
+    });
+
+    const responseText = [
+      `Your flashcards **${page.name}** are ready.`,
+      '',
+      `- ${document.cards.length} cards (expand to reveal answers)`,
+      `- Practice aid only — not graded`,
+      `- Placed under **AI Content** (visible to you and instructors)`,
+      '',
+      `[Open flashcards](${page.viewUrl})`,
+    ].join('\n');
+
+    await this.conversationService.appendMessages(action.conversationId, [
+      { role: 'assistant', content: responseText },
+    ]);
+
+    return {
+      response: responseText,
+      conversationId: action.conversationId,
+      flashcardsUrl: page.viewUrl,
+    };
+  }
+
   async cancelAction(
     actionId: string,
     moodleUserId: number,
@@ -510,7 +679,9 @@ export class ChatService {
     const responseText =
       action.type === 'study_guide'
         ? 'Okay — I cancelled that study guide. Nothing was created in Moodle.'
-        : 'Okay — I cancelled that practice quiz. Nothing was created in Moodle.';
+        : action.type === 'flashcards'
+          ? 'Okay — I cancelled those flashcards. Nothing was created in Moodle.'
+          : 'Okay — I cancelled that practice quiz. Nothing was created in Moodle.';
     await this.conversationService.appendMessages(action.conversationId, [
       { role: 'assistant', content: responseText },
     ]);
@@ -544,6 +715,16 @@ export class ChatService {
         type: 'study_guide',
         title: payload.title,
         scopeSummary: payload.scopeSummary,
+      };
+    }
+    if (action.type === 'flashcards') {
+      const payload = action.payload as FlashcardsPayload;
+      return {
+        id: action.id,
+        type: 'flashcards',
+        title: payload.title,
+        scopeSummary: payload.scopeSummary,
+        cardCount: payload.cardCount,
       };
     }
     const payload = action.payload as PracticeQuizPayload;

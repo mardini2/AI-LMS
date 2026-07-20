@@ -167,7 +167,7 @@ On the new service page → Add functions:
 | `mod_page_view_page` | Simulate the view.php web interface page: trigger events, completion, etc... | `mod/page:view` |
 | `local_syllentras_ai_ensure_student_placement` | Ensure shared AI Content section + private student group | `local/syllentras_ai:manageplacement` |
 | `local_syllentras_ai_create_practice_quiz` | Create a private practice quiz for one student | `local/syllentras_ai:manageplacement` |
-| `local_syllentras_ai_create_study_guide` | Create a private study guide Page for one student | `local/syllentras_ai:manageplacement` |
+| `local_syllentras_ai_create_study_guide` | Create a private study guide or flashcards Page for one student | `local/syllentras_ai:manageplacement` |
 | `local_syllentras_ai_get_practice_attempt_review` | Get finished practice-quiz attempt results for review | `local/syllentras_ai:manageplacement` |
 
 **Add the API user as an authorised user** (Step 7)
@@ -190,9 +190,9 @@ Then do a full restart to pick up the new token:
 .\dev.ps1 up
 ```
 
-### 9. AI Content, practice quizzes, and study guides — admin checklist
+### 9. AI Content, practice quizzes, study guides, and flashcards — admin checklist
 
-After installing or upgrading the plugin, complete these Moodle admin steps so the chat can place private **AI Content** and create practice quizzes / study guides:
+After installing or upgrading the plugin, complete these Moodle admin steps so the chat can place private **AI Content** and create practice quizzes, study guides, and flashcards:
 
 1. **Upgrade and purge**
    ```powershell
@@ -207,7 +207,7 @@ After installing or upgrading the plugin, complete these Moodle admin steps so t
    Ensure these are listed (Add functions if missing):
    - `local_syllentras_ai_ensure_student_placement`
    - `local_syllentras_ai_create_practice_quiz`
-   - `local_syllentras_ai_create_study_guide`
+   - `local_syllentras_ai_create_study_guide` (also used for flashcards Pages — no separate WS)
    - `local_syllentras_ai_get_practice_attempt_review`  
    Recreate the token only if you switch services. Moodle may warn about quiz/question capabilities for `syllentras_api`; with **Manager** at system level those are usually covered.
 
@@ -216,7 +216,7 @@ After installing or upgrading the plugin, complete these Moodle admin steps so t
 
 4. **Enable restricted access (site)**  
    Site administration → Advanced features → **Enable restricted access** → Save.  
-   Required so practice quizzes and study guides can be limited to one student’s group.
+   Required so practice quizzes, study guides, and flashcards can be limited to one student’s group.
 
 Sections and groups are created automatically by the web service — no need to create them by hand.
 

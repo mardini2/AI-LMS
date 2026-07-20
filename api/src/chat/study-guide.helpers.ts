@@ -130,7 +130,7 @@ export function renderStudyGuideHtml(doc: StudyGuideDocument): string {
   return parts.filter(Boolean).join('\n');
 }
 
-function stripUnsafeText(text: string): string {
+export function stripUnsafeText(text: string): string {
   return text
     .replace(/\[([^\]]*)\]\((https?:\/\/[^)]+|mailto:[^)]+)\)/gi, '$1')
     .replace(/https?:\/\/[^\s)\]>"']+/gi, '')
@@ -140,7 +140,7 @@ function stripUnsafeText(text: string): string {
     .trim();
 }
 
-function markdownToSafeHtml(markdown: string): string {
+export function markdownToSafeHtml(markdown: string): string {
   const raw = marked.parse(markdown, { async: false, breaks: true }) as string;
   return sanitizeHtmlAllowlist(raw);
 }
@@ -167,7 +167,7 @@ function sanitizeHtmlAllowlist(html: string): string {
   return out.trim();
 }
 
-function escapeHtml(text: string): string {
+export function escapeHtml(text: string): string {
   return text
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')

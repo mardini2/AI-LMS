@@ -1,10 +1,12 @@
 export interface PendingActionDto {
   id: string;
-  type: 'practice_quiz' | 'study_guide';
+  type: 'practice_quiz' | 'study_guide' | 'flashcards';
   title: string;
   scopeSummary: string;
   /** Present for practice quizzes only. */
   questionCount?: number;
+  /** Present for flashcards only. */
+  cardCount?: number;
 }
 
 export interface ReviewOfferDto {
@@ -35,6 +37,7 @@ export interface ChatResponse {
   pendingAction?: PendingActionDto;
   quizUrl?: string;
   studyGuideUrl?: string;
+  flashcardsUrl?: string;
   reviewOffer?: ReviewOfferDto;
   review?: ReviewBlockDto[];
 }
