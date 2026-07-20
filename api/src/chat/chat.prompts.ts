@@ -12,7 +12,7 @@ import {
 export const PROPOSE_PRACTICE_QUIZ_TOOL: FunctionDeclaration = {
   name: 'propose_practice_quiz',
   description:
-    'Propose creating a private Moodle practice quiz for the student. Call only when they clearly ask to create/make/generate a practice quiz in Moodle. Do not call for ordinary study questions.',
+    'Propose creating a private Moodle practice quiz for the student. Call only when they clearly ask to create/make/generate a practice quiz in Moodle. Do not call for ordinary study questions or study guides.',
   parameters: {
     type: SchemaType.OBJECT,
     properties: {
@@ -44,6 +44,27 @@ export const PROPOSE_PRACTICE_QUIZ_TOOL: FunctionDeclaration = {
   },
 };
 
+export const PROPOSE_STUDY_GUIDE_TOOL: FunctionDeclaration = {
+  name: 'propose_study_guide',
+  description:
+    'Propose creating a private Moodle study guide Page for the student. Call only when they clearly ask to create/make/generate a study guide, study notes, or review sheet in Moodle. Do not call for practice quizzes or ordinary Q&A.',
+  parameters: {
+    type: SchemaType.OBJECT,
+    properties: {
+      title: {
+        type: SchemaType.STRING,
+        description: 'Short working title for the study guide',
+      },
+      scopeSummary: {
+        type: SchemaType.STRING,
+        description:
+          'What the guide covers, e.g. "Weeks 13–14: packing and rootkits"',
+      },
+    },
+    required: ['title', 'scopeSummary'],
+  },
+};
+
 export function buildSystemPrompt(ctx: {
   courseId: number;
   courseName?: string;
@@ -53,7 +74,7 @@ export function buildSystemPrompt(ctx: {
   conversationType?: string;
   sectionName?: string;
   courseMaterial: string;
-  canProposeQuiz: boolean;
+  canProposeContent: boolean;
 }): string {
   const lines: string[] = [
     "You are Syllentras AI, a helpful teaching assistant. Answer the student's questions clearly and accurately.",
@@ -61,17 +82,19 @@ export function buildSystemPrompt(ctx: {
     'Answer the student directly. Do not repeat welcome messages or introduce yourself unless the student asks who you are.',
   ];
 
-  if (ctx.canProposeQuiz) {
+  if (ctx.canProposeContent) {
     lines.push(
       'When the student clearly asks you to create/make/generate a practice quiz in Moodle, call the propose_practice_quiz tool with a sensible title, scopeSummary, and questionCount.',
       `If the student did not say how many questions they want, choose a good count between ${QUIZ_QUESTION_COUNT_MIN} and ${QUIZ_QUESTION_COUNT_AUTO_MAX} and set countSpecifiedByStudent to false.`,
       `If the student explicitly stated a question count, pass their requested number (even if above ${QUIZ_QUESTION_COUNT_EXPLICIT_MAX}) and set countSpecifiedByStudent to true. Still call the tool — the system will cap the count and explain the limit in the proposal.`,
-      'Do not claim a quiz already exists. Creation happens only after the student confirms in the UI.',
-      'For normal Q&A that is not a create-quiz request, answer normally without calling the tool.',
+      'When the student clearly asks you to create/make/generate a study guide, study notes, or review sheet in Moodle, call the propose_study_guide tool with a sensible title and scopeSummary.',
+      'Do not call both tools in one turn. Pick quiz vs study guide based on the request.',
+      'Do not claim a quiz or study guide already exists. Creation happens only after the student confirms in the UI.',
+      'For normal Q&A that is not a create request, answer normally without calling a tool.',
     );
   } else {
     lines.push(
-      'You cannot create Moodle quizzes from this context (missing course, user, or material). If asked, explain they need to open a course page while logged in.',
+      'You cannot create Moodle content from this context (missing course, user, or material). If asked, explain they need to open a course page while logged in.',
     );
   }
 
@@ -191,6 +214,29 @@ export function buildPracticeQuestionsPrompt(
     '---',
   );
   return lines.join('\n');
+}
+
+export function buildStudyGuidePrompt(input: {
+  title: string;
+  scopeSummary: string;
+  courseMaterial: string;
+}): string {
+  return [
+    `Create a structured study guide for: ${input.title}`,
+    `Scope: ${input.scopeSummary}`,
+    'Return JSON with title, optional introMarkdown, and sections (heading + bodyMarkdown).',
+    'Write clear study notes: key concepts, procedures, definitions, trade-offs, and common pitfalls.',
+    'Prefer substantive readings (notes/PDFs) over exam topic lists or syllabi when both appear.',
+    'Forbidden: which week/section covered a topic; exam logistics (format, points, WR/MC sections, grading); syllabus trivia.',
+    'Forbidden: URLs, HTML, or markdown links in any field. Plain markdown only (headings in body are optional; section heading is separate).',
+    'Aim for 4–8 focused sections. Keep each section concise and useful for studying.',
+    'Ground every section strictly in the course material below.',
+    '',
+    'Course material:',
+    '---',
+    input.courseMaterial.slice(0, 60000),
+    '---',
+  ].join('\n');
 }
 
 export function buildWrongAnswerExplanationPrompt(input: {

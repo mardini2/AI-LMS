@@ -48,6 +48,13 @@ export interface CreatedPracticeQuiz {
   viewUrl: string;
 }
 
+export interface CreatedStudyGuide {
+  pageId: number;
+  cmId: number;
+  name: string;
+  viewUrl: string;
+}
+
 export interface PracticeAttemptQuestion {
   slot: number;
   name: string;

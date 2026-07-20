@@ -7,6 +7,7 @@ import { GeminiClient } from './gemini.client';
 import { PendingActionService } from './pending-action.service';
 import { PracticeQuizGenerationService } from './practice-quiz-generation.service';
 import { PracticeQuizReviewService } from './practice-quiz-review.service';
+import { StudyGuideGenerationService } from './study-guide-generation.service';
 import { ContextModule } from '../context/context.module';
 import { ConversationModule } from '../conversation/conversation.module';
 
@@ -23,6 +24,7 @@ import { ConversationModule } from '../conversation/conversation.module';
     PendingActionService,
     PracticeQuizGenerationService,
     PracticeQuizReviewService,
+    StudyGuideGenerationService,
   ],
 })
 export class ChatModule {}

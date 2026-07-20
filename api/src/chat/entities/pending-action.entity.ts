@@ -6,7 +6,7 @@ import {
   Index,
 } from 'typeorm';
 
-export type PendingActionType = 'practice_quiz';
+export type PendingActionType = 'practice_quiz' | 'study_guide';
 export type PendingActionStatus =
   | 'pending'
   | 'confirmed'
@@ -31,6 +31,21 @@ export interface PracticeQuizPayload {
   explainedAttemptId?: number | null;
 }
 
+export interface StudyGuidePayload {
+  title: string;
+  scopeSummary: string;
+  sectionId?: number;
+  sectionNumber?: number;
+  sectionName?: string;
+  sectionIds?: number[];
+  sectionNumbers?: number[];
+  pageId?: number;
+  cmId?: number;
+  viewUrl?: string;
+}
+
+export type PendingActionPayload = PracticeQuizPayload | StudyGuidePayload;
+
 @Entity('pending_actions')
 @Index(['conversationId', 'status'])
 @Index(['moodleUserId', 'status'])
@@ -51,7 +66,7 @@ export class PendingAction {
   type: PendingActionType;
 
   @Column({ type: 'jsonb' })
-  payload: PracticeQuizPayload;
+  payload: PendingActionPayload;
 
   @Column({ type: 'varchar', length: 16, default: 'pending' })
   status: PendingActionStatus;

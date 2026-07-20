@@ -306,20 +306,36 @@ function clearPendingActionUi(root) {
     });
 }
 
+function isStudyGuidePendingAction(pendingAction) {
+    if (!pendingAction) return false;
+    if (pendingAction.type === 'study_guide') return true;
+    if (pendingAction.type === 'practice_quiz') return false;
+    // Study-guide DTOs omit questionCount; quizzes always include a number.
+    return typeof pendingAction.questionCount !== 'number';
+}
+
 function attachPendingAction(messageEl, pendingAction) {
     if (!messageEl || !pendingAction || !pendingAction.id) return;
     clearPendingActionUi(messageEl);
 
+    var isStudyGuide = isStudyGuidePendingAction(pendingAction);
+    var actionType = isStudyGuide ? 'study_guide' : 'practice_quiz';
     var wrap = document.createElement('div');
     wrap.className = 'syllentras-pending-action';
     wrap.dataset.actionId = pendingAction.id;
+    wrap.dataset.actionType = actionType;
 
     var summary = document.createElement('div');
     summary.className = 'syllentras-pending-summary';
     summary.innerHTML = '<strong></strong><div></div><div></div>';
-    summary.querySelector('strong').textContent = pendingAction.title || 'Practice quiz';
-    summary.children[1].textContent = (pendingAction.questionCount || '?')
-        + ' questions (multiple choice and true/false)';
+    summary.querySelector('strong').textContent =
+        pendingAction.title || (isStudyGuide ? 'Study guide' : 'Practice quiz');
+    if (isStudyGuide) {
+        summary.children[1].textContent = 'Private study guide Page';
+    } else {
+        summary.children[1].textContent = (pendingAction.questionCount || '?')
+            + ' questions (multiple choice and true/false)';
+    }
     summary.children[2].textContent = 'Covers: ' + (pendingAction.scopeSummary || 'course material');
     wrap.appendChild(summary);
 
@@ -342,6 +358,13 @@ function attachPendingAction(messageEl, pendingAction) {
         confirmBtn.textContent = busy ? 'Creating...' : 'Confirm';
     }
 
+    function createFailedMessage() {
+        var kind = wrap.dataset.actionType || actionType;
+        return kind === 'study_guide'
+            ? 'Could not create the study guide. Please try again.'
+            : 'Could not create the practice quiz. Please try again.';
+    }
+
     confirmBtn.addEventListener('click', function () {
         setBusy(true);
         fetchJson('/chat/actions/confirm', {
@@ -360,7 +383,7 @@ function attachPendingAction(messageEl, pendingAction) {
         })
         .catch(function () {
             setBusy(false);
-            appendMessage('error', 'Could not create the practice quiz. Please try again.');
+            appendMessage('error', createFailedMessage());
         });
     });
 
@@ -407,7 +430,6 @@ function loadPendingActionForConversation() {
     })
     .catch(function () { /* ignore */ });
 }
-
 
 // ===== review-offer.js =====
 // Part of the Syllentras chat widget.

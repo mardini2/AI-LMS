@@ -19,6 +19,14 @@ $functions = [
         'capabilities' => 'local/syllentras_ai:manageplacement',
         'ajax' => false,
     ],
+    'local_syllentras_ai_create_study_guide' => [
+        'classname' => 'local_syllentras_ai\external\create_study_guide',
+        'methodname' => 'execute',
+        'description' => 'Create a private study guide Page in the AI Content section for one student',
+        'type' => 'write',
+        'capabilities' => 'local/syllentras_ai:manageplacement',
+        'ajax' => false,
+    ],
     'local_syllentras_ai_get_practice_attempt_review' => [
         'classname' => 'local_syllentras_ai\external\get_practice_attempt_review',
         'methodname' => 'execute',
@@ -45,6 +53,7 @@ $services = [
             'mod_page_get_pages_by_courses',
             'local_syllentras_ai_ensure_student_placement',
             'local_syllentras_ai_create_practice_quiz',
+            'local_syllentras_ai_create_study_guide',
             'local_syllentras_ai_get_practice_attempt_review',
         ],
         'restrictedusers' => 0,

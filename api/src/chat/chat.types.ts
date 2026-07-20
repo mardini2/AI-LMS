@@ -1,9 +1,10 @@
 export interface PendingActionDto {
   id: string;
-  type: 'practice_quiz';
+  type: 'practice_quiz' | 'study_guide';
   title: string;
-  questionCount: number;
   scopeSummary: string;
+  /** Present for practice quizzes only. */
+  questionCount?: number;
 }
 
 export interface ReviewOfferDto {
@@ -33,6 +34,7 @@ export interface ChatResponse {
   conversationId: string;
   pendingAction?: PendingActionDto;
   quizUrl?: string;
+  studyGuideUrl?: string;
   reviewOffer?: ReviewOfferDto;
   review?: ReviewBlockDto[];
 }

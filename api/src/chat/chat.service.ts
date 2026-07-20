@@ -11,10 +11,12 @@ import {
 } from '@google/generative-ai';
 import { ContextService } from '../context/context.service';
 import { PracticeQuizMoodleService } from '../context/practice-quiz-moodle.service';
+import { StudyGuideMoodleService } from '../context/study-guide-moodle.service';
 import { ConversationService } from '../conversation/conversation.service';
 import {
   buildSystemPrompt,
   PROPOSE_PRACTICE_QUIZ_TOOL,
+  PROPOSE_STUDY_GUIDE_TOOL,
   toGeminiHistory,
 } from './chat.prompts';
 import type {
@@ -27,6 +29,12 @@ import { PendingActionService } from './pending-action.service';
 import { SendMessageDto } from './dto/send-message.dto';
 import { PracticeQuizGenerationService } from './practice-quiz-generation.service';
 import { PracticeQuizReviewService } from './practice-quiz-review.service';
+import { StudyGuideGenerationService } from './study-guide-generation.service';
+import type {
+  PracticeQuizPayload,
+  StudyGuidePayload,
+} from './entities/pending-action.entity';
+import type { PendingAction } from './entities/pending-action.entity';
 import {
   buildPracticeQuizContextFilter,
   buildProposalMessage,
@@ -34,6 +42,11 @@ import {
   QUIZ_QUESTION_COUNT_EXPLICIT_MAX,
   scrubQuizGenerationContext,
 } from './practice-quiz.helpers';
+import {
+  buildStudyGuideContextFilter,
+  buildStudyGuideProposalMessage,
+  scrubStudyGuideContext,
+} from './study-guide.helpers';
 
 export type {
   ChatResponse,
@@ -50,10 +63,12 @@ export class ChatService {
     private readonly gemini: GeminiClient,
     private readonly contextService: ContextService,
     private readonly practiceQuizMoodle: PracticeQuizMoodleService,
+    private readonly studyGuideMoodle: StudyGuideMoodleService,
     private readonly conversationService: ConversationService,
     private readonly pendingActionService: PendingActionService,
     private readonly practiceQuizGeneration: PracticeQuizGenerationService,
     private readonly practiceQuizReview: PracticeQuizReviewService,
+    private readonly studyGuideGeneration: StudyGuideGenerationService,
   ) {}
 
   async sendMessage(dto: SendMessageDto): Promise<ChatResponse> {
@@ -116,7 +131,7 @@ export class ChatService {
       20,
     );
 
-    const canProposeQuiz =
+    const canProposeContent =
       Boolean(moodleUserId) && courseId > 1 && Boolean(courseMaterial);
 
     const model = this.gemini.getGenerativeModel({
@@ -129,12 +144,19 @@ export class ChatService {
         conversationType: conversation.type,
         sectionName: conversation.sectionName,
         courseMaterial,
-        canProposeQuiz,
+        canProposeContent,
       }),
-      tools: canProposeQuiz
-        ? ([{ functionDeclarations: [PROPOSE_PRACTICE_QUIZ_TOOL] }] as Tool[])
+      tools: canProposeContent
+        ? ([
+            {
+              functionDeclarations: [
+                PROPOSE_PRACTICE_QUIZ_TOOL,
+                PROPOSE_STUDY_GUIDE_TOOL,
+              ],
+            },
+          ] as Tool[])
         : undefined,
-      toolConfig: canProposeQuiz
+      toolConfig: canProposeContent
         ? {
             functionCallingConfig: {
               mode: FunctionCallingMode.AUTO,
@@ -160,12 +182,15 @@ export class ChatService {
     let responseText = '';
     let pendingAction: PendingActionDto | undefined;
 
-    const proposeCall = functionCalls.find(
+    const proposeQuizCall = functionCalls.find(
       (call) => call.name === 'propose_practice_quiz',
     );
+    const proposeGuideCall = functionCalls.find(
+      (call) => call.name === 'propose_study_guide',
+    );
 
-    if (proposeCall && moodleUserId && courseId > 1) {
-      const args = (proposeCall.args ?? {}) as {
+    if (proposeQuizCall && moodleUserId && courseId > 1) {
+      const args = (proposeQuizCall.args ?? {}) as {
         title?: string;
         scopeSummary?: string;
         questionCount?: number;
@@ -217,12 +242,43 @@ export class ChatService {
         scopeSummary,
         requestedCount: exceededMax ? Math.round(requestedCount) : undefined,
       });
+    } else if (proposeGuideCall && moodleUserId && courseId > 1) {
+      const args = (proposeGuideCall.args ?? {}) as {
+        title?: string;
+        scopeSummary?: string;
+      };
+      const title = (args.title ?? '').trim() || 'Study guide';
+      const scopeSummary =
+        (args.scopeSummary ?? '').trim() ||
+        'Course material from the current conversation';
+
+      const action = await this.pendingActionService.createStudyGuideProposal({
+        conversationId,
+        courseId,
+        moodleUserId,
+        payload: {
+          title,
+          scopeSummary,
+          sectionId: conversation.sectionId,
+          sectionNumber: conversation.sectionNumber,
+          sectionName: conversation.sectionName,
+        },
+      });
+
+      pendingAction = {
+        id: action.id,
+        type: 'study_guide',
+        title,
+        scopeSummary,
+      };
+
+      responseText = buildStudyGuideProposalMessage({ title, scopeSummary });
     } else {
       try {
         responseText = result.response.text();
       } catch {
         responseText =
-          'I can help with course questions, or create a private practice quiz in Moodle when you ask for one.';
+          'I can help with course questions, or create a private practice quiz or study guide in Moodle when you ask for one.';
       }
     }
 
@@ -243,10 +299,21 @@ export class ChatService {
       moodleUserId,
     );
 
-    if (action.type !== 'practice_quiz') {
-      throw new BadRequestException('Unsupported action type');
+    if (action.type === 'practice_quiz') {
+      return this.confirmPracticeQuiz(action, moodleUserId);
+    }
+    if (action.type === 'study_guide') {
+      return this.confirmStudyGuide(action, moodleUserId);
     }
 
+    throw new BadRequestException('Unsupported action type');
+  }
+
+  private async confirmPracticeQuiz(
+    action: PendingAction,
+    moodleUserId: number,
+  ): Promise<ChatResponse> {
+    const payload = action.payload as PracticeQuizPayload;
     const {
       title,
       scopeSummary,
@@ -254,7 +321,7 @@ export class ChatService {
       sectionId,
       sectionNumber,
       sectionName,
-    } = action.payload;
+    } = payload;
 
     const resolved = await this.contextService.resolveSectionsFromScope(
       action.courseId,
@@ -268,7 +335,7 @@ export class ChatService {
       );
     }
     const filter = buildPracticeQuizContextFilter({
-      ...action.payload,
+      ...payload,
       sectionIds: resolved.sectionIds,
       sectionNumbers: resolved.sectionNumbers,
     });
@@ -288,7 +355,7 @@ export class ChatService {
     }
 
     this.logger.log(
-      `Generating ${questionCount} practice questions for action ${actionId}` +
+      `Generating ${questionCount} practice questions for action ${action.id}` +
         (resolved.sectionIds.length > 0
           ? ` (hard-scoped to sections [${resolved.sectionNumbers.join(', ')}])`
           : ' (course-wide scope)'),
@@ -310,7 +377,7 @@ export class ChatService {
       questions,
     });
 
-    await this.pendingActionService.markConfirmedWithQuiz(actionId, {
+    await this.pendingActionService.markConfirmedWithQuiz(action.id, {
       quizId: quiz.quizId,
       cmId: quiz.cmId,
       viewUrl: quiz.viewUrl,
@@ -339,6 +406,97 @@ export class ChatService {
     };
   }
 
+  private async confirmStudyGuide(
+    action: PendingAction,
+    moodleUserId: number,
+  ): Promise<ChatResponse> {
+    const payload = action.payload as StudyGuidePayload;
+    const { title, scopeSummary, sectionId, sectionNumber, sectionName } =
+      payload;
+
+    const resolved = await this.contextService.resolveSectionsFromScope(
+      action.courseId,
+      scopeSummary,
+      { sectionId, sectionNumber, sectionName },
+    );
+    if (resolved.unresolvedSpecificScope) {
+      throw new BadRequestException(
+        `Could not match "${scopeSummary}" to course week/section names. ` +
+          'Try using the exact Moodle section titles (for example "Week 13"), or ask for a general topic study guide.',
+      );
+    }
+    const filter = buildStudyGuideContextFilter({
+      ...payload,
+      sectionIds: resolved.sectionIds,
+      sectionNumbers: resolved.sectionNumbers,
+    });
+
+    const courseMaterial = await this.contextService.getContext(
+      action.courseId,
+      `${title} ${scopeSummary}`,
+      filter,
+    );
+
+    if (!courseMaterial.trim()) {
+      throw new BadRequestException(
+        resolved.sectionIds.length > 0
+          ? 'No course material found in the requested weeks/sections to generate a study guide'
+          : 'No course material available to generate a study guide',
+      );
+    }
+
+    this.logger.log(
+      `Generating study guide for action ${action.id}` +
+        (resolved.sectionIds.length > 0
+          ? ` (hard-scoped to sections [${resolved.sectionNumbers.join(', ')}])`
+          : ' (course-wide scope)'),
+    );
+
+    const { document, html } =
+      await this.studyGuideGeneration.generateStudyGuide({
+        title,
+        scopeSummary,
+        courseMaterial: scrubStudyGuideContext(courseMaterial),
+      });
+
+    const page = await this.studyGuideMoodle.createStudyGuide({
+      courseId: action.courseId,
+      moodleUserId,
+      name: document.title || title,
+      intro:
+        'Study guide created by Syllentras AI. This is a private practice aid and is not graded.',
+      contentHtml: html,
+    });
+
+    await this.pendingActionService.markConfirmedWithPage(action.id, {
+      pageId: page.pageId,
+      cmId: page.cmId,
+      viewUrl: page.viewUrl,
+      sectionIds: resolved.sectionIds,
+      sectionNumbers: resolved.sectionNumbers,
+    });
+
+    const responseText = [
+      `Your study guide **${page.name}** is ready.`,
+      '',
+      `- ${document.sections.length} sections of study notes`,
+      `- Practice aid only — not graded`,
+      `- Placed under **AI Content** (visible to you and instructors)`,
+      '',
+      `[Open study guide](${page.viewUrl})`,
+    ].join('\n');
+
+    await this.conversationService.appendMessages(action.conversationId, [
+      { role: 'assistant', content: responseText },
+    ]);
+
+    return {
+      response: responseText,
+      conversationId: action.conversationId,
+      studyGuideUrl: page.viewUrl,
+    };
+  }
+
   async cancelAction(
     actionId: string,
     moodleUserId: number,
@@ -350,7 +508,9 @@ export class ChatService {
     await this.pendingActionService.markCancelled(actionId);
 
     const responseText =
-      'Okay — I cancelled that practice quiz. Nothing was created in Moodle.';
+      action.type === 'study_guide'
+        ? 'Okay — I cancelled that study guide. Nothing was created in Moodle.'
+        : 'Okay — I cancelled that practice quiz. Nothing was created in Moodle.';
     await this.conversationService.appendMessages(action.conversationId, [
       { role: 'assistant', content: responseText },
     ]);
@@ -373,12 +533,26 @@ export class ChatService {
     if (!action) {
       return null;
     }
+    return this.toPendingActionDto(action);
+  }
+
+  private toPendingActionDto(action: PendingAction): PendingActionDto {
+    if (action.type === 'study_guide') {
+      const payload = action.payload as StudyGuidePayload;
+      return {
+        id: action.id,
+        type: 'study_guide',
+        title: payload.title,
+        scopeSummary: payload.scopeSummary,
+      };
+    }
+    const payload = action.payload as PracticeQuizPayload;
     return {
       id: action.id,
       type: 'practice_quiz',
-      title: action.payload.title,
-      questionCount: action.payload.questionCount,
-      scopeSummary: action.payload.scopeSummary,
+      title: payload.title,
+      questionCount: payload.questionCount,
+      scopeSummary: payload.scopeSummary,
     };
   }
 

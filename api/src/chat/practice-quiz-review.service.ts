@@ -44,42 +44,43 @@ export class PracticeQuizReviewService {
         conversationId,
         moodleUserId,
       );
-    if (!action?.payload.quizId) {
+    const payload = action?.payload as PracticeQuizPayload | undefined;
+    if (!payload?.quizId) {
       return null;
     }
 
     try {
       const review = await this.practiceQuizMoodle.getPracticeAttemptReview(
-        action.payload.quizId,
+        payload.quizId,
         moodleUserId,
       );
       if (!review.hasAttempt) {
         return null;
       }
 
-      const explainedAttemptId = action.payload.explainedAttemptId ?? null;
+      const explainedAttemptId = payload.explainedAttemptId ?? null;
       if (review.attemptId === explainedAttemptId) {
         return null;
       }
 
       const wrong = review.questions.filter((q) => !q.iscorrect);
-      const total = review.questions.length || action.payload.questionCount;
+      const total = review.questions.length || payload.questionCount;
       const score = Math.round(review.score);
       const maxScore = Math.round(review.maxScore) || total;
 
       if (wrong.length === 0) {
         // Perfect score — record this attempt so we don't keep prompting.
         await this.pendingActionService.markExplained(
-          action.id,
+          action!.id,
           review.attemptId,
         );
         return null;
       }
 
       return {
-        actionId: action.id,
-        quizId: action.payload.quizId,
-        title: action.payload.title,
+        actionId: action!.id,
+        quizId: payload.quizId,
+        title: payload.title,
         score,
         maxScore,
         wrongCount: wrong.length,
@@ -104,14 +105,15 @@ export class PracticeQuizReviewService {
         conversationId,
         moodleUserId,
       );
-    if (!action?.payload.quizId) {
+    const payload = action?.payload as PracticeQuizPayload | undefined;
+    if (!action || !payload?.quizId) {
       throw new BadRequestException(
         'No practice quiz ready for review in this conversation',
       );
     }
 
     const attempt = await this.practiceQuizMoodle.getPracticeAttemptReview(
-      action.payload.quizId,
+      payload.quizId,
       moodleUserId,
     );
     if (!attempt.hasAttempt) {
@@ -134,7 +136,10 @@ export class PracticeQuizReviewService {
       return { response: responseText, conversationId };
     }
 
-    const filter = await this.resolvePracticeQuizFilter(action);
+    const filter = await this.resolvePracticeQuizFilter({
+      courseId: action.courseId,
+      payload,
+    });
 
     const reviewBlocks: ReviewBlockDto[] = [];
     for (const q of wrong) {
@@ -170,7 +175,7 @@ export class PracticeQuizReviewService {
     const score = Math.round(attempt.score);
     const maxScore = Math.round(attempt.maxScore) || attempt.questions.length;
     const responseText = buildReviewMessage({
-      title: action.payload.title,
+      title: payload.title,
       score,
       maxScore,
       blocks: reviewBlocks,

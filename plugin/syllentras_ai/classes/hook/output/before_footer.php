@@ -65,12 +65,20 @@ class before_footer {
         }
 
         $wwwroot = $CFG->wwwroot;
+        $jsver = '';
+        if (\function_exists('get_component_version')) {
+            $jsver = (string) \get_component_version('local_syllentras_ai');
+        }
+        if ($jsver === '') {
+            $jsver = (string) (\get_config('local_syllentras_ai', 'version') ?: '');
+        }
+        $jsqs = $jsver !== '' ? ('?v=' . rawurlencode($jsver)) : '';
         ob_start();
         include(__DIR__ . '/../../../templates/chat_widget.php');
         ?>
-        <script src="<?php echo $wwwroot; ?>/local/syllentras_ai/js/purify.min.js"></script>
-        <script src="<?php echo $wwwroot; ?>/local/syllentras_ai/js/marked.min.js"></script>
-        <script src="<?php echo $wwwroot; ?>/local/syllentras_ai/js/chat/boot.js"></script>
+        <script src="<?php echo $wwwroot; ?>/local/syllentras_ai/js/purify.min.js<?php echo $jsqs; ?>"></script>
+        <script src="<?php echo $wwwroot; ?>/local/syllentras_ai/js/marked.min.js<?php echo $jsqs; ?>"></script>
+        <script src="<?php echo $wwwroot; ?>/local/syllentras_ai/js/chat/boot.js<?php echo $jsqs; ?>"></script>
         <?php
         $hook->add_html(ob_get_clean());
     }

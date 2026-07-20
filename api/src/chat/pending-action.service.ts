@@ -4,10 +4,11 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
 import {
   PendingAction,
   PracticeQuizPayload,
+  StudyGuidePayload,
 } from './entities/pending-action.entity';
 
 const PENDING_TTL_MS = 20 * 60 * 1000;
@@ -19,19 +20,23 @@ export class PendingActionService {
     private readonly repo: Repository<PendingAction>,
   ) {}
 
+  private async cancelOtherPending(conversationId: string): Promise<void> {
+    await this.repo.update(
+      {
+        conversationId,
+        status: 'pending',
+      },
+      { status: 'cancelled' },
+    );
+  }
+
   async createPracticeQuizProposal(input: {
     conversationId: string;
     courseId: number;
     moodleUserId: number;
     payload: PracticeQuizPayload;
   }): Promise<PendingAction> {
-    await this.repo.update(
-      {
-        conversationId: input.conversationId,
-        status: 'pending',
-      },
-      { status: 'cancelled' },
-    );
+    await this.cancelOtherPending(input.conversationId);
 
     const action = this.repo.create({
       conversationId: input.conversationId,
@@ -45,7 +50,27 @@ export class PendingActionService {
     return this.repo.save(action);
   }
 
-    async getPendingForConversation(
+  async createStudyGuideProposal(input: {
+    conversationId: string;
+    courseId: number;
+    moodleUserId: number;
+    payload: StudyGuidePayload;
+  }): Promise<PendingAction> {
+    await this.cancelOtherPending(input.conversationId);
+
+    const action = this.repo.create({
+      conversationId: input.conversationId,
+      courseId: input.courseId,
+      moodleUserId: input.moodleUserId,
+      type: 'study_guide',
+      payload: input.payload,
+      status: 'pending',
+      expiresAt: new Date(Date.now() + PENDING_TTL_MS),
+    });
+    return this.repo.save(action);
+  }
+
+  async getPendingForConversation(
     conversationId: string,
     moodleUserId: number,
   ): Promise<PendingAction | null> {
@@ -54,7 +79,7 @@ export class PendingActionService {
         conversationId,
         moodleUserId,
         status: 'pending',
-        type: 'practice_quiz',
+        type: In(['practice_quiz', 'study_guide']),
       },
       order: { createdAt: 'DESC' },
       take: 1,
@@ -111,9 +136,13 @@ export class PendingActionService {
     if (!action) {
       throw new NotFoundException('Pending action not found');
     }
+    if (action.type !== 'practice_quiz') {
+      throw new BadRequestException('Action is not a practice quiz');
+    }
+    const payload = action.payload as PracticeQuizPayload;
     action.status = 'confirmed';
     action.payload = {
-      ...action.payload,
+      ...payload,
       quizId: quiz.quizId,
       cmId: quiz.cmId,
       viewUrl: quiz.viewUrl,
@@ -126,7 +155,41 @@ export class PendingActionService {
       explainedAt: null,
       explainedAttemptId: null,
     };
-    // Keep the row discoverable after confirm (TTL no longer gates confirmed rows).
+    action.expiresAt = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000);
+    return this.repo.save(action);
+  }
+
+  async markConfirmedWithPage(
+    actionId: string,
+    page: {
+      pageId: number;
+      cmId: number;
+      viewUrl: string;
+      sectionIds?: number[];
+      sectionNumbers?: number[];
+    },
+  ): Promise<PendingAction> {
+    const action = await this.repo.findOne({ where: { id: actionId } });
+    if (!action) {
+      throw new NotFoundException('Pending action not found');
+    }
+    if (action.type !== 'study_guide') {
+      throw new BadRequestException('Action is not a study guide');
+    }
+    const payload = action.payload as StudyGuidePayload;
+    action.status = 'confirmed';
+    action.payload = {
+      ...payload,
+      pageId: page.pageId,
+      cmId: page.cmId,
+      viewUrl: page.viewUrl,
+      ...(page.sectionIds !== undefined
+        ? { sectionIds: page.sectionIds }
+        : {}),
+      ...(page.sectionNumbers !== undefined
+        ? { sectionNumbers: page.sectionNumbers }
+        : {}),
+    };
     action.expiresAt = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000);
     return this.repo.save(action);
   }
@@ -147,9 +210,10 @@ export class PendingActionService {
     });
 
     return (
-      actions.find(
-        (a) => typeof a.payload.quizId === 'number' && a.payload.quizId > 0,
-      ) ?? null
+      actions.find((a) => {
+        const payload = a.payload as PracticeQuizPayload;
+        return typeof payload.quizId === 'number' && payload.quizId > 0;
+      }) ?? null
     );
   }
 
@@ -158,8 +222,12 @@ export class PendingActionService {
     if (!action) {
       throw new NotFoundException('Pending action not found');
     }
+    if (action.type !== 'practice_quiz') {
+      throw new BadRequestException('Action is not a practice quiz');
+    }
+    const payload = action.payload as PracticeQuizPayload;
     action.payload = {
-      ...action.payload,
+      ...payload,
       explainedAttemptId: attemptId,
       explainedAt: new Date().toISOString(),
     };
