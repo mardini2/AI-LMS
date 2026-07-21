@@ -19,7 +19,7 @@ export interface CourseContextFilter {
   sectionName?: string;
 }
 
-interface CourseContextDocument {
+export interface CourseContextDocument {
   courseId: number;
   courseName?: string;
   sectionId?: number;
@@ -640,7 +640,8 @@ function parseMoodleJsonError(buffer: Buffer): string | null {
   }
 }
 
-function normalizeSection(section: MoodleCourseSection): {
+/** Exported for unit tests. */
+export function normalizeSection(section: MoodleCourseSection): {
   sectionId?: number;
   sectionNumber?: number;
   sectionName?: string;
@@ -689,7 +690,8 @@ function formatDocumentsForPrompt(
     .trim();
 }
 
-function matchesSection(
+/** Exported for unit tests. */
+export function matchesSection(
   doc: CourseContextDocument,
   filter: CourseContextFilter,
 ): boolean {
@@ -710,7 +712,8 @@ function matchesSection(
   );
 }
 
-function relevanceScore(
+/** Exported for unit tests. */
+export function relevanceScore(
   doc: CourseContextDocument,
   questionTerms: string[],
 ): number {
@@ -743,7 +746,8 @@ function formatForumPostText(post: MoodleForumPost): string {
   ].filter(Boolean).join('\n');
 }
 
-function stripHtml(html: string): string {
+/** Exported for unit tests. */
+export function stripHtml(html: string): string {
   return html
     .replace(/<script[\s\S]*?<\/script>/gi, ' ')
     .replace(/<style[\s\S]*?<\/style>/gi, ' ')
@@ -758,7 +762,7 @@ function stripHtml(html: string): string {
     .trim();
 }
 
-interface MoodleCourseSection {
+export interface MoodleCourseSection {
   id?: number;
   section?: number;
   name?: string;
