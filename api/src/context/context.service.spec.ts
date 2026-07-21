@@ -5,8 +5,13 @@ import {
   ContextService,
   CourseContextDocument,
   CourseContextFilter,
+  formatDocument,
+  formatDocumentsForPrompt,
+  formatForumPostText,
+  looksLikePdf,
   matchesSection,
   normalizeSection,
+  parseMoodleJsonError,
   relevanceScore,
   stripHtml,
 } from './context.service';
@@ -312,5 +317,244 @@ describe('relevanceScore', () => {
 
   it('returns 0 when no terms appear', () => {
     expect(relevanceScore(doc, ['photosynthesis', 'gravity'])).toBe(0);
+  });
+});
+
+describe('formatDocument', () => {
+  it('formats a full document with heading, present metadata fields, and body', () => {
+    const doc: CourseContextDocument = {
+      courseId: 12,
+      courseName: 'Organic Chemistry',
+      sectionName: 'Week 1',
+      moduleName: 'Lecture Notes',
+      contentType: 'resource_pdf',
+      fileName: 'bonds.pdf',
+      source: 'https://moodle.example/pluginfile.php/1',
+      lastUpdated: 1_700_000_000,
+      text: 'Covalent bonds share electrons.',
+    };
+
+    const result = formatDocument(doc);
+
+    expect(result).toBe(
+      [
+        '### Week 1 / Lecture Notes',
+        `Metadata: type=resource_pdf; course=Organic Chemistry; section=Week 1; module=Lecture Notes; file=bonds.pdf; source=https://moodle.example/pluginfile.php/1; updated=${new Date(1_700_000_000 * 1000).toISOString()}`,
+        'Covalent bonds share electrons.',
+      ].join('\n'),
+    );
+  });
+
+  it('formats a minimal document with only present metadata fields', () => {
+    const doc: CourseContextDocument = {
+      courseId: 12,
+      contentType: 'course_summary',
+      text: 'Course overview text.',
+    };
+
+    const result = formatDocument(doc);
+
+    expect(result).toBe(
+      [
+        '### Course',
+        'Metadata: type=course_summary',
+        'Course overview text.',
+      ].join('\n'),
+    );
+    expect(result).not.toContain('course=');
+    expect(result).not.toContain('section=');
+    expect(result).not.toContain('module=');
+    expect(result).not.toContain('file=');
+    expect(result).not.toContain('source=');
+    expect(result).not.toContain('updated=');
+  });
+});
+
+describe('formatForumPostText', () => {
+  it('joins Subject and Author lines with the stripped message when present', () => {
+    expect(
+      formatForumPostText({
+        id: 1,
+        discussionId: 10,
+        subject: '<b>Lab help</b>',
+        userfullname: 'Alex &amp; Sam',
+        message: '<p>How do I submit?</p>',
+      }),
+    ).toBe(['Subject: Lab help', 'Author: Alex & Sam', 'How do I submit?'].join('\n'));
+  });
+
+  it('omits Subject and Author lines when absent', () => {
+    expect(
+      formatForumPostText({
+        id: 2,
+        discussionId: 10,
+        message: '<p>Just the body</p>',
+      }),
+    ).toBe('Just the body');
+  });
+});
+
+describe('looksLikePdf', () => {
+  it("returns true for a buffer starting with '%PDF-'", () => {
+    expect(looksLikePdf(Buffer.from('%PDF-1.7 binary junk'))).toBe(true);
+  });
+
+  it('returns false otherwise', () => {
+    expect(looksLikePdf(Buffer.from('Not a PDF'))).toBe(false);
+    expect(looksLikePdf(Buffer.from('{"error":"x"}'))).toBe(false);
+    expect(looksLikePdf(Buffer.from(''))).toBe(false);
+  });
+});
+
+describe('parseMoodleJsonError', () => {
+  it("returns null when the buffer does not start with '{'", () => {
+    expect(parseMoodleJsonError(Buffer.from('%PDF-1.7'))).toBeNull();
+    expect(parseMoodleJsonError(Buffer.from('plain text'))).toBeNull();
+  });
+
+  it('returns null for invalid JSON that starts with {', () => {
+    expect(parseMoodleJsonError(Buffer.from('{not-json'))).toBeNull();
+  });
+
+  it('returns error over message over exception', () => {
+    expect(
+      parseMoodleJsonError(
+        Buffer.from(
+          JSON.stringify({
+            error: 'access denied',
+            message: 'ignored message',
+            exception: 'ignored exception',
+          }),
+        ),
+      ),
+    ).toBe('access denied');
+
+    expect(
+      parseMoodleJsonError(
+        Buffer.from(
+          JSON.stringify({
+            message: 'file missing',
+            exception: 'ignored exception',
+          }),
+        ),
+      ),
+    ).toBe('file missing');
+
+    expect(
+      parseMoodleJsonError(
+        Buffer.from(JSON.stringify({ exception: 'dml_exception' })),
+      ),
+    ).toBe('dml_exception');
+  });
+
+  it('returns null when valid JSON has none of those fields', () => {
+    expect(
+      parseMoodleJsonError(Buffer.from(JSON.stringify({ status: 'ok' }))),
+    ).toBeNull();
+  });
+});
+
+describe('formatDocumentsForPrompt', () => {
+  function doc(
+    overrides: Partial<CourseContextDocument> &
+      Pick<CourseContextDocument, 'text' | 'contentType'>,
+  ): CourseContextDocument {
+    return {
+      courseId: 12,
+      ...overrides,
+    };
+  }
+
+  it('orders matching documents before non-matching, each group by relevance desc', () => {
+    const documents: CourseContextDocument[] = [
+      doc({
+        contentType: 'other',
+        sectionName: 'Week 2',
+        sectionNumber: 2,
+        text: 'unrelated low score',
+      }),
+      doc({
+        contentType: 'match_low',
+        sectionName: 'Week 1',
+        sectionNumber: 1,
+        text: 'mentions mitosis once',
+      }),
+      doc({
+        contentType: 'match_high',
+        sectionName: 'Week 1',
+        sectionNumber: 1,
+        moduleName: 'Mitosis Lab',
+        text: 'mitosis chromosomes anaphase detailed',
+      }),
+      doc({
+        contentType: 'other_high',
+        sectionName: 'Week 3',
+        sectionNumber: 3,
+        text: 'mitosis chromosomes anaphase also relevant elsewhere',
+      }),
+    ];
+
+    const result = formatDocumentsForPrompt(
+      documents,
+      { sectionNumber: 1 },
+      'What happens during mitosis and anaphase of chromosomes?',
+    );
+
+    const blocks = result.split('\n\n');
+    expect(blocks).toHaveLength(4);
+    // Matching Week 1 first: high relevance then low
+    expect(blocks[0]).toContain('type=match_high');
+    expect(blocks[1]).toContain('type=match_low');
+    // Then non-matching, higher relevance first
+    expect(blocks[2]).toContain('type=other_high');
+    expect(blocks[3]).toContain('type=other');
+  });
+
+  it('returns all documents sorted by relevance when none match the filter', () => {
+    const documents: CourseContextDocument[] = [
+      doc({
+        contentType: 'low',
+        sectionName: 'A',
+        text: 'nothing special here',
+      }),
+      doc({
+        contentType: 'high',
+        sectionName: 'B',
+        text: 'photosynthesis chlorophyll plants sunlight',
+      }),
+      doc({
+        contentType: 'mid',
+        sectionName: 'C',
+        text: 'photosynthesis overview',
+      }),
+    ];
+
+    const result = formatDocumentsForPrompt(
+      documents,
+      { sectionNumber: 99 },
+      'Explain photosynthesis and chlorophyll in plants',
+    );
+
+    const blocks = result.split('\n\n');
+    expect(blocks).toHaveLength(3);
+    expect(blocks[0]).toContain('type=high');
+    expect(blocks[1]).toContain('type=mid');
+    expect(blocks[2]).toContain('type=low');
+  });
+
+  it('caps results at 80 documents', () => {
+    const documents = Array.from({ length: 85 }, (_, i) =>
+      doc({
+        contentType: `doc_${i}`,
+        sectionName: `Section ${i}`,
+        text: `Document body number ${i}`,
+      }),
+    );
+
+    const result = formatDocumentsForPrompt(documents, {}, 'question about learning');
+    const blocks = result.split('\n\n').filter((b) => b.startsWith('###'));
+
+    expect(blocks).toHaveLength(80);
+    expect(result).not.toContain('type=doc_80');
   });
 });

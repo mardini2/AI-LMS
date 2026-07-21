@@ -618,11 +618,13 @@ async function parsePdfText(buffer: Buffer): Promise<{ text?: string }> {
   }
 }
 
-function looksLikePdf(buffer: Buffer): boolean {
+/** Exported for unit tests. */
+export function looksLikePdf(buffer: Buffer): boolean {
   return buffer.subarray(0, 5).toString('utf8') === '%PDF-';
 }
 
-function parseMoodleJsonError(buffer: Buffer): string | null {
+/** Exported for unit tests. */
+export function parseMoodleJsonError(buffer: Buffer): string | null {
   const firstBytes = buffer.subarray(0, 64).toString('utf8').trimStart();
   if (!firstBytes.startsWith('{')) {
     return null;
@@ -663,7 +665,8 @@ export function normalizeSection(section: MoodleCourseSection): {
   };
 }
 
-function formatDocumentsForPrompt(
+/** Exported for unit tests. */
+export function formatDocumentsForPrompt(
   documents: CourseContextDocument[],
   filter: CourseContextFilter,
   question: string,
@@ -724,7 +727,8 @@ export function relevanceScore(
   );
 }
 
-function formatDocument(doc: CourseContextDocument): string {
+/** Exported for unit tests. */
+export function formatDocument(doc: CourseContextDocument): string {
   const meta = [
     `type=${doc.contentType}`,
     doc.courseName ? `course=${doc.courseName}` : undefined,
@@ -738,7 +742,8 @@ function formatDocument(doc: CourseContextDocument): string {
   return `### ${doc.sectionName ?? 'Course'}${doc.moduleName ? ` / ${doc.moduleName}` : ''}\nMetadata: ${meta.join('; ')}\n${doc.text}`;
 }
 
-function formatForumPostText(post: MoodleForumPost): string {
+/** Exported for unit tests. */
+export function formatForumPostText(post: MoodleForumPost): string {
   return [
     post.subject ? `Subject: ${stripHtml(post.subject)}` : undefined,
     post.userfullname ? `Author: ${stripHtml(post.userfullname)}` : undefined,
@@ -834,7 +839,7 @@ interface MoodleForumDiscussionsResponse {
   discussions?: MoodleForumDiscussion[];
 }
 
-interface MoodleForumPost {
+export interface MoodleForumPost {
   id: number;
   discussionId: number;
   subject?: string;
