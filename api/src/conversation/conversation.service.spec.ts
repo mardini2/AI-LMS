@@ -567,4 +567,181 @@ describe('ConversationService', () => {
       expect(messages[0].id).toBe('other');
     });
   });
+
+  describe('listForCourse', () => {
+    it('calls repository find with the correct where and order', async () => {
+      conversationRepo.find.mockResolvedValue([]);
+
+      await service.listForCourse(OWNER_ID, COURSE_ID);
+
+      expect(conversationRepo.find).toHaveBeenCalledWith({
+        where: { moodleUserId: OWNER_ID, courseId: COURSE_ID },
+        order: {
+          pinned: 'DESC',
+          type: 'ASC',
+          sectionNumber: 'ASC',
+          createdAt: 'ASC',
+        },
+      });
+    });
+
+    it('maps results through toSummary', async () => {
+      const createdAt = new Date('2026-01-10T10:00:00.000Z');
+      const updatedAt = new Date('2026-01-11T11:00:00.000Z');
+      conversationRepo.find.mockResolvedValue([
+        makeConversation({
+          id: 'list-general',
+          type: 'general',
+          title: 'Stored title ignored for general',
+          pinned: true,
+          createdAt,
+          updatedAt,
+        }),
+        makeConversation({
+          id: 'list-section',
+          type: 'section',
+          title: 'Week 1 chat',
+          sectionId: 10,
+          sectionNumber: 1,
+          sectionName: 'Week 1',
+          tag: '#week1',
+          pinned: false,
+          createdAt,
+          updatedAt,
+        }),
+      ]);
+
+      const summaries = await service.listForCourse(OWNER_ID, COURSE_ID);
+
+      expect(summaries).toHaveLength(2);
+      expect(summaries[0]).toEqual(
+        expect.objectContaining({
+          id: 'list-general',
+          courseId: COURSE_ID,
+          moodleUserId: OWNER_ID,
+          type: 'general',
+          title: 'Main',
+          tag: '#main',
+          pinned: true,
+          createdAt,
+          updatedAt,
+        }),
+      );
+      expect(summaries[1]).toEqual(
+        expect.objectContaining({
+          id: 'list-section',
+          type: 'section',
+          title: 'Week 1 chat',
+          sectionId: 10,
+          sectionNumber: 1,
+          sectionName: 'Week 1',
+          tag: '#week1',
+          pinned: false,
+        }),
+      );
+    });
+  });
+
+  describe('searchForCourse', () => {
+    function mockSearchQueryBuilder(results: Conversation[]) {
+      const qb = {
+        leftJoinAndSelect: jest.fn().mockReturnThis(),
+        where: jest.fn().mockReturnThis(),
+        andWhere: jest.fn().mockReturnThis(),
+        orderBy: jest.fn().mockReturnThis(),
+        addOrderBy: jest.fn().mockReturnThis(),
+        getMany: jest.fn().mockResolvedValue(results),
+      };
+      conversationRepo.createQueryBuilder = jest.fn().mockReturnValue(qb) as never;
+      return qb;
+    }
+
+    it('returns [] immediately for empty/whitespace queries without calling the repository', async () => {
+      await expect(
+        service.searchForCourse(OWNER_ID, COURSE_ID, ''),
+      ).resolves.toEqual([]);
+      await expect(
+        service.searchForCourse(OWNER_ID, COURSE_ID, '   '),
+      ).resolves.toEqual([]);
+      await expect(
+        service.searchForCourse(OWNER_ID, COURSE_ID, '\t\n'),
+      ).resolves.toEqual([]);
+
+      expect(conversationRepo.createQueryBuilder).not.toHaveBeenCalled();
+    });
+
+    it('returns ConversationSearchResult with matchedMessage when message content matches', async () => {
+      const msgCreatedAt = new Date('2026-01-15T13:00:00.000Z');
+      const conversation = makeConversation({
+        id: 'search-msg',
+        type: 'manual',
+        title: 'Lab notes',
+        tag: '#lab-notes',
+        messages: [
+          makeMessage({
+            id: 'hit-msg',
+            conversationId: 'search-msg',
+            role: 'user',
+            content: 'Explain photosynthesis pathways',
+            createdAt: msgCreatedAt,
+          }),
+        ],
+      });
+      mockSearchQueryBuilder([conversation]);
+
+      const results = await service.searchForCourse(
+        OWNER_ID,
+        COURSE_ID,
+        'photosynthesis',
+      );
+
+      expect(conversationRepo.createQueryBuilder).toHaveBeenCalledWith('c');
+      expect(results).toHaveLength(1);
+      expect(results[0].conversation).toEqual(
+        expect.objectContaining({
+          id: 'search-msg',
+          type: 'manual',
+          title: 'Lab notes',
+          tag: '#lab-notes',
+        }),
+      );
+      expect(results[0].matchedMessage).toEqual({
+        id: 'hit-msg',
+        role: 'user',
+        content: 'Explain photosynthesis pathways',
+        createdAt: msgCreatedAt,
+      });
+    });
+
+    it('leaves matchedMessage undefined when the match is on title/tag/sectionName only', async () => {
+      const conversation = makeConversation({
+        id: 'search-title',
+        type: 'section',
+        title: 'Photosynthesis chat',
+        sectionName: 'Week 3 Photosynthesis',
+        tag: '#week3',
+        sectionId: 30,
+        sectionNumber: 3,
+        messages: [
+          makeMessage({
+            id: 'unrelated',
+            conversationId: 'search-title',
+            role: 'assistant',
+            content: 'Hello from the section chat',
+          }),
+        ],
+      });
+      mockSearchQueryBuilder([conversation]);
+
+      const results = await service.searchForCourse(
+        OWNER_ID,
+        COURSE_ID,
+        'Photosynthesis',
+      );
+
+      expect(results).toHaveLength(1);
+      expect(results[0].conversation.id).toBe('search-title');
+      expect(results[0].matchedMessage).toBeUndefined();
+    });
+  });
 });
