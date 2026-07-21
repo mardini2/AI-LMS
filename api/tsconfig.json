@@ -18,4 +18,5 @@
     "noFallthroughCasesInSwitch": true,
     "types": ["jest", "node"]
   },
+  "exclude": ["node_modules", "dist", "test"]
 }
