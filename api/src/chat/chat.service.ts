@@ -163,9 +163,9 @@ export class ChatService {
           ? ([
               {
                 functionDeclarations: [
-                  PROPOSE_PRACTICE_QUIZ_TOOL,
                   PROPOSE_STUDY_GUIDE_TOOL,
                   PROPOSE_FLASHCARDS_TOOL,
+                  PROPOSE_PRACTICE_QUIZ_TOOL,
                 ],
               },
             ] as Tool[])
@@ -343,7 +343,7 @@ export class ChatService {
     } else {
       responseText =
         result.text?.trim() ||
-        'I can help with course questions, or create a private practice quiz, study guide, or flashcards in Moodle when you ask for one.';
+        'I can help with course questions, or create a private study guide, flashcards, or practice quiz in Moodle when you ask for one.';
     }
 
     await this.conversationService.appendMessages(conversationId, [
