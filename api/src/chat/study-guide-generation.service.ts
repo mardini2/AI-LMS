@@ -3,7 +3,7 @@ import {
   Injectable,
   Logger,
 } from '@nestjs/common';
-import { SchemaType } from '@google/generative-ai';
+import { Type } from '@google/genai';
 import { buildStudyGuidePrompt } from './chat.prompts';
 import { GeminiClient } from './gemini.client';
 import {
@@ -23,21 +23,23 @@ export class StudyGuideGenerationService {
     scopeSummary: string;
     courseMaterial: string;
   }): Promise<{ document: StudyGuideDocument; html: string }> {
-    const model = this.gemini.getGenerativeModel({
-      generationConfig: {
+    const prompt = buildStudyGuidePrompt(input);
+    const response = await this.gemini.generateContent({
+      contents: prompt,
+      config: {
         responseMimeType: 'application/json',
         responseSchema: {
-          type: SchemaType.OBJECT,
+          type: Type.OBJECT,
           properties: {
-            title: { type: SchemaType.STRING },
-            introMarkdown: { type: SchemaType.STRING },
+            title: { type: Type.STRING },
+            introMarkdown: { type: Type.STRING },
             sections: {
-              type: SchemaType.ARRAY,
+              type: Type.ARRAY,
               items: {
-                type: SchemaType.OBJECT,
+                type: Type.OBJECT,
                 properties: {
-                  heading: { type: SchemaType.STRING },
-                  bodyMarkdown: { type: SchemaType.STRING },
+                  heading: { type: Type.STRING },
+                  bodyMarkdown: { type: Type.STRING },
                 },
                 required: ['heading', 'bodyMarkdown'],
               },
@@ -47,10 +49,7 @@ export class StudyGuideGenerationService {
         },
       },
     });
-
-    const prompt = buildStudyGuidePrompt(input);
-    const result = await model.generateContent(prompt);
-    const raw = result.response.text();
+    const raw = response.text ?? '';
     let parsed: Partial<StudyGuideDocument>;
     try {
       parsed = JSON.parse(raw) as Partial<StudyGuideDocument>;

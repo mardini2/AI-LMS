@@ -3,7 +3,7 @@ import {
   Injectable,
   Logger,
 } from '@nestjs/common';
-import { SchemaType } from '@google/generative-ai';
+import { Type } from '@google/genai';
 import { ContextService } from '../context/context.service';
 import type { CourseContextFilter } from '../context/context.types';
 import { PracticeQuizMoodleService } from '../context/practice-quiz-moodle.service';
@@ -227,24 +227,23 @@ export class PracticeQuizReviewService {
     rightanswer: string;
     courseMaterial: string;
   }): Promise<string> {
-    const model = this.gemini.getGenerativeModel({
-      generationConfig: {
+    const prompt = buildWrongAnswerExplanationPrompt(input);
+
+    const response = await this.gemini.generateContent({
+      contents: prompt,
+      config: {
         responseMimeType: 'application/json',
         responseSchema: {
-          type: SchemaType.OBJECT,
+          type: Type.OBJECT,
           properties: {
-            why: { type: SchemaType.STRING },
+            why: { type: Type.STRING },
           },
           required: ['why'],
         },
       },
     });
-
-    const prompt = buildWrongAnswerExplanationPrompt(input);
-
-    const result = await model.generateContent(prompt);
     try {
-      const parsed = JSON.parse(result.response.text()) as { why?: string };
+      const parsed = JSON.parse(response.text ?? '') as { why?: string };
       const why = (parsed.why ?? '').trim();
       if (why) {
         return why;

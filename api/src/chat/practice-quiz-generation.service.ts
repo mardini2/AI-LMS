@@ -3,7 +3,7 @@ import {
   Injectable,
   Logger,
 } from '@nestjs/common';
-import { SchemaType } from '@google/generative-ai';
+import { Type } from '@google/genai';
 import type { PracticeQuizQuestion } from '../context/context.types';
 import { buildPracticeQuestionsPrompt } from './chat.prompts';
 import { GeminiClient } from './gemini.client';
@@ -24,44 +24,39 @@ export class PracticeQuizGenerationService {
     questionCount: number;
     courseMaterial: string;
   }): Promise<PracticeQuizQuestion[]> {
-    const model = this.gemini.getGenerativeModel({
-      generationConfig: {
-        responseMimeType: 'application/json',
-        responseSchema: {
-          type: SchemaType.OBJECT,
-          properties: {
-            questions: {
-              type: SchemaType.ARRAY,
-              items: {
-                type: SchemaType.OBJECT,
-                properties: {
-                  type: {
-                    type: SchemaType.STRING,
-                    format: 'enum',
-                    enum: ['multichoice', 'truefalse'],
+    const responseSchema = {
+      type: Type.OBJECT,
+      properties: {
+        questions: {
+          type: Type.ARRAY,
+          items: {
+            type: Type.OBJECT,
+            properties: {
+              type: {
+                type: Type.STRING,
+                format: 'enum',
+                enum: ['multichoice', 'truefalse'],
+              },
+              name: { type: Type.STRING },
+              questiontext: { type: Type.STRING },
+              answers: {
+                type: Type.ARRAY,
+                items: {
+                  type: Type.OBJECT,
+                  properties: {
+                    text: { type: Type.STRING },
+                    fraction: { type: Type.NUMBER },
                   },
-                  name: { type: SchemaType.STRING },
-                  questiontext: { type: SchemaType.STRING },
-                  answers: {
-                    type: SchemaType.ARRAY,
-                    items: {
-                      type: SchemaType.OBJECT,
-                      properties: {
-                        text: { type: SchemaType.STRING },
-                        fraction: { type: SchemaType.NUMBER },
-                      },
-                      required: ['text', 'fraction'],
-                    },
-                  },
+                  required: ['text', 'fraction'],
                 },
-                required: ['type', 'name', 'questiontext', 'answers'],
               },
             },
+            required: ['type', 'name', 'questiontext', 'answers'],
           },
-          required: ['questions'],
         },
       },
-    });
+      required: ['questions'],
+    };
 
     const parseAndNormalize = (raw: string): PracticeQuizQuestion[] => {
       const parsed = JSON.parse(raw) as { questions?: PracticeQuizQuestion[] };
@@ -80,13 +75,15 @@ export class PracticeQuizGenerationService {
         break;
       }
 
-      const batch = parseAndNormalize(
-        (
-          await model.generateContent(
-            buildPracticeQuestionsPrompt(input, needed, accepted),
-          )
-        ).response.text(),
-      );
+      const response = await this.gemini.generateContent({
+        contents: buildPracticeQuestionsPrompt(input, needed, accepted),
+        config: {
+          responseMimeType: 'application/json',
+          responseSchema,
+        },
+      });
+
+      const batch = parseAndNormalize(response.text ?? '');
 
       let added = 0;
       for (const q of batch) {

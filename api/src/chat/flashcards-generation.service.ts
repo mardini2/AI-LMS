@@ -3,7 +3,7 @@ import {
   Injectable,
   Logger,
 } from '@nestjs/common';
-import { SchemaType } from '@google/generative-ai';
+import { Type } from '@google/genai';
 import { buildFlashcardsPrompt } from './chat.prompts';
 import { GeminiClient } from './gemini.client';
 import {
@@ -24,20 +24,22 @@ export class FlashcardsGenerationService {
     courseMaterial: string;
     cardCount: number;
   }): Promise<{ document: FlashcardsDocument; html: string }> {
-    const model = this.gemini.getGenerativeModel({
-      generationConfig: {
+    const prompt = buildFlashcardsPrompt(input);
+    const response = await this.gemini.generateContent({
+      contents: prompt,
+      config: {
         responseMimeType: 'application/json',
         responseSchema: {
-          type: SchemaType.OBJECT,
+          type: Type.OBJECT,
           properties: {
-            title: { type: SchemaType.STRING },
+            title: { type: Type.STRING },
             cards: {
-              type: SchemaType.ARRAY,
+              type: Type.ARRAY,
               items: {
-                type: SchemaType.OBJECT,
+                type: Type.OBJECT,
                 properties: {
-                  front: { type: SchemaType.STRING },
-                  back: { type: SchemaType.STRING },
+                  front: { type: Type.STRING },
+                  back: { type: Type.STRING },
                 },
                 required: ['front', 'back'],
               },
@@ -47,10 +49,7 @@ export class FlashcardsGenerationService {
         },
       },
     });
-
-    const prompt = buildFlashcardsPrompt(input);
-    const result = await model.generateContent(prompt);
-    const raw = result.response.text();
+    const raw = response.text ?? '';
     let parsed: Partial<FlashcardsDocument>;
     try {
       parsed = JSON.parse(raw) as Partial<FlashcardsDocument>;

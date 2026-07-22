@@ -1,7 +1,4 @@
-import {
-  SchemaType,
-  type FunctionDeclaration,
-} from '@google/generative-ai';
+import { Type, type FunctionDeclaration } from '@google/genai';
 import type { PracticeQuizQuestion } from '../context/context.types';
 import {
   QUIZ_QUESTION_COUNT_AUTO_MAX,
@@ -19,23 +16,23 @@ export const PROPOSE_PRACTICE_QUIZ_TOOL: FunctionDeclaration = {
   description:
     'Propose creating a private Moodle practice quiz for the student. Call only when they clearly ask to create/make/generate a practice quiz in Moodle. Do not call for ordinary study questions or study guides.',
   parameters: {
-    type: SchemaType.OBJECT,
+    type: Type.OBJECT,
     properties: {
       title: {
-        type: SchemaType.STRING,
+        type: Type.STRING,
         description: 'Short working title for the practice quiz',
       },
       scopeSummary: {
-        type: SchemaType.STRING,
+        type: Type.STRING,
         description:
           'What the quiz covers, e.g. "Weeks 1–4: variables, loops, and arrays"',
       },
       questionCount: {
-        type: SchemaType.INTEGER,
+        type: Type.INTEGER,
         description: `Number of questions to generate. If the student did not specify a count, choose a sensible number between ${QUIZ_QUESTION_COUNT_MIN} and ${QUIZ_QUESTION_COUNT_AUTO_MAX}. If they explicitly asked for a count, pass their requested number even if it exceeds ${QUIZ_QUESTION_COUNT_EXPLICIT_MAX} (the system will cap it).`,
       },
       countSpecifiedByStudent: {
-        type: SchemaType.BOOLEAN,
+        type: Type.BOOLEAN,
         description:
           'True only when the student explicitly stated how many questions they want. False when you are choosing the count yourself.',
       },
@@ -54,14 +51,14 @@ export const PROPOSE_STUDY_GUIDE_TOOL: FunctionDeclaration = {
   description:
     'Propose creating a private Moodle study guide Page for the student. Call only when they clearly ask to create/make/generate a study guide, study notes, or review sheet in Moodle. Do not call for practice quizzes, flashcards, or ordinary Q&A.',
   parameters: {
-    type: SchemaType.OBJECT,
+    type: Type.OBJECT,
     properties: {
       title: {
-        type: SchemaType.STRING,
+        type: Type.STRING,
         description: 'Short working title for the study guide',
       },
       scopeSummary: {
-        type: SchemaType.STRING,
+        type: Type.STRING,
         description:
           'What the guide covers, e.g. "Weeks 13–14: packing and rootkits"',
       },
@@ -75,23 +72,23 @@ export const PROPOSE_FLASHCARDS_TOOL: FunctionDeclaration = {
   description:
     'Propose creating a private Moodle flashcards Page for the student. Call only when they clearly ask to create/make/generate flashcards or a flashcard deck in Moodle. Do not call for practice quizzes, study guides, or ordinary Q&A.',
   parameters: {
-    type: SchemaType.OBJECT,
+    type: Type.OBJECT,
     properties: {
       title: {
-        type: SchemaType.STRING,
+        type: Type.STRING,
         description: 'Short working title for the flashcard set',
       },
       scopeSummary: {
-        type: SchemaType.STRING,
+        type: Type.STRING,
         description:
           'What the flashcards cover, e.g. "Weeks 13–14: packing and rootkits"',
       },
       cardCount: {
-        type: SchemaType.INTEGER,
+        type: Type.INTEGER,
         description: `Number of flashcards to generate. If the student did not specify a count, choose a sensible number between ${FLASHCARD_COUNT_MIN} and ${FLASHCARD_COUNT_AUTO_MAX}. If they explicitly asked for a count, pass their requested number even if it exceeds ${FLASHCARD_COUNT_EXPLICIT_MAX} (the system will cap it).`,
       },
       countSpecifiedByStudent: {
-        type: SchemaType.BOOLEAN,
+        type: Type.BOOLEAN,
         description:
           'True only when the student explicitly stated how many flashcards they want. False when you are choosing the count yourself.',
       },

@@ -4,11 +4,11 @@ import {
   Logger,
 } from '@nestjs/common';
 import {
-  FunctionCallingMode,
+  FunctionCallingConfigMode,
   HarmBlockThreshold,
   HarmCategory,
   type Tool,
-} from '@google/generative-ai';
+} from '@google/genai';
 import { ContextService } from '../context/context.service';
 import { PracticeQuizMoodleService } from '../context/practice-quiz-moodle.service';
 import { StudyGuideMoodleService } from '../context/study-guide-moodle.service';
@@ -145,51 +145,50 @@ export class ChatService {
     const canProposeContent =
       Boolean(moodleUserId) && courseId > 1 && Boolean(courseMaterial);
 
-    const model = this.gemini.getGenerativeModel({
-      systemInstruction: buildSystemPrompt({
-        courseId,
-        courseName: resolvedCourseName,
-        userFirstName,
-        enrolledCourses,
-        conversationTitle: conversation.title,
-        conversationType: conversation.type,
-        sectionName: conversation.sectionName,
-        courseMaterial,
-        canProposeContent,
-      }),
-      tools: canProposeContent
-        ? ([
-            {
-              functionDeclarations: [
-                PROPOSE_PRACTICE_QUIZ_TOOL,
-                PROPOSE_STUDY_GUIDE_TOOL,
-                PROPOSE_FLASHCARDS_TOOL,
-              ],
-            },
-          ] as Tool[])
-        : undefined,
-      toolConfig: canProposeContent
-        ? {
-            functionCallingConfig: {
-              mode: FunctionCallingMode.AUTO,
-            },
-          }
-        : undefined,
-      safetySettings: [
-        {
-          category: HarmCategory.HARM_CATEGORY_HARASSMENT,
-          threshold: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
-        },
-      ],
-    });
-
-    const chat = model.startChat({
+    const chat = this.gemini.createChat({
       history: toGeminiHistory(dbHistory),
+      config: {
+        systemInstruction: buildSystemPrompt({
+          courseId,
+          courseName: resolvedCourseName,
+          userFirstName,
+          enrolledCourses,
+          conversationTitle: conversation.title,
+          conversationType: conversation.type,
+          sectionName: conversation.sectionName,
+          courseMaterial,
+          canProposeContent,
+        }),
+        tools: canProposeContent
+          ? ([
+              {
+                functionDeclarations: [
+                  PROPOSE_PRACTICE_QUIZ_TOOL,
+                  PROPOSE_STUDY_GUIDE_TOOL,
+                  PROPOSE_FLASHCARDS_TOOL,
+                ],
+              },
+            ] as Tool[])
+          : undefined,
+        toolConfig: canProposeContent
+          ? {
+              functionCallingConfig: {
+                mode: FunctionCallingConfigMode.AUTO,
+              },
+            }
+          : undefined,
+        safetySettings: [
+          {
+            category: HarmCategory.HARM_CATEGORY_HARASSMENT,
+            threshold: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
+          },
+        ],
+      },
     });
 
     this.logger.log(`Sending message for conversation ${conversationId}`);
-    const result = await chat.sendMessage(message);
-    const functionCalls = result.response.functionCalls?.() ?? [];
+    const result = await chat.sendMessage({ message });
+    const functionCalls = result.functionCalls ?? [];
 
     let responseText = '';
     let pendingAction: PendingActionDto | undefined;
@@ -342,12 +341,9 @@ export class ChatService {
         requestedCount: exceededMax ? Math.round(requestedCount) : undefined,
       });
     } else {
-      try {
-        responseText = result.response.text();
-      } catch {
-        responseText =
-          'I can help with course questions, or create a private practice quiz, study guide, or flashcards in Moodle when you ask for one.';
-      }
+      responseText =
+        result.text?.trim() ||
+        'I can help with course questions, or create a private practice quiz, study guide, or flashcards in Moodle when you ask for one.';
     }
 
     await this.conversationService.appendMessages(conversationId, [

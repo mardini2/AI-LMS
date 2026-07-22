@@ -1,24 +1,31 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { GoogleGenerativeAI } from '@google/generative-ai';
-
-type GetGenerativeModelParams = Parameters<
-  GoogleGenerativeAI['getGenerativeModel']
->[0];
+import {
+  GoogleGenAI,
+  type CreateChatParameters,
+  type GenerateContentParameters,
+} from '@google/genai';
 
 @Injectable()
 export class GeminiClient {
-  private readonly genAI: GoogleGenerativeAI;
+  readonly ai: GoogleGenAI;
   readonly defaultModel = 'gemini-3.5-flash-lite';
 
   constructor(config: ConfigService) {
-    this.genAI = new GoogleGenerativeAI(config.get<string>('GEMINI_API_KEY')!);
+    this.ai = new GoogleGenAI({
+      apiKey: config.get<string>('GEMINI_API_KEY')!,
+    });
   }
 
-  getGenerativeModel(
-    params: Omit<GetGenerativeModelParams, 'model'> & { model?: string },
-  ) {
-    return this.genAI.getGenerativeModel({
+  generateContent(params: Omit<GenerateContentParameters, 'model'> & { model?: string }) {
+    return this.ai.models.generateContent({
+      ...params,
+      model: params.model ?? this.defaultModel,
+    });
+  }
+
+  createChat(params: Omit<CreateChatParameters, 'model'> & { model?: string }) {
+    return this.ai.chats.create({
       ...params,
       model: params.model ?? this.defaultModel,
     });
