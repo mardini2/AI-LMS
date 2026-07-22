@@ -9,7 +9,7 @@ type GetGenerativeModelParams = Parameters<
 @Injectable()
 export class GeminiClient {
   private readonly genAI: GoogleGenerativeAI;
-  readonly defaultModel = 'gemini-3.1-flash-lite';
+  readonly defaultModel = 'gemini-3.5-flash-lite';
 
   constructor(config: ConfigService) {
     this.genAI = new GoogleGenerativeAI(config.get<string>('GEMINI_API_KEY')!);
