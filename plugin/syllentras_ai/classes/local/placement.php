@@ -275,6 +275,25 @@ class placement {
     }
 
     /**
+     * Assert ownership then delete the course module synchronously.
+     *
+     * @param stdClass $course
+     * @param int $cmid
+     * @param int $userid
+     * @return array{modname:string,kind:string,name:string}
+     */
+    public static function delete_owned_cm(stdClass $course, int $cmid, int $userid): array {
+        $owned = self::assert_student_owned_cm($course, $cmid, $userid);
+        $actions = new \core_courseformat\local\cmactions($course);
+        $actions->delete($cmid, false);
+        return [
+            'modname' => $owned['modname'],
+            'kind' => $owned['kind'],
+            'name' => $owned['name'],
+        ];
+    }
+
+    /**
      * Soft lookup for on-page toolbar injection (no exception on miss).
      *
      * @param stdClass $course

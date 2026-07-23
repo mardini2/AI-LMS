@@ -1,5 +1,8 @@
 import { Type } from 'class-transformer';
 import {
+  ArrayMaxSize,
+  ArrayMinSize,
+  IsArray,
   IsIn,
   IsInt,
   IsOptional,
@@ -62,6 +65,26 @@ export class DeleteAiContentDto {
   @IsInt()
   @Min(1)
   cmId: number;
+}
+
+export class DeleteManyAiContentDto {
+  @Type(() => Number)
+  @IsInt()
+  @Min(2)
+  courseId: number;
+
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  moodleUserId: number;
+
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(50)
+  @Type(() => Number)
+  @IsInt({ each: true })
+  @Min(1, { each: true })
+  cmIds: number[];
 }
 
 export class UpdateAiContentPageDto {

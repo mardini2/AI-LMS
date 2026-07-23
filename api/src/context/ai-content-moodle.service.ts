@@ -4,6 +4,7 @@ import type {
   AiContentKind,
   CreatedStudyGuide,
   DeletedAiContent,
+  DeletedAiContentBatch,
   RenamedAiContent,
 } from './context.types';
 import { MoodleClient } from './moodle-client.service';
@@ -130,6 +131,62 @@ export class AiContentMoodleService {
       modname: result.modname,
       kind: this.normalizeKind(result.kind),
       deleted: !!result.deleted,
+    };
+  }
+
+  async deletePrivateActivities(input: {
+    courseId: number;
+    moodleUserId: number;
+    cmIds: number[];
+  }): Promise<DeletedAiContentBatch> {
+    this.assertCourseUser(input.courseId, input.moodleUserId);
+    const cmIds = [
+      ...new Set(
+        (input.cmIds ?? [])
+          .map((id) => Number(id))
+          .filter((id) => Number.isInteger(id) && id > 0),
+      ),
+    ];
+    if (cmIds.length < 1) {
+      throw new Error('cmIds must include at least one id');
+    }
+    if (cmIds.length > 50) {
+      throw new Error('At most 50 items can be deleted at once');
+    }
+
+    const result = await this.moodle.callMoodleApi<{
+      deleted: Array<{
+        cmid: number;
+        courseid: number;
+        modname: string;
+        kind: string;
+        deleted: boolean;
+      }>;
+      failed: Array<{
+        cmid: number;
+        message: string;
+      }>;
+    }>(
+      'local_syllentras_ai_delete_private_activities',
+      {
+        userid: input.moodleUserId,
+        cmids: cmIds,
+      },
+      'POST',
+    );
+
+    return {
+      deleted: (result.deleted ?? []).map((item) => ({
+        cmId: item.cmid,
+        courseId: item.courseid,
+        modname: item.modname,
+        kind: this.normalizeKind(item.kind),
+        deleted: !!item.deleted,
+      })),
+      failed: (result.failed ?? []).map((item) => ({
+        cmId: item.cmid,
+        message: item.message || 'Could not delete',
+      })),
     };
   }
 

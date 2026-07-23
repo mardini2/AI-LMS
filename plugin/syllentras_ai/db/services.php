@@ -59,6 +59,14 @@ $functions = [
         'capabilities' => 'local/syllentras_ai:manageplacement',
         'ajax' => false,
     ],
+    'local_syllentras_ai_delete_private_activities' => [
+        'classname' => 'local_syllentras_ai\external\delete_private_activities',
+        'methodname' => 'execute',
+        'description' => 'Delete multiple private AI Content activities for one student',
+        'type' => 'write',
+        'capabilities' => 'local/syllentras_ai:manageplacement',
+        'ajax' => false,
+    ],
     'local_syllentras_ai_get_practice_attempt_review' => [
         'classname' => 'local_syllentras_ai\external\get_practice_attempt_review',
         'methodname' => 'execute',
@@ -90,6 +98,7 @@ $services = [
             'local_syllentras_ai_list_private_content',
             'local_syllentras_ai_rename_private_activity',
             'local_syllentras_ai_delete_private_activity',
+            'local_syllentras_ai_delete_private_activities',
             'local_syllentras_ai_get_practice_attempt_review',
         ],
         'restrictedusers' => 0,

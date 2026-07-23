@@ -504,42 +504,46 @@ function deleteSelectedAiContentItems() {
                 className: 'syllentras-modal-danger',
                 onClick: function () {
                     closeModal();
-                    var failed = 0;
-                    var chain = Promise.resolve();
-                    ids.forEach(function (cmId) {
-                        chain = chain.then(function () {
-                            return fetchJson('/ai-content/delete', {
-                                method: 'POST',
-                                body: JSON.stringify({
-                                    courseId: courseId,
-                                    moodleUserId: moodleUserId,
-                                    cmId: cmId
-                                })
-                            }).catch(function () {
-                                failed += 1;
-                            });
+                    fetchJson('/ai-content/delete-many', {
+                        method: 'POST',
+                        body: JSON.stringify({
+                            courseId: courseId,
+                            moodleUserId: moodleUserId,
+                            cmIds: ids
+                        })
+                    })
+                        .then(function (data) {
+                            var failed = (data && data.failed) || [];
+                            aiContentBulkMode = false;
+                            aiContentSelected = {};
+                            refreshAiContentList();
+                            if (failed.length > 0) {
+                                showModal(
+                                    'Delete',
+                                    failed.length === ids.length
+                                        ? 'Could not delete the selected items.'
+                                        : 'Deleted some items, but ' +
+                                          failed.length +
+                                          ' failed.',
+                                    [
+                                        {
+                                            label: 'Close',
+                                            className: 'syllentras-modal-secondary',
+                                            onClick: closeModal
+                                        }
+                                    ]
+                                );
+                            }
+                        })
+                        .catch(function () {
+                            showModal('Delete', 'Could not delete the selected items.', [
+                                {
+                                    label: 'Close',
+                                    className: 'syllentras-modal-secondary',
+                                    onClick: closeModal
+                                }
+                            ]);
                         });
-                    });
-                    chain.then(function () {
-                        aiContentBulkMode = false;
-                        aiContentSelected = {};
-                        refreshAiContentList();
-                        if (failed > 0) {
-                            showModal(
-                                'Delete',
-                                failed === ids.length
-                                    ? 'Could not delete the selected items.'
-                                    : 'Deleted some items, but ' + failed + ' failed.',
-                                [
-                                    {
-                                        label: 'Close',
-                                        className: 'syllentras-modal-secondary',
-                                        onClick: closeModal
-                                    }
-                                ]
-                            );
-                        }
-                    });
                 }
             }
         ]

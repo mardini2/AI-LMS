@@ -9,6 +9,7 @@ import { withKindTitlePrefix } from './ai-content-title';
 import { sanitizeStudyGuideHtml } from './study-guide.helpers';
 import type {
   DeleteAiContentDto,
+  DeleteManyAiContentDto,
   RenameAiContentDto,
   UpdateAiContentPageDto,
 } from './dto/ai-content.dto';
@@ -51,6 +52,19 @@ export class AiContentService {
         courseId: dto.courseId,
         moodleUserId: dto.moodleUserId,
         cmId: dto.cmId,
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      throw new HttpException(message, HttpStatus.BAD_GATEWAY);
+    }
+  }
+
+  async deleteMany(dto: DeleteManyAiContentDto) {
+    try {
+      return await this.aiContentMoodle.deletePrivateActivities({
+        courseId: dto.courseId,
+        moodleUserId: dto.moodleUserId,
+        cmIds: dto.cmIds,
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

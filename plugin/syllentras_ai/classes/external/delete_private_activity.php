@@ -32,10 +32,6 @@ class delete_private_activity extends external_api {
      * @return array
      */
     public static function execute(int $cmid, int $userid): array {
-        global $CFG;
-
-        require_once($CFG->dirroot . '/course/lib.php');
-
         $params = self::validate_parameters(self::execute_parameters(), [
             'cmid' => $cmid,
             'userid' => $userid,
@@ -57,14 +53,11 @@ class delete_private_activity extends external_api {
         self::validate_context($context);
         require_capability('local/syllentras_ai:manageplacement', $context);
 
-        $owned = placement::assert_student_owned_cm($course, $cmid, $userid);
-        $courseid = (int) $course->id;
-
-        course_delete_module($cmid, true);
+        $owned = placement::delete_owned_cm($course, $cmid, $userid);
 
         return [
             'cmid' => $cmid,
-            'courseid' => $courseid,
+            'courseid' => (int) $course->id,
             'modname' => $owned['modname'],
             'kind' => $owned['kind'],
             'deleted' => true,

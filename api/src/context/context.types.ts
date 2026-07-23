@@ -85,6 +85,16 @@ export interface DeletedAiContent {
   deleted: boolean;
 }
 
+export interface FailedAiContentDelete {
+  cmId: number;
+  message: string;
+}
+
+export interface DeletedAiContentBatch {
+  deleted: DeletedAiContent[];
+  failed: FailedAiContentDelete[];
+}
+
 export interface PracticeAttemptQuestion {
   slot: number;
   name: string;

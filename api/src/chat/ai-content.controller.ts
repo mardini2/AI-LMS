@@ -9,6 +9,7 @@ import { AiContentService } from './ai-content.service';
 import {
   AiContentCourseUserQueryDto,
   DeleteAiContentDto,
+  DeleteManyAiContentDto,
   RenameAiContentDto,
   UpdateAiContentPageDto,
 } from './dto/ai-content.dto';
@@ -39,6 +40,14 @@ export class AiContentController {
   @Post('delete')
   delete(@Body() dto: DeleteAiContentDto) {
     return this.aiContent.delete(dto);
+  }
+
+  /**
+   * POST /ai-content/delete-many
+   */
+  @Post('delete-many')
+  deleteMany(@Body() dto: DeleteManyAiContentDto) {
+    return this.aiContent.deleteMany(dto);
   }
 
   /**
