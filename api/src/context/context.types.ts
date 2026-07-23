@@ -55,6 +55,32 @@ export interface CreatedStudyGuide {
   viewUrl: string;
 }
 
+export type AiContentKind = 'study_guide' | 'flashcards' | 'practice_quiz';
+
+export interface AiContentItem {
+  cmId: number;
+  modname: string;
+  name: string;
+  kind: AiContentKind;
+  viewUrl: string;
+}
+
+export interface RenamedAiContent {
+  cmId: number;
+  modname: string;
+  name: string;
+  kind: AiContentKind;
+  viewUrl: string;
+}
+
+export interface DeletedAiContent {
+  cmId: number;
+  courseId: number;
+  modname: string;
+  kind: AiContentKind;
+  deleted: boolean;
+}
+
 export interface PracticeAttemptQuestion {
   slot: number;
   name: string;

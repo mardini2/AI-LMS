@@ -128,4 +128,267 @@ class placement {
 
         return $group;
     }
+
+    /**
+     * True if availability JSON requires the given group id (direct group condition).
+     *
+     * @param string|null $availabilityjson
+     * @param int $groupid
+     * @return bool
+     */
+    public static function availability_requires_group(?string $availabilityjson, int $groupid): bool {
+        if ($availabilityjson === null || trim($availabilityjson) === '') {
+            return false;
+        }
+        $tree = json_decode($availabilityjson, true);
+        if (!is_array($tree)) {
+            return false;
+        }
+        return self::availability_tree_has_group($tree, $groupid);
+    }
+
+    /**
+     * @param array $node
+     * @param int $groupid
+     * @return bool
+     */
+    private static function availability_tree_has_group(array $node, int $groupid): bool {
+        if (isset($node['type']) && $node['type'] === 'group') {
+            return (int) ($node['id'] ?? 0) === $groupid;
+        }
+        if (!empty($node['c']) && is_array($node['c'])) {
+            foreach ($node['c'] as $child) {
+                if (is_array($child) && self::availability_tree_has_group($child, $groupid)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Assert a course module is in AI Content and restricted to the student's group.
+     *
+     * @param stdClass $course
+     * @param int $cmid
+     * @param int $userid
+     * @param string|null $modname Restrict to this modname (page|quiz), or null for either.
+     * @return array{cm:\cm_info,modname:string,instanceid:int,name:string,kind:string,groupid:int}
+     */
+    public static function assert_student_owned_cm(
+        stdClass $course,
+        int $cmid,
+        int $userid,
+        ?string $modname = null
+    ): array {
+        global $CFG, $DB;
+
+        require_once($CFG->dirroot . '/group/lib.php');
+
+        if ($cmid < 1) {
+            throw new moodle_exception('invalidparameter', 'error', '', null, 'cmid is required');
+        }
+        if ($userid < 1) {
+            throw new moodle_exception('invalidparameter', 'error', '', null, 'userid is required');
+        }
+        if (!$DB->record_exists('user', ['id' => $userid, 'deleted' => 0])) {
+            throw new moodle_exception('invaliduser', 'error');
+        }
+
+        $modinfo = get_fast_modinfo($course);
+        try {
+            $cminfo = $modinfo->get_cm($cmid);
+        } catch (\Throwable $e) {
+            throw new moodle_exception('invalidcoursemodule', 'error');
+        }
+
+        $resolvedmod = $cminfo->modname;
+        if ($modname !== null && $resolvedmod !== $modname) {
+            throw new moodle_exception(
+                'invalidparameter',
+                'error',
+                '',
+                null,
+                'Unexpected activity type'
+            );
+        }
+        if ($resolvedmod !== 'page' && $resolvedmod !== 'quiz') {
+            throw new moodle_exception(
+                'invalidparameter',
+                'error',
+                '',
+                null,
+                'Activity type is not supported'
+            );
+        }
+
+        $sectioninfo = $modinfo->get_section_info($cminfo->sectionnum);
+        $sectionname = trim(get_section_name($course, $sectioninfo));
+        if (strcasecmp($sectionname, self::SECTION_NAME) !== 0) {
+            throw new moodle_exception(
+                'invalidparameter',
+                'error',
+                '',
+                null,
+                'Activity is not in the AI Content section'
+            );
+        }
+
+        $group = groups_get_group_by_idnumber($course->id, 'syllentras_ai_' . $userid);
+        if (!$group) {
+            throw new moodle_exception(
+                'invalidparameter',
+                'error',
+                '',
+                null,
+                'Student AI Content group not found'
+            );
+        }
+
+        if (!self::availability_requires_group($cminfo->availability, (int) $group->id)) {
+            // cm_info availability can be empty in some contexts; fall back to DB.
+            $availabilityjson = $DB->get_field('course_modules', 'availability', ['id' => $cmid]);
+            if (!self::availability_requires_group(
+                is_string($availabilityjson) ? $availabilityjson : null,
+                (int) $group->id
+            )) {
+                throw new moodle_exception(
+                    'invalidparameter',
+                    'error',
+                    '',
+                    null,
+                    'Activity is not restricted to this student'
+                );
+            }
+        }
+
+        $kind = self::detect_kind($resolvedmod, (int) $cminfo->instance);
+
+        return [
+            'cm' => $cminfo,
+            'modname' => $resolvedmod,
+            'instanceid' => (int) $cminfo->instance,
+            'name' => $cminfo->name,
+            'kind' => $kind,
+            'groupid' => (int) $group->id,
+        ];
+    }
+
+    /**
+     * Soft lookup for on-page toolbar injection (no exception on miss).
+     *
+     * @param stdClass $course
+     * @param int $cmid
+     * @param int $userid
+     * @return array{cmid:int,modname:string,name:string,kind:string}|null
+     */
+    public static function try_get_owned_cm(stdClass $course, int $cmid, int $userid): ?array {
+        try {
+            $owned = self::assert_student_owned_cm($course, $cmid, $userid);
+            return [
+                'cmid' => $cmid,
+                'modname' => $owned['modname'],
+                'name' => $owned['name'],
+                'kind' => $owned['kind'],
+            ];
+        } catch (\Throwable $e) {
+            return null;
+        }
+    }
+
+    /**
+     * @param string $modname
+     * @param int $instanceid
+     * @return string study_guide|flashcards|practice_quiz
+     */
+    public static function detect_kind(string $modname, int $instanceid): string {
+        global $DB;
+
+        if ($modname === 'quiz') {
+            return 'practice_quiz';
+        }
+        if ($modname !== 'page') {
+            return 'study_guide';
+        }
+        $content = (string) $DB->get_field('page', 'content', ['id' => $instanceid]);
+        if (
+            strpos($content, 'data-syll-fc-study') !== false ||
+            strpos($content, 'class="syll-fc') !== false ||
+            strpos($content, "class='syll-fc") !== false ||
+            strpos($content, 'syll-fc ') !== false
+        ) {
+            return 'flashcards';
+        }
+        return 'study_guide';
+    }
+
+    /**
+     * Rename a student-owned AI Content activity (page or quiz).
+     *
+     * @param stdClass $course
+     * @param int $cmid
+     * @param int $userid
+     * @param string $name
+     * @return array{cmid:int,modname:string,name:string,kind:string,viewurl:string}
+     */
+    public static function rename_owned_cm(
+        stdClass $course,
+        int $cmid,
+        int $userid,
+        string $name
+    ): array {
+        global $CFG, $DB;
+
+        require_once($CFG->dirroot . '/course/lib.php');
+
+        $name = trim($name);
+        if ($name === '') {
+            throw new moodle_exception('invalidparameter', 'error', '', null, 'name is required');
+        }
+        if (\core_text::strlen($name) > 200) {
+            $name = \core_text::substr($name, 0, 200);
+        }
+
+        $owned = self::assert_student_owned_cm($course, $cmid, $userid);
+        $modname = $owned['modname'];
+        $instanceid = $owned['instanceid'];
+
+        if ($modname === 'page') {
+            $page = $DB->get_record('page', ['id' => $instanceid], '*', MUST_EXIST);
+            $page->name = $name;
+            $page->timemodified = time();
+            $DB->update_record('page', $page);
+        } else {
+            $quiz = $DB->get_record('quiz', ['id' => $instanceid], '*', MUST_EXIST);
+            $quiz->name = $name;
+            $quiz->timemodified = time();
+            $DB->update_record('quiz', $quiz);
+        }
+
+        if (function_exists('set_coursemodule_name')) {
+            set_coursemodule_name($cmid, $name);
+        }
+
+        rebuild_course_cache($course->id, true);
+
+        $viewurl = self::view_url_for($modname, $cmid);
+
+        return [
+            'cmid' => $cmid,
+            'modname' => $modname,
+            'name' => $name,
+            'kind' => $owned['kind'],
+            'viewurl' => $viewurl,
+        ];
+    }
+
+    /**
+     * @param string $modname
+     * @param int $cmid
+     * @return string
+     */
+    public static function view_url_for(string $modname, int $cmid): string {
+        $path = $modname === 'quiz' ? '/mod/quiz/view.php' : '/mod/page/view.php';
+        return (new \moodle_url($path, ['id' => $cmid]))->out(false);
+    }
 }

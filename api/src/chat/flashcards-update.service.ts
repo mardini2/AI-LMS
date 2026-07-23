@@ -4,6 +4,7 @@ import {
   HttpStatus,
   Injectable,
 } from '@nestjs/common';
+import { AiContentMoodleService } from '../context/ai-content-moodle.service';
 import { StudyGuideMoodleService } from '../context/study-guide-moodle.service';
 import {
   FLASHCARD_COUNT_EXPLICIT_MAX,
@@ -15,7 +16,10 @@ import type { UpdateFlashcardsDto } from './dto/update-flashcards.dto';
 
 @Injectable()
 export class FlashcardsUpdateService {
-  constructor(private readonly studyGuideMoodle: StudyGuideMoodleService) {}
+  constructor(
+    private readonly studyGuideMoodle: StudyGuideMoodleService,
+    private readonly aiContentMoodle: AiContentMoodleService,
+  ) {}
 
   async updateDeck(dto: UpdateFlashcardsDto) {
     const title = (dto.title ?? 'Flashcards').trim() || 'Flashcards';
@@ -51,6 +55,20 @@ export class FlashcardsUpdateService {
         cmId: dto.cmId,
         contentHtml,
       });
+
+      if (dto.title?.trim()) {
+        try {
+          await this.aiContentMoodle.renamePrivateActivity({
+            courseId: dto.courseId,
+            moodleUserId: dto.moodleUserId,
+            cmId: dto.cmId,
+            name: title,
+          });
+        } catch {
+          // Content update succeeded; name sync is best-effort.
+        }
+      }
+
       return {
         ...updated,
         cardCount: doc.cards.length,

@@ -185,6 +185,7 @@
 }
 .syllentras-sidebar-row {
     display: flex;
+    flex-wrap: wrap;
     gap: 6px;
     margin-bottom: 10px;
 }
@@ -197,6 +198,7 @@
     font-size: 12px;
 }
 #syllentras-chat-new,
+#syllentras-ai-content-btn,
 .syllentras-section-chat-btn {
     background: #0066cc;
     color: #fff;
@@ -205,8 +207,13 @@
     cursor: pointer;
     font-size: 12px;
 }
-#syllentras-chat-new {
+#syllentras-chat-new,
+#syllentras-ai-content-btn {
     padding: 5px 8px;
+}
+#syllentras-ai-content-btn {
+    background: #2f5d8a;
+    white-space: nowrap;
 }
 .syllentras-conversation-group-title {
     color: #555;
@@ -215,6 +222,140 @@
     letter-spacing: 0.03em;
     margin: 12px 0 5px;
     text-transform: uppercase;
+}
+
+#syllentras-ai-content-panel {
+    border: 1px solid #d7dee7;
+    border-radius: 8px;
+    margin-bottom: 10px;
+    background: #f8fafc;
+    max-height: 42%;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+}
+#syllentras-ai-content-panel[hidden] {
+    display: none !important;
+}
+.syllentras-ai-content-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 10px;
+    font-size: 12px;
+    font-weight: 700;
+    border-bottom: 1px solid #e0e6ed;
+}
+.syllentras-ai-content-close {
+    border: none;
+    background: transparent;
+    cursor: pointer;
+    font-size: 16px;
+    line-height: 1;
+    color: #555;
+}
+.syllentras-ai-content-body {
+    overflow: auto;
+    padding: 6px 8px 10px;
+    min-height: 0;
+}
+.syllentras-ai-content-empty,
+.syllentras-ai-content-loading {
+    margin: 8px 2px;
+    font-size: 12px;
+    color: #666;
+}
+.syllentras-ai-content-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 4px;
+    padding: 6px 4px;
+    border-radius: 6px;
+}
+.syllentras-ai-content-item:hover {
+    background: #eef3f8;
+}
+.syllentras-ai-content-item-main {
+    min-width: 0;
+    flex: 1;
+}
+.syllentras-ai-content-name {
+    display: block;
+    color: #1d4f82;
+    font-size: 12px;
+    font-weight: 600;
+    text-decoration: none;
+    word-break: break-word;
+}
+.syllentras-ai-content-name:hover {
+    text-decoration: underline;
+}
+.syllentras-ai-content-kind {
+    display: inline-block;
+    margin-top: 2px;
+    font-size: 10px;
+    color: #667788;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+}
+.syllentras-ai-content-menu-btn {
+    border: none;
+    background: transparent;
+    cursor: pointer;
+    color: #555;
+    font-size: 16px;
+    line-height: 1;
+    padding: 2px 4px;
+    border-radius: 4px;
+}
+.syllentras-ai-content-menu-btn:hover,
+.syllentras-ai-content-menu-btn.open {
+    background: #dde6ef;
+}
+.syllentras-ai-content-menu {
+    position: fixed;
+    z-index: 10050;
+    min-width: 120px;
+    background: #fff;
+    border: 1px solid #cfd6dd;
+    border-radius: 8px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.16);
+    padding: 4px;
+}
+
+.syll-ai-manage-bar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem 0.65rem;
+    margin: 0.75rem 0 1rem;
+    padding: 0.65rem 0.85rem;
+    border: 1px solid #d7dee7;
+    border-radius: 10px;
+    background: #f8fafc;
+}
+.syll-ai-manage-label {
+    font-size: 0.85rem;
+    font-weight: 700;
+    color: #4a5560;
+    margin-right: 0.25rem;
+}
+.syll-ai-manage-status {
+    font-size: 0.85rem;
+    color: #4a5560;
+}
+.syll-ai-manage-status.is-error {
+    color: #8b1a1a;
+}
+.syll-ai-manage-delete {
+    border-color: #d4a5a5;
+    color: #8b1a1a;
+}
+.syll-sg.is-editing {
+    outline: 2px solid #0f6cbf;
+    outline-offset: 4px;
+    border-radius: 6px;
+    padding: 0.35rem;
 }
 .syllentras-conversation-item {
     box-sizing: border-box;

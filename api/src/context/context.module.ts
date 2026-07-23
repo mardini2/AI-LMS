@@ -4,6 +4,7 @@ import { MoodleClient } from './moodle-client.service';
 import { PlacementController } from './placement.controller';
 import { PracticeQuizMoodleService } from './practice-quiz-moodle.service';
 import { StudyGuideMoodleService } from './study-guide-moodle.service';
+import { AiContentMoodleService } from './ai-content-moodle.service';
 
 @Module({
   controllers: [PlacementController],
@@ -12,7 +13,13 @@ import { StudyGuideMoodleService } from './study-guide-moodle.service';
     ContextService,
     PracticeQuizMoodleService,
     StudyGuideMoodleService,
+    AiContentMoodleService,
   ],
-  exports: [ContextService, PracticeQuizMoodleService, StudyGuideMoodleService],
+  exports: [
+    ContextService,
+    PracticeQuizMoodleService,
+    StudyGuideMoodleService,
+    AiContentMoodleService,
+  ],
 })
 export class ContextModule {}

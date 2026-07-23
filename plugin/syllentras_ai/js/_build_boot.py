@@ -19,6 +19,7 @@ ORDER = [
     "modals.js",
     "tools-menu.js",
     "section-buttons.js",
+    "ai-content-panel.js",
     "wiring.js",
 ]
 

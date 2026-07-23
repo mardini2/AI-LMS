@@ -81,6 +81,7 @@ export class StudyGuideMoodleService {
     moodleUserId: number;
     cmId: number;
     contentHtml: string;
+    name?: string;
   }): Promise<CreatedStudyGuide> {
     if (input.courseId <= 1) {
       throw new Error('courseId must be a real course (greater than 1)');
@@ -95,20 +96,21 @@ export class StudyGuideMoodleService {
       throw new Error('contentHtml is required');
     }
 
+    const args: Record<string, string | number> = {
+      cmid: input.cmId,
+      userid: input.moodleUserId,
+      content: input.contentHtml,
+    };
+    if (input.name?.trim()) {
+      args.name = input.name.trim();
+    }
+
     const result = await this.moodle.callMoodleApi<{
       pageid: number;
       cmid: number;
       name: string;
       viewurl: string;
-    }>(
-      'local_syllentras_ai_update_private_page',
-      {
-        cmid: input.cmId,
-        userid: input.moodleUserId,
-        content: input.contentHtml,
-      },
-      'POST',
-    );
+    }>('local_syllentras_ai_update_private_page', args, 'POST');
 
     return {
       pageId: result.pageid,

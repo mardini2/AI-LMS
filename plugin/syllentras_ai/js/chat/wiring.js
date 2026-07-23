@@ -191,6 +191,12 @@ document.addEventListener('click', function (e) {
     if (openToolsMenu && !openToolsMenu.contains(e.target) && !e.target.closest('#syllentras-chat-tools-btn')) {
         closeToolsMenu();
     }
+    if (typeof closeAiContentMenu === 'function' &&
+        aiContentOpenMenu &&
+        !aiContentOpenMenu.contains(e.target) &&
+        !e.target.closest('.syllentras-ai-content-menu-btn')) {
+        closeAiContentMenu();
+    }
 });
 
 modal.addEventListener('click', function (e) {
@@ -201,6 +207,7 @@ document.addEventListener('keydown', function (e) {
     if (e.key === 'Escape') {
         closeConversationMenu();
         closeToolsMenu();
+        if (typeof closeAiContentMenu === 'function') closeAiContentMenu();
         if (!modal.hidden) closeModal();
     }
 });

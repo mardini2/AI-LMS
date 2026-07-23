@@ -111,6 +111,7 @@ export function normalizeStudyGuideDocument(
 
 export function renderStudyGuideHtml(doc: StudyGuideDocument): string {
   const parts: string[] = [
+    '<div class="syll-sg" data-syll-sg="1">',
     `<h1>${escapeHtml(doc.title)}</h1>`,
   ];
 
@@ -125,6 +126,7 @@ export function renderStudyGuideHtml(doc: StudyGuideDocument): string {
 
   parts.push(
     '<p><em>Private study guide created by Syllentras AI. This is a practice aid and is not graded.</em></p>',
+    '</div>',
   );
 
   return parts.filter(Boolean).join('\n');
@@ -142,16 +144,19 @@ export function stripUnsafeText(text: string): string {
 
 export function markdownToSafeHtml(markdown: string): string {
   const raw = marked.parse(markdown, { async: false, breaks: true }) as string;
-  return sanitizeHtmlAllowlist(raw);
+  return sanitizeStudyGuideHtml(raw);
 }
 
-function sanitizeHtmlAllowlist(html: string): string {
+/** Sanitize HTML for study-guide page body (same allowlist as generation). */
+export function sanitizeStudyGuideHtml(html: string): string {
   // Drop tags (and their content for script/style) that are not on the allowlist.
+  // Allow syll-sg wrapper for edit targeting.
+  const allowed = new Set([...ALLOWED_TAGS, 'div']);
   let out = html
     .replace(/<(script|style)\b[^>]*>[\s\S]*?<\/\1>/gi, '')
     .replace(/<\/?([a-z0-9]+)(\s[^>]*)?>/gi, (match, tag: string) => {
       const name = tag.toLowerCase();
-      if (!ALLOWED_TAGS.has(name)) {
+      if (!allowed.has(name)) {
         return '';
       }
       if (match.startsWith('</')) {
@@ -159,6 +164,13 @@ function sanitizeHtmlAllowlist(html: string): string {
       }
       if (name === 'br') {
         return '<br>';
+      }
+      if (name === 'div') {
+        // Preserve syll-sg marker attributes only.
+        if (/\bdata-syll-sg\b/i.test(match) || /\bsyll-sg\b/i.test(match)) {
+          return '<div class="syll-sg" data-syll-sg="1">';
+        }
+        return '<div>';
       }
       return `<${name}>`;
     });
