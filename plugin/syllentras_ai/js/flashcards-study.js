@@ -153,23 +153,13 @@
             editControls.appendChild(addBtn);
         }
 
-        var saveBtn = editControls.querySelector('.syll-fc-btn-save');
-        if (!saveBtn) {
-            saveBtn = document.createElement('button');
-            saveBtn.type = 'button';
-            saveBtn.className = 'syll-fc-btn syll-fc-btn-save';
-            saveBtn.textContent = 'Save';
-            editControls.appendChild(saveBtn);
-        }
-
-        var cancelBtn = editControls.querySelector('.syll-fc-btn-cancel');
-        if (!cancelBtn) {
-            cancelBtn = document.createElement('button');
-            cancelBtn.type = 'button';
-            cancelBtn.className = 'syll-fc-btn syll-fc-btn-cancel';
-            cancelBtn.textContent = 'Cancel';
-            editControls.appendChild(cancelBtn);
-        }
+        // Save / Cancel live on the AI Content manage bar — remove any legacy buttons.
+        Array.prototype.forEach.call(
+            editControls.querySelectorAll('.syll-fc-btn-save, .syll-fc-btn-cancel'),
+            function (btn) {
+                btn.remove();
+            }
+        );
 
         var hintEl = toolbar.querySelector('.syll-fc-edit-hint');
         if (!hintEl) {
@@ -251,8 +241,6 @@
             restartBtn: restartBtn,
             editBtn: editBtn,
             addBtn: addBtn,
-            saveBtn: saveBtn,
-            cancelBtn: cancelBtn,
             hintEl: hintEl,
             errorEl: errorEl,
             actions: actions,
@@ -292,7 +280,8 @@
         chrome.results.hidden = true;
         chrome.editControls.hidden = true;
         chrome.editBoard.hidden = true;
-        chrome.editBtn.hidden = !canEdit;
+        // Edit lives on the AI Content manage bar (Rename / Edit / Delete).
+        chrome.editBtn.hidden = true;
 
         var order = studyCards.map(function (_, i) {
             return i;
@@ -781,7 +770,7 @@
 
         function enterEditMode() {
             if (!canEdit || mode === 'edit') {
-                return;
+                return false;
             }
             mode = 'edit';
             setEditError('');
@@ -800,6 +789,7 @@
                     'Drag cards to reorder. Use the menu to delete. Save when done.';
             }
             renderEditBoard();
+            return true;
         }
 
         function exitEditMode(restoreStudy) {
@@ -816,6 +806,7 @@
             chrome.editControls.hidden = true;
             chrome.studyControls.hidden = false;
             chrome.stage.hidden = false;
+            chrome.addBtn.disabled = false;
             if (chrome.intro) {
                 chrome.intro.textContent =
                     'Flip the card, then mark whether you got it right.';
@@ -828,13 +819,16 @@
         }
 
         function cancelEdit() {
+            if (mode !== 'edit') {
+                return;
+            }
             editModel = cloneCards(editSnapshot);
             exitEditMode(true);
         }
 
         function saveEdit() {
-            if (!canEdit || !config) {
-                return;
+            if (!canEdit || !config || mode !== 'edit') {
+                return Promise.reject(new Error('Flashcard editor is not ready yet.'));
             }
             syncModelFromEditors();
             setEditError('');
@@ -843,32 +837,35 @@
                 return c.front.trim() && c.back.trim();
             });
             if (filled.length < CARD_COUNT_MIN) {
-                setEditError(
-                    'Fill at least ' + CARD_COUNT_MIN + ' cards on both sides before saving.'
-                );
-                return;
+                var tooFew =
+                    'Fill at least ' +
+                    CARD_COUNT_MIN +
+                    ' cards on both sides before saving.';
+                setEditError(tooFew);
+                return Promise.reject(new Error(tooFew));
             }
             if (filled.length > CARD_COUNT_MAX) {
-                setEditError('You can save at most ' + CARD_COUNT_MAX + ' cards.');
-                return;
+                var tooMany = 'You can save at most ' + CARD_COUNT_MAX + ' cards.';
+                setEditError(tooMany);
+                return Promise.reject(new Error(tooMany));
             }
 
-            chrome.saveBtn.disabled = true;
-            chrome.cancelBtn.disabled = true;
             chrome.addBtn.disabled = true;
-            chrome.saveBtn.textContent = 'Saving…';
 
-            fetch(String(config.apiUrl).replace(/\/$/, '') + '/flashcards/update', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    courseId: config.courseId,
-                    moodleUserId: config.moodleUserId,
-                    cmId: cmId,
-                    title: document.title || 'Flashcards',
-                    cards: filled,
-                }),
-            })
+            return fetch(
+                String(config.apiUrl).replace(/\/$/, '') + '/flashcards/update',
+                {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        courseId: config.courseId,
+                        moodleUserId: config.moodleUserId,
+                        cmId: cmId,
+                        title: document.title || 'Flashcards',
+                        cards: filled,
+                    }),
+                }
+            )
                 .then(function (res) {
                     if (!res.ok) {
                         return res
@@ -889,15 +886,14 @@
                     window.location.reload();
                 })
                 .catch(function (err) {
-                    chrome.saveBtn.disabled = false;
-                    chrome.cancelBtn.disabled = false;
+                    chrome.addBtn.disabled = false;
                     updateEditHints();
-                    chrome.saveBtn.textContent = 'Save';
-                    setEditError(
+                    var message =
                         err && err.message
                             ? String(err.message)
-                            : 'Could not save flashcards. Try again.'
-                    );
+                            : 'Could not save flashcards. Try again.';
+                    setEditError(message);
+                    throw new Error(message);
                 });
         }
 
@@ -941,8 +937,16 @@
         chrome.restartBtn.addEventListener('click', restart);
         chrome.editBtn.addEventListener('click', enterEditMode);
         chrome.addBtn.addEventListener('click', addCard);
-        chrome.saveBtn.addEventListener('click', saveEdit);
-        chrome.cancelBtn.addEventListener('click', cancelEdit);
+
+        window.__SYLL_FC_ENTER_EDIT__ = function () {
+            return enterEditMode();
+        };
+        window.__SYLL_FC_CANCEL_EDIT__ = function () {
+            cancelEdit();
+        };
+        window.__SYLL_FC_SAVE_EDIT__ = function () {
+            return saveEdit();
+        };
 
         document.addEventListener('click', function (e) {
             if (!openEditMenu) {

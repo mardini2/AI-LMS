@@ -33,6 +33,7 @@ import { PracticeQuizReviewService } from './practice-quiz-review.service';
 import { StudyGuideGenerationService } from './study-guide-generation.service';
 import { FlashcardsGenerationService } from './flashcards-generation.service';
 import { TopicSuggestionsService } from './topic-suggestions.service';
+import { withKindTitlePrefix, stripKindTitlePrefix } from './ai-content-title';
 import type {
   PracticeQuizPayload,
   StudyGuidePayload,
@@ -229,7 +230,8 @@ export class ChatService {
         countSpecifiedByStudent &&
         Number.isFinite(requestedCount) &&
         Math.round(requestedCount) > QUIZ_QUESTION_COUNT_EXPLICIT_MAX;
-      const title = (args.title ?? '').trim() || 'Practice quiz';
+      const title =
+        stripKindTitlePrefix((args.title ?? '').trim()) || 'Practice topics';
       const scopeSummary =
         (args.scopeSummary ?? '').trim() ||
         'Course material from the current conversation';
@@ -271,7 +273,8 @@ export class ChatService {
         title?: string;
         scopeSummary?: string;
       };
-      const title = (args.title ?? '').trim() || 'Study guide';
+      const title =
+        stripKindTitlePrefix((args.title ?? '').trim()) || 'Course review';
       const scopeSummary =
         (args.scopeSummary ?? '').trim() ||
         'Course material from the current conversation';
@@ -317,7 +320,8 @@ export class ChatService {
         countSpecifiedByStudent &&
         Number.isFinite(requestedCount) &&
         Math.round(requestedCount) > FLASHCARD_COUNT_EXPLICIT_MAX;
-      const title = (args.title ?? '').trim() || 'Flashcards';
+      const title =
+        stripKindTitlePrefix((args.title ?? '').trim()) || 'Key terms';
       const scopeSummary =
         (args.scopeSummary ?? '').trim() ||
         'Course material from the current conversation';
@@ -432,7 +436,9 @@ export class ChatService {
       | FlashcardsPayload;
 
     if (edits.title !== undefined) {
-      const title = stripUnsafeText(edits.title).trim().slice(0, 200);
+      const title = stripKindTitlePrefix(
+        stripUnsafeText(edits.title).trim(),
+      ).slice(0, 200);
       if (!title) {
         throw new BadRequestException('Title cannot be empty');
       }
@@ -528,7 +534,7 @@ export class ChatService {
     const quiz = await this.practiceQuizMoodle.createPracticeQuiz({
       courseId: action.courseId,
       moodleUserId,
-      name: title,
+      name: withKindTitlePrefix(title, 'practice_quiz'),
       intro:
         'Practice quiz created by Syllentras AI. This does not count toward your course grade.',
       questions,
@@ -620,7 +626,7 @@ export class ChatService {
     const page = await this.studyGuideMoodle.createStudyGuide({
       courseId: action.courseId,
       moodleUserId,
-      name: document.title || title,
+      name: withKindTitlePrefix(document.title || title, 'study_guide'),
       intro:
         'Study guide created by Syllentras AI. This is a private practice aid and is not graded.',
       contentHtml: html,
@@ -718,7 +724,7 @@ export class ChatService {
     const page = await this.studyGuideMoodle.createPrivatePage({
       courseId: action.courseId,
       moodleUserId,
-      name: document.title || title,
+      name: withKindTitlePrefix(document.title || title, 'flashcards'),
       intro:
         'Flashcards created by Syllentras AI. This is a private practice aid and is not graded.',
       contentHtml: html,

@@ -12,6 +12,7 @@ import {
   normalizeFlashcardsDocument,
   renderFlashcardsHtml,
 } from './flashcards.helpers';
+import { withKindTitlePrefix, stripKindTitlePrefix } from './ai-content-title';
 import type { UpdateFlashcardsDto } from './dto/update-flashcards.dto';
 
 @Injectable()
@@ -22,7 +23,8 @@ export class FlashcardsUpdateService {
   ) {}
 
   async updateDeck(dto: UpdateFlashcardsDto) {
-    const title = (dto.title ?? 'Flashcards').trim() || 'Flashcards';
+    const title =
+      stripKindTitlePrefix((dto.title ?? '').trim()) || 'Key terms';
     const doc = normalizeFlashcardsDocument(
       { title, cards: dto.cards },
       FLASHCARD_COUNT_EXPLICIT_MAX,
@@ -47,6 +49,7 @@ export class FlashcardsUpdateService {
     }
 
     const contentHtml = renderFlashcardsHtml(doc);
+    const activityName = withKindTitlePrefix(title, 'flashcards');
 
     try {
       const updated = await this.studyGuideMoodle.updatePrivatePage({
@@ -62,7 +65,7 @@ export class FlashcardsUpdateService {
             courseId: dto.courseId,
             moodleUserId: dto.moodleUserId,
             cmId: dto.cmId,
-            name: title,
+            name: activityName,
           });
         } catch {
           // Content update succeeded; name sync is best-effort.

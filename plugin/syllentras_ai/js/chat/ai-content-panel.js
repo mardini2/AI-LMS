@@ -174,11 +174,19 @@ function renameAiContentItem(item) {
     var wrap = document.createElement('div');
     var label = document.createElement('label');
     label.textContent = 'Title';
+    var hint = document.createElement('p');
+    hint.style.margin = '0 0 6px';
+    hint.style.fontSize = '12px';
+    hint.style.color = '#667788';
+    hint.textContent = kindBadgeLabel(item.kind) + ' prefix is kept automatically.';
     var input = document.createElement('input');
     input.type = 'text';
     input.maxLength = 200;
-    input.value = item.name || '';
+    input.value = String(item.name || '')
+        .replace(/^(Study Guide|Flashcards|Quiz|Practice Quiz)\s*:\s*/i, '')
+        .trim();
     wrap.appendChild(label);
+    wrap.appendChild(hint);
     wrap.appendChild(input);
 
     showModal('Rename', wrap, [
@@ -196,7 +204,8 @@ function renameAiContentItem(item) {
                         courseId: courseId,
                         moodleUserId: moodleUserId,
                         cmId: item.cmId,
-                        name: name
+                        name: name,
+                        kind: item.kind || 'study_guide'
                     })
                 })
                     .then(function () {

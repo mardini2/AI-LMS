@@ -1,5 +1,6 @@
 import { Type } from 'class-transformer';
 import {
+  IsIn,
   IsInt,
   IsOptional,
   IsString,
@@ -36,10 +37,14 @@ export class RenameAiContentDto {
   @Min(1)
   cmId: number;
 
+  /** Bare title without kind prefix (e.g. "Week 3 - 4"). */
   @IsString()
   @MinLength(1)
   @MaxLength(200)
   name: string;
+
+  @IsIn(['study_guide', 'flashcards', 'practice_quiz'])
+  kind: 'study_guide' | 'flashcards' | 'practice_quiz';
 }
 
 export class DeleteAiContentDto {

@@ -112,7 +112,6 @@ export function normalizeStudyGuideDocument(
 export function renderStudyGuideHtml(doc: StudyGuideDocument): string {
   const parts: string[] = [
     '<div class="syll-sg" data-syll-sg="1">',
-    `<h1>${escapeHtml(doc.title)}</h1>`,
   ];
 
   if (doc.introMarkdown) {

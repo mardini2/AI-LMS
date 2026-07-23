@@ -1,6 +1,7 @@
 /**
- * On-page AI Content manager: Rename / Delete / Edit study guide body.
+ * On-page AI Content manager: Rename / Delete / Edit (study guide + flashcards).
  * Expects window.__SYLL_AI_CONTENT__ from before_footer when viewing owned AI Content.
+ * Flashcard Save/Cancel call window.__SYLL_FC_*_EDIT__ hooks from flashcards-study.js.
  */
 (function () {
     'use strict';
@@ -145,24 +146,25 @@
     renameBtn.className = 'syll-fc-btn syll-ai-manage-rename';
     renameBtn.textContent = 'Rename';
 
+    var editBtn = null;
+    var saveBtn = null;
+    var cancelBtn = null;
+
     var deleteBtn = document.createElement('button');
     deleteBtn.type = 'button';
     deleteBtn.className = 'syll-fc-btn syll-ai-manage-delete';
     deleteBtn.textContent = 'Delete';
 
-    var editBtn = null;
-    var saveBtn = null;
-    var cancelBtn = null;
-
     bar.appendChild(titleHint);
     bar.appendChild(renameBtn);
-    bar.appendChild(deleteBtn);
 
-    if (meta.kind === 'study_guide') {
+    if (meta.kind === 'study_guide' || meta.kind === 'flashcards') {
         editBtn = document.createElement('button');
         editBtn.type = 'button';
         editBtn.className = 'syll-fc-btn syll-ai-manage-edit';
         editBtn.textContent = 'Edit';
+        bar.appendChild(editBtn);
+
         saveBtn = document.createElement('button');
         saveBtn.type = 'button';
         saveBtn.className = 'syll-fc-btn syll-fc-btn-save';
@@ -173,10 +175,11 @@
         cancelBtn.className = 'syll-fc-btn syll-fc-btn-cancel';
         cancelBtn.textContent = 'Cancel';
         cancelBtn.hidden = true;
-        bar.appendChild(editBtn);
         bar.appendChild(saveBtn);
         bar.appendChild(cancelBtn);
     }
+
+    bar.appendChild(deleteBtn);
 
     var statusEl = document.createElement('span');
     statusEl.className = 'syll-ai-manage-status';
@@ -205,6 +208,12 @@
         return 'Study guide';
     }
 
+    function stripKindTitlePrefix(name) {
+        return String(name || '')
+            .replace(/^(Study Guide|Flashcards|Quiz|Practice Quiz)\s*:\s*/i, '')
+            .trim();
+    }
+
     function courseViewUrl() {
         if (meta.courseViewUrl) {
             return meta.courseViewUrl;
@@ -217,12 +226,20 @@
         var label = document.createElement('label');
         label.textContent = 'Title';
         label.setAttribute('for', 'syll-ai-rename-input');
+        var hint = document.createElement('p');
+        hint.style.margin = '0 0 6px';
+        hint.style.fontSize = '12px';
+        hint.style.color = '#667788';
+        hint.textContent =
+            kindLabel(meta.kind) +
+            ' prefix is kept automatically.';
         var input = document.createElement('input');
         input.id = 'syll-ai-rename-input';
         input.type = 'text';
         input.maxLength = 200;
-        input.value = meta.name || '';
+        input.value = stripKindTitlePrefix(meta.name || '');
         wrap.appendChild(label);
+        wrap.appendChild(hint);
         wrap.appendChild(input);
         showModal('Rename', wrap, [
             {
@@ -245,6 +262,7 @@
                         moodleUserId: config.moodleUserId,
                         cmId: meta.cmId,
                         name: name,
+                        kind: meta.kind,
                     })
                         .then(function () {
                             window.location.reload();
@@ -306,8 +324,26 @@
         );
     });
 
+    function enterBarEditMode() {
+        editing = true;
+        if (editBtn) {
+            editBtn.hidden = true;
+        }
+        if (saveBtn) {
+            saveBtn.hidden = false;
+            saveBtn.disabled = false;
+            saveBtn.textContent = 'Save';
+        }
+        if (cancelBtn) {
+            cancelBtn.hidden = false;
+            cancelBtn.disabled = false;
+        }
+        renameBtn.disabled = true;
+        deleteBtn.disabled = true;
+        setStatus('Editing — Save when done.');
+    }
+
     function exitEdit(restore) {
-        var guide = findGuideRoot();
         editing = false;
         if (editBtn) {
             editBtn.hidden = false;
@@ -319,14 +355,18 @@
         }
         if (cancelBtn) {
             cancelBtn.hidden = true;
+            cancelBtn.disabled = false;
         }
         renameBtn.disabled = false;
         deleteBtn.disabled = false;
-        if (guide) {
-            guide.contentEditable = 'false';
-            guide.classList.remove('is-editing');
-            if (restore) {
-                guide.innerHTML = editSnapshot;
+        if (meta.kind === 'study_guide') {
+            var guide = findGuideRoot();
+            if (guide) {
+                guide.contentEditable = 'false';
+                guide.classList.remove('is-editing');
+                if (restore) {
+                    guide.innerHTML = editSnapshot;
+                }
             }
         }
         setStatus('');
@@ -334,35 +374,84 @@
 
     if (editBtn) {
         editBtn.addEventListener('click', function () {
+            if (editing) {
+                return;
+            }
+            if (meta.kind === 'flashcards') {
+                if (typeof window.__SYLL_FC_ENTER_EDIT__ !== 'function') {
+                    setStatus('Flashcard editor is not ready yet.', true);
+                    return;
+                }
+                var entered = window.__SYLL_FC_ENTER_EDIT__();
+                if (entered === false) {
+                    setStatus('Flashcard editor is not ready yet.', true);
+                    return;
+                }
+                enterBarEditMode();
+                return;
+            }
             var guide = findGuideRoot();
             if (!guide) {
                 setStatus('Could not find study guide content to edit.', true);
                 return;
             }
             editSnapshot = guide.innerHTML;
-            editing = true;
             guide.contentEditable = 'true';
             guide.classList.add('is-editing');
             guide.focus();
-            editBtn.hidden = true;
-            saveBtn.hidden = false;
-            cancelBtn.hidden = false;
-            renameBtn.disabled = true;
-            deleteBtn.disabled = true;
-            setStatus('Editing — Save when done.');
+            enterBarEditMode();
         });
     }
 
     if (cancelBtn) {
         cancelBtn.addEventListener('click', function () {
+            if (!editing) {
+                return;
+            }
+            if (meta.kind === 'flashcards') {
+                if (typeof window.__SYLL_FC_CANCEL_EDIT__ === 'function') {
+                    window.__SYLL_FC_CANCEL_EDIT__();
+                }
+                exitEdit(false);
+                return;
+            }
             exitEdit(true);
         });
     }
 
     if (saveBtn) {
         saveBtn.addEventListener('click', function () {
+            if (!editing) {
+                return;
+            }
+            if (meta.kind === 'flashcards') {
+                if (typeof window.__SYLL_FC_SAVE_EDIT__ !== 'function') {
+                    setStatus('Flashcard editor is not ready yet.', true);
+                    return;
+                }
+                saveBtn.disabled = true;
+                cancelBtn.disabled = true;
+                saveBtn.textContent = 'Saving…';
+                setStatus('Saving…');
+                Promise.resolve(window.__SYLL_FC_SAVE_EDIT__())
+                    .then(function () {
+                        // Flashcard save reloads on success.
+                    })
+                    .catch(function (err) {
+                        saveBtn.disabled = false;
+                        cancelBtn.disabled = false;
+                        saveBtn.textContent = 'Save';
+                        setStatus(
+                            err && err.message
+                                ? String(err.message)
+                                : 'Could not save.',
+                            true
+                        );
+                    });
+                return;
+            }
             var guide = findGuideRoot();
-            if (!guide || !editing) {
+            if (!guide) {
                 return;
             }
             var html = guide.innerHTML;

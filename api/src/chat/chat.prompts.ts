@@ -24,7 +24,8 @@ export const PROPOSE_PRACTICE_QUIZ_TOOL: FunctionDeclaration = {
     properties: {
       title: {
         type: Type.STRING,
-        description: 'Short working title for the practice quiz',
+        description:
+          'Bare working title only (e.g. "Week 14 - Packing and Exploitation"). Do NOT include "Quiz", "Practice Quiz", "Study Guide", or "Flashcards" — those are added automatically.',
       },
       scopeSummary: {
         type: Type.STRING,
@@ -66,7 +67,8 @@ export const PROPOSE_STUDY_GUIDE_TOOL: FunctionDeclaration = {
     properties: {
       title: {
         type: Type.STRING,
-        description: 'Short working title for the study guide',
+        description:
+          'Bare working title only (e.g. "Week 14 - Packing and Exploitation"). Do NOT include "Study Guide", "Flashcards", or "Quiz" — those are added automatically. Prefer week/topic with a hyphen.',
       },
       scopeSummary: {
         type: Type.STRING,
@@ -87,7 +89,8 @@ export const PROPOSE_FLASHCARDS_TOOL: FunctionDeclaration = {
     properties: {
       title: {
         type: Type.STRING,
-        description: 'Short working title for the flashcard set',
+        description:
+          'Bare working title only (e.g. "Week 14 - Packing and Exploitation"). Do NOT include "Flashcards", "Study Guide", or "Quiz" — those are added automatically.',
       },
       scopeSummary: {
         type: Type.STRING,
@@ -143,6 +146,7 @@ export function buildSystemPrompt(ctx: {
       'In greeting and capability replies, mention that you can answer course questions and generate study guides, flashcards, or practice quizzes tailored to the course material.',
       'When the student clearly asks you to create/make/generate a study guide, study notes, or review sheet in Moodle, call the propose_study_guide tool with a sensible title and scopeSummary.',
       'When the student clearly asks you to create/make/generate flashcards or a flashcard deck in Moodle, call the propose_flashcards tool with a sensible title, scopeSummary, and cardCount.',
+      'For propose_* tool titles, use a bare topic title only (e.g. "Week 14 - Packing and Exploitation"). Never put "Study Guide", "Flashcards", "Quiz", or "Practice Quiz" in the title — the system prepends the type label.',
       `If the student did not say how many flashcards they want, choose a good count between ${FLASHCARD_COUNT_MIN} and ${FLASHCARD_COUNT_AUTO_MAX} and set countSpecifiedByStudent to false.`,
       `If the student explicitly stated a flashcard count, pass their requested number (even if above ${FLASHCARD_COUNT_EXPLICIT_MAX}) and set countSpecifiedByStudent to true.`,
       'When the student clearly asks you to create/make/generate a practice quiz in Moodle, call the propose_practice_quiz tool with a sensible title, scopeSummary, questionCount, and difficulty.',

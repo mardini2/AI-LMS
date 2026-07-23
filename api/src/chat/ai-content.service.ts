@@ -5,6 +5,7 @@ import {
   Injectable,
 } from '@nestjs/common';
 import { AiContentMoodleService } from '../context/ai-content-moodle.service';
+import { withKindTitlePrefix } from './ai-content-title';
 import { sanitizeStudyGuideHtml } from './study-guide.helpers';
 import type {
   DeleteAiContentDto,
@@ -30,12 +31,13 @@ export class AiContentService {
   }
 
   async rename(dto: RenameAiContentDto) {
+    const name = withKindTitlePrefix(dto.name, dto.kind);
     try {
       return await this.aiContentMoodle.renamePrivateActivity({
         courseId: dto.courseId,
         moodleUserId: dto.moodleUserId,
         cmId: dto.cmId,
-        name: dto.name,
+        name,
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -62,7 +64,6 @@ export class AiContentService {
       throw new BadRequestException('contentHtml is empty after sanitization');
     }
 
-    // Ensure marker wrapper for future edits.
     let html = contentHtml;
     if (!/\bdata-syll-sg\b/i.test(html) && !/\bsyll-sg\b/i.test(html)) {
       html = `<div class="syll-sg" data-syll-sg="1">${html}</div>`;
@@ -74,7 +75,9 @@ export class AiContentService {
         moodleUserId: dto.moodleUserId,
         cmId: dto.cmId,
         contentHtml: html,
-        name: dto.name,
+        name: dto.name
+          ? withKindTitlePrefix(dto.name, 'study_guide')
+          : undefined,
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
