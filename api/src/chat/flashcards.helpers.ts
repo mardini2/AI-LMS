@@ -77,7 +77,7 @@ export function buildFlashcardsProposalMessage(input: {
     `I can create a **private flashcards** Page in Moodle for you.`,
     '',
     `**${input.title}**`,
-    `- **${input.cardCount} flashcards** (expand each card to reveal the answer)`,
+    `- **${input.cardCount} flashcards** (flip each card, then mark Got it / Missed it)`,
     `- Covers: ${input.scopeSummary}`,
     `- Practice aid only — not graded`,
     `- Placed under **AI Content** (only you and instructors can see it)`,
@@ -125,20 +125,24 @@ export function normalizeFlashcardsDocument(
 }
 
 export function renderFlashcardsHtml(doc: FlashcardsDocument): string {
+  const total = doc.cards.length;
   const parts: string[] = [
-    '<div class="syll-fc">',
-    `<h1>${escapeHtml(doc.title)}</h1>`,
-    '<p>Click a card to flip it.</p>',
+    '<div class="syll-fc" data-syll-fc-study="1">',
+    '<p class="syll-fc-intro">Flip the card, then mark whether you got it right.</p>',
+    '<div class="syll-fc-toolbar" hidden>',
+    `<span class="syll-fc-progress" aria-live="polite">1 / ${total}</span>`,
+    '<button type="button" class="syll-fc-btn syll-fc-btn-restart">Shuffle &amp; try again</button>',
+    '</div>',
+    '<div class="syll-fc-stage">',
     '<div class="syll-fc-grid">',
   ];
 
-  const total = doc.cards.length;
   doc.cards.forEach((card, index) => {
     const id = `syll-fc-${index}`;
     const indexLabel = `${index + 1} / ${total}`;
     const backHtml = markdownToSafeHtml(card.back) || escapeHtml(card.back);
     parts.push(
-      '<div class="syll-fc-card">',
+      `<div class="syll-fc-card" data-card-index="${index}">`,
       `<input type="checkbox" id="${id}" class="syll-fc-toggle" />`,
       `<label for="${id}" class="syll-fc-face">`,
       '<span class="syll-fc-inner">',
@@ -158,7 +162,15 @@ export function renderFlashcardsHtml(doc: FlashcardsDocument): string {
 
   parts.push(
     '</div>',
-    '<p><em>Private flashcards created by Syllentras AI. This is a practice aid and is not graded.</em></p>',
+    '</div>',
+    '<div class="syll-fc-actions" hidden>',
+    '<button type="button" class="syll-fc-btn syll-fc-btn-correct">Got it</button>',
+    '<button type="button" class="syll-fc-btn syll-fc-btn-incorrect">Missed it</button>',
+    '</div>',
+    '<div class="syll-fc-results" hidden>',
+    '<p class="syll-fc-score" aria-live="polite"></p>',
+    '</div>',
+    '<p class="syll-fc-footer"><em>Private flashcards created by Syllentras AI. This is a practice aid and is not graded.</em></p>',
     '</div>',
   );
 

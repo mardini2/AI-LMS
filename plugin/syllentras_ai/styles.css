@@ -987,7 +987,37 @@
     }
 }
 
-/* Private flashcards Page (AI Content) — CSS-only flip grid */
+/* Private flashcards Page (AI Content) — flip grid + study mode */
+.syll-fc-intro {
+    margin: 0.35rem 0 0.75rem;
+    color: #4a5560;
+}
+
+.syll-fc-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: center;
+    gap: 0.75rem 1rem;
+    margin: 0.5rem 0 0.75rem;
+}
+
+.syll-fc-progress {
+    font-size: 0.9rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    color: #4a5560;
+}
+
+.syll-fc-toolbar .syll-fc-btn-restart {
+    padding: 0.45rem 0.9rem;
+    font-size: 0.875rem;
+}
+
+.syll-fc-stage {
+    margin: 0 auto;
+}
+
 .syll-fc-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
@@ -997,7 +1027,7 @@
 
 .syll-fc-card {
     position: relative;
-    perspective: 1000px;
+    perspective: 1400px;
     height: 13rem;
 }
 
@@ -1017,26 +1047,36 @@
     display: block;
     height: 100%;
     cursor: pointer;
-    border: 1px solid #cfd6dd;
-    border-radius: 12px;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
-    background: #fff;
-    transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+    border: 0 !important;
+    border-radius: 14px;
+    background: transparent;
+    box-shadow: none !important;
+    outline: none !important;
+    transition: transform 0.25s ease;
 }
 
 .syll-fc-face:hover {
     transform: translateY(-2px);
-    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.12);
 }
 
-.syll-fc-toggle:checked + .syll-fc-face {
+.syll-fc-toggle:focus,
+.syll-fc-toggle:focus-visible,
+.syll-fc-toggle:focus + .syll-fc-face,
+.syll-fc-toggle:focus-visible + .syll-fc-face,
+.syll-fc-face:focus,
+.syll-fc-face:focus-visible,
+.syll-fc-face:active {
+    outline: none !important;
+    border: 0 !important;
+    box-shadow: none !important;
+}
+
+/* Focus cue on rotating faces only — border (not box-shadow/outline; those stay axis-aligned in 3D). */
+.syll-fc-toggle:focus-visible + .syll-fc-face .syll-fc-front,
+.syll-fc-toggle:focus-visible + .syll-fc-face .syll-fc-back,
+.syll-fc-face:focus-visible .syll-fc-front,
+.syll-fc-face:focus-visible .syll-fc-back {
     border-color: #0f6cbf;
-    box-shadow: 0 4px 14px rgba(15, 108, 191, 0.18);
-}
-
-.syll-fc-toggle:focus-visible + .syll-fc-face {
-    outline: 2px solid #0f6cbf;
-    outline-offset: 2px;
 }
 
 .syll-fc-inner {
@@ -1044,11 +1084,12 @@
     position: relative;
     width: 100%;
     height: 100%;
-    transition: transform 0.45s ease;
+    transition: transform 0.7s cubic-bezier(0.22, 0.61, 0.36, 1);
     transform-style: preserve-3d;
 }
 
-.syll-fc-toggle:checked + .syll-fc-face .syll-fc-inner {
+.syll-fc-toggle:checked + .syll-fc-face .syll-fc-inner,
+.syll-fc-card.is-flipped .syll-fc-inner {
     transform: rotateY(180deg);
 }
 
@@ -1062,10 +1103,26 @@
     padding: 1.35rem 1.15rem 1.6rem;
     backface-visibility: hidden;
     -webkit-backface-visibility: hidden;
-    border-radius: 12px;
+    border: 1px solid #cfd6dd;
+    border-radius: 14px;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.1);
     box-sizing: border-box;
     overflow: auto;
     text-align: center;
+    transition: border-color 0.25s ease, box-shadow 0.35s ease;
+}
+
+.syll-fc-face:hover .syll-fc-front,
+.syll-fc-face:hover .syll-fc-back {
+    box-shadow: 0 8px 22px rgba(0, 0, 0, 0.14);
+}
+
+.syll-fc-toggle:checked + .syll-fc-face .syll-fc-front,
+.syll-fc-toggle:checked + .syll-fc-face .syll-fc-back,
+.syll-fc-card.is-flipped .syll-fc-front,
+.syll-fc-card.is-flipped .syll-fc-back {
+    border-color: #0f6cbf;
+    box-shadow: 0 10px 28px rgba(15, 108, 191, 0.22);
 }
 
 .syll-fc-front {
@@ -1081,10 +1138,16 @@
     font-size: 0.95rem;
     font-weight: 400;
     line-height: 1.45;
-    color: #1d2125;
-    background: #fff;
-    align-items: flex-start;
-    text-align: left;
+    color: #1d2125 !important;
+    background: #fff !important;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+}
+
+.syll-fc-back .syll-fc-answer,
+.syll-fc-back .syll-fc-answer * {
+    color: #1d2125 !important;
 }
 
 .syll-fc-index {
@@ -1142,34 +1205,204 @@
     content: "Answer";
 }
 
+/* Study mode: single-card carousel */
+.syll-fc.is-study .syll-fc-stage {
+    max-width: min(56rem, 100%);
+    margin: 0 auto;
+    perspective: 1600px;
+}
+
+.syll-fc.is-study .syll-fc-grid {
+    display: block;
+    margin: 0.5rem 0 1rem;
+}
+
+.syll-fc.is-study .syll-fc-card {
+    display: none;
+    height: 33rem;
+    margin: 0 auto;
+    max-width: min(56rem, 100%);
+}
+
+.syll-fc.is-study .syll-fc-card.is-active {
+    display: block;
+}
+
+.syll-fc.is-study .syll-fc-card.is-active[hidden] {
+    display: none;
+}
+
+.syll-fc.is-study .syll-fc-front {
+    font-size: 1.45rem;
+}
+
+.syll-fc.is-study .syll-fc-back {
+    font-size: 1.15rem;
+}
+
+.syll-fc.is-study .syll-fc-face:hover {
+    transform: none;
+}
+
+.syll-fc-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    justify-content: center;
+    margin: 0.25rem 0 1.25rem;
+}
+
+.syll-fc-actions[hidden],
+.syll-fc-toolbar[hidden],
+.syll-fc-results[hidden] {
+    display: none !important;
+}
+
+.syll-fc-btn {
+    appearance: none;
+    border: 1px solid #cfd6dd;
+    border-radius: 8px;
+    background: #fff;
+    color: #1d2125;
+    font: inherit;
+    font-weight: 600;
+    font-size: 0.95rem;
+    padding: 0.65rem 1.15rem;
+    cursor: pointer;
+    transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.syll-fc-btn:hover {
+    border-color: #0f6cbf;
+    box-shadow: 0 2px 8px rgba(15, 108, 191, 0.15);
+}
+
+.syll-fc-btn:focus-visible {
+    outline: 2px solid #0f6cbf;
+    outline-offset: 2px;
+}
+
+.syll-fc-btn:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+    box-shadow: none;
+}
+
+.syll-fc-btn:disabled:hover {
+    border-color: #cfd6dd;
+    box-shadow: none;
+}
+
+.syll-fc-btn-correct:disabled:hover {
+    background: #0f6cbf;
+    border-color: #0f6cbf;
+    color: #fff;
+}
+
+.syll-fc-btn-correct {
+    background: #0f6cbf;
+    border-color: #0f6cbf;
+    color: #fff;
+}
+
+.syll-fc-btn-correct:hover {
+    background: #0b5aa0;
+    border-color: #0b5aa0;
+    color: #fff;
+}
+
+.syll-fc-btn-incorrect {
+    background: #fff;
+    border-color: #cfd6dd;
+}
+
+.syll-fc-results {
+    max-width: min(56rem, 100%);
+    margin: 1rem auto 1.5rem;
+    padding: 1.25rem 1.35rem;
+    text-align: center;
+    border: 1px solid #d7dee7;
+    border-radius: 12px;
+    background: #f8fafc;
+}
+
+.syll-fc-score {
+    margin: 0 0 1rem;
+    font-size: 1.15rem;
+    font-weight: 600;
+    color: #1d2125;
+}
+
+.syll-fc-footer {
+    margin-top: 1rem;
+    color: #6a737b;
+}
+
 @media (max-width: 600px) {
     .syll-fc-grid {
         grid-template-columns: 1fr;
+    }
+
+    .syll-fc.is-study .syll-fc-card {
+        height: min(28rem, 70vh);
+    }
+
+    .syll-fc-actions {
+        flex-direction: column;
+    }
+
+    .syll-fc-btn {
+        width: 100%;
     }
 }
 
 @media (prefers-reduced-motion: reduce) {
     .syll-fc-face,
-    .syll-fc-inner {
+    .syll-fc-inner,
+    .syll-fc-front,
+    .syll-fc-back,
+    .syll-fc-btn {
         transition: none;
     }
 
     .syll-fc-face:hover {
         transform: none;
     }
+
+    .syll-fc-toggle:checked + .syll-fc-face .syll-fc-inner,
+    .syll-fc-card.is-flipped .syll-fc-inner {
+        transform: rotateY(180deg);
+    }
 }
 
 @media print {
-    .syll-fc-grid {
+    .syll-fc-toolbar,
+    .syll-fc-actions,
+    .syll-fc-results {
+        display: none !important;
+    }
+
+    .syll-fc.is-study .syll-fc-stage {
+        max-width: none;
+        perspective: none;
+    }
+
+    .syll-fc-grid,
+    .syll-fc.is-study .syll-fc-grid {
         display: block;
     }
 
-    .syll-fc-card {
+    .syll-fc-card,
+    .syll-fc.is-study .syll-fc-card,
+    .syll-fc.is-study .syll-fc-card.is-active,
+    .syll-fc.is-study .syll-fc-card[hidden] {
+        display: block !important;
         height: auto;
         perspective: none;
         break-inside: avoid;
         page-break-inside: avoid;
         margin-bottom: 1rem;
+        max-width: none;
     }
 
     .syll-fc-toggle {
@@ -1180,13 +1413,10 @@
         height: auto;
         cursor: default;
         transform: none !important;
-        box-shadow: none;
-        border: 1px solid #999;
     }
 
     .syll-fc-face:hover {
         transform: none;
-        box-shadow: none;
     }
 
     .syll-fc-inner {
@@ -1209,7 +1439,9 @@
         text-align: left;
         align-items: flex-start;
         justify-content: flex-start;
+        border: 1px solid #999;
         border-radius: 0;
+        box-shadow: none;
     }
 
     .syll-fc-back {
