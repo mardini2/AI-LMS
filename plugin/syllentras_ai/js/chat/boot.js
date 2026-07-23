@@ -550,7 +550,7 @@ function attachPendingAction(messageEl, pendingAction) {
             if (data.response) {
                 appendMessage('assistant', data.response);
             }
-            if (typeof refreshAiContentList === 'function' && aiContentPanel && !aiContentPanel.hidden) {
+            if (typeof refreshAiContentList === 'function' && typeof isAiContentTabActive === 'function' && isAiContentTabActive()) {
                 refreshAiContentList();
             }
             return loadConversations().then(loadReviewOfferForConversation);
@@ -1867,10 +1867,14 @@ function findSectionElement(section) {
 // Part of the Syllentras chat widget.
 // Included inside the shared IIFE from before_footer.php — do not load standalone.
 
-var aiContentBtn = null;
-var aiContentPanel = null;
+var activeChatTab = 'chat';
 var aiContentList = null;
+var aiContentEmptyEl = null;
 var aiContentOpenMenu = null;
+var tabChatBtn = document.getElementById('syllentras-tab-chat');
+var tabAiContentBtn = document.getElementById('syllentras-tab-ai-content');
+var panelChat = document.getElementById('syllentras-panel-chat');
+var panelAiContent = document.getElementById('syllentras-panel-ai-content');
 
 function kindBadgeLabel(kind) {
     if (kind === 'flashcards') return 'Flashcards';
@@ -1878,57 +1882,46 @@ function kindBadgeLabel(kind) {
     return 'Guide';
 }
 
-function ensureAiContentUi() {
-    if (aiContentPanel) return;
-
-    var sidebar = document.getElementById('syllentras-chat-sidebar');
-    if (!sidebar) return;
-
-    var row = sidebar.querySelector('.syllentras-sidebar-row');
-    if (row && !document.getElementById('syllentras-ai-content-btn')) {
-        aiContentBtn = document.createElement('button');
-        aiContentBtn.id = 'syllentras-ai-content-btn';
-        aiContentBtn.type = 'button';
-        aiContentBtn.title = 'My AI Content';
-        aiContentBtn.textContent = 'AI Content';
-        row.appendChild(aiContentBtn);
-        aiContentBtn.addEventListener('click', toggleAiContentPanel);
-    }
-
-    aiContentPanel = document.createElement('div');
-    aiContentPanel.id = 'syllentras-ai-content-panel';
-    aiContentPanel.hidden = true;
-    aiContentPanel.innerHTML =
-        '<div class="syllentras-ai-content-header">' +
-        '<span>My AI Content</span>' +
-        '<button type="button" class="syllentras-ai-content-close" aria-label="Close">&times;</button>' +
-        '</div>' +
-        '<div class="syllentras-ai-content-body">' +
-        '<p class="syllentras-ai-content-empty" hidden>No AI Content yet in this course.</p>' +
-        '<div class="syllentras-ai-content-list"></div>' +
-        '</div>';
-    sidebar.appendChild(aiContentPanel);
-    aiContentList = aiContentPanel.querySelector('.syllentras-ai-content-list');
-    aiContentPanel.querySelector('.syllentras-ai-content-close').addEventListener('click', function () {
-        aiContentPanel.hidden = true;
-    });
+function isAiContentTabActive() {
+    return activeChatTab === 'ai-content';
 }
 
-function toggleAiContentPanel() {
-    ensureAiContentUi();
-    if (!aiContentPanel) return;
-    if (!aiContentPanel.hidden) {
-        aiContentPanel.hidden = true;
-        return;
+function bindAiContentDom() {
+    if (!panelAiContent) return;
+    aiContentList = panelAiContent.querySelector('#syllentras-ai-content-list') ||
+        panelAiContent.querySelector('.syllentras-ai-content-list');
+    aiContentEmptyEl = panelAiContent.querySelector('.syllentras-ai-content-empty');
+}
+
+function setChatTab(tab) {
+    if (tab !== 'chat' && tab !== 'ai-content') {
+        tab = 'chat';
     }
-    if (courseId <= 1) {
-        showModal('My AI Content', 'Open a course page to manage your AI Content.', [
-            { label: 'Close', className: 'syllentras-modal-secondary', onClick: closeModal }
-        ]);
-        return;
+    activeChatTab = tab;
+
+    var chatSelected = tab === 'chat';
+    if (tabChatBtn) {
+        tabChatBtn.setAttribute('aria-selected', chatSelected ? 'true' : 'false');
+        tabChatBtn.tabIndex = chatSelected ? 0 : -1;
     }
-    aiContentPanel.hidden = false;
-    refreshAiContentList();
+    if (tabAiContentBtn) {
+        tabAiContentBtn.setAttribute('aria-selected', chatSelected ? 'false' : 'true');
+        tabAiContentBtn.tabIndex = chatSelected ? -1 : 0;
+    }
+    if (panelChat) {
+        panelChat.hidden = !chatSelected;
+    }
+    if (panelAiContent) {
+        panelAiContent.hidden = chatSelected;
+    }
+
+    closeAiContentMenu();
+    closeConversationMenu();
+    closeToolsMenu();
+
+    if (!chatSelected) {
+        refreshAiContentList();
+    }
 }
 
 function closeAiContentMenu() {
@@ -1944,12 +1937,19 @@ function closeAiContentMenu() {
 }
 
 function refreshAiContentList() {
-    ensureAiContentUi();
-    if (!aiContentList || courseId <= 1) return;
+    bindAiContentDom();
+    if (!aiContentList || !aiContentEmptyEl) return;
 
-    var emptyEl = aiContentPanel.querySelector('.syllentras-ai-content-empty');
+    if (courseId <= 1) {
+        aiContentList.innerHTML = '';
+        aiContentEmptyEl.hidden = false;
+        aiContentEmptyEl.textContent = 'Open a course page to manage your AI Content.';
+        return;
+    }
+
     aiContentList.innerHTML = '<p class="syllentras-ai-content-loading">Loading…</p>';
-    emptyEl.hidden = true;
+    aiContentEmptyEl.hidden = true;
+    aiContentEmptyEl.textContent = 'No AI Content yet in this course.';
 
     fetchJson(
         '/ai-content?courseId=' + encodeURIComponent(courseId) +
@@ -1959,18 +1959,18 @@ function refreshAiContentList() {
             var items = (data && data.items) || [];
             aiContentList.innerHTML = '';
             if (!items.length) {
-                emptyEl.hidden = false;
+                aiContentEmptyEl.hidden = false;
                 return;
             }
-            emptyEl.hidden = true;
+            aiContentEmptyEl.hidden = true;
             items.forEach(function (item) {
                 aiContentList.appendChild(renderAiContentRow(item));
             });
         })
         .catch(function () {
             aiContentList.innerHTML = '';
-            emptyEl.hidden = false;
-            emptyEl.textContent = 'Could not load AI Content. Try again.';
+            aiContentEmptyEl.hidden = false;
+            aiContentEmptyEl.textContent = 'Could not load AI Content. Try again.';
         });
 }
 
@@ -2112,7 +2112,14 @@ function deleteAiContentItem(item) {
     );
 }
 
-ensureAiContentUi();
+bindAiContentDom();
+if (tabChatBtn) {
+    tabChatBtn.addEventListener('click', function () { setChatTab('chat'); });
+}
+if (tabAiContentBtn) {
+    tabAiContentBtn.addEventListener('click', function () { setChatTab('ai-content'); });
+}
+setChatTab('chat');
 
 // ===== wiring.js =====
 // Part of the Syllentras chat widget.

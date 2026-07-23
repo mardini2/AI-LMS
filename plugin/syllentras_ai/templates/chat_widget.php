@@ -24,47 +24,90 @@ defined('MOODLE_INTERNAL') || die();
             </div>
         </div>
 
-        <div id="syllentras-chat-body">
-            <aside id="syllentras-chat-sidebar" aria-label="Conversations">
-                <div class="syllentras-sidebar-row">
-                    <input id="syllentras-chat-search" type="search" placeholder="Search conversations" aria-label="Search conversations">
-                    <button id="syllentras-chat-new" type="button" title="New conversation">New</button>
-                </div>
-                <div id="syllentras-chat-conversations"></div>
-            </aside>
-            <div id="syllentras-chat-sidebar-resizer" role="separator" aria-label="Resize conversation sidebar" aria-orientation="vertical"></div>
+        <div id="syllentras-chat-tabs" role="tablist" aria-label="Syllentras AI views">
+            <button
+                type="button"
+                id="syllentras-tab-chat"
+                role="tab"
+                aria-selected="true"
+                aria-controls="syllentras-panel-chat"
+                tabindex="0"
+            >Chat</button>
+            <button
+                type="button"
+                id="syllentras-tab-ai-content"
+                role="tab"
+                aria-selected="false"
+                aria-controls="syllentras-panel-ai-content"
+                tabindex="-1"
+            >AI Content</button>
+        </div>
 
-            <main id="syllentras-chat-main">
-                <div id="syllentras-chat-active-meta">
-                    <span id="syllentras-chat-active-title">Main</span>
-                    <span id="syllentras-chat-active-tag">#main</span>
+        <div
+            id="syllentras-panel-chat"
+            role="tabpanel"
+            aria-labelledby="syllentras-tab-chat"
+        >
+            <div id="syllentras-chat-body">
+                <aside id="syllentras-chat-sidebar" aria-label="Conversations">
+                    <div class="syllentras-sidebar-row">
+                        <input id="syllentras-chat-search" type="search" placeholder="Search conversations" aria-label="Search conversations">
+                        <button id="syllentras-chat-new" type="button" title="New conversation">New</button>
+                    </div>
+                    <div id="syllentras-chat-conversations"></div>
+                </aside>
+                <div id="syllentras-chat-sidebar-resizer" role="separator" aria-label="Resize conversation sidebar" aria-orientation="vertical"></div>
+
+                <main id="syllentras-chat-main">
+                    <div id="syllentras-chat-active-meta">
+                        <span id="syllentras-chat-active-title">Main</span>
+                        <span id="syllentras-chat-active-tag">#main</span>
+                    </div>
+                    <div id="syllentras-chat-messages" role="log" aria-live="polite">
+                        <div id="syllentras-chat-load-more" hidden>Loading...</div>
+                    </div>
+                    <div id="syllentras-chat-input-resizer" role="separator" aria-label="Resize message input" aria-orientation="horizontal"></div>
+                    <div id="syllentras-chat-input-row">
+                        <button
+                            type="button"
+                            id="syllentras-chat-tools-btn"
+                            aria-label="Study tools"
+                            aria-haspopup="menu"
+                            aria-expanded="false"
+                            title="Study tools"
+                        >
+                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false">
+                                <path fill="currentColor" d="M19 11h-6V5a1 1 0 1 0-2 0v6H5a1 1 0 1 0 0 2h6v6a1 1 0 1 0 2 0v-6h6a1 1 0 1 0 0-2z"/>
+                            </svg>
+                        </button>
+                        <textarea
+                            id="syllentras-chat-input"
+                            placeholder="Ask a question about this course..."
+                            rows="2"
+                            aria-label="Your message"
+                        ></textarea>
+                        <button id="syllentras-chat-send" aria-label="Send">Send</button>
+                    </div>
+                </main>
+            </div>
+        </div>
+
+        <div
+            id="syllentras-panel-ai-content"
+            role="tabpanel"
+            aria-labelledby="syllentras-tab-ai-content"
+            hidden
+        >
+            <div class="syllentras-ai-content-view">
+                <div class="syllentras-ai-content-view-header">
+                    <h2 class="syllentras-ai-content-view-title">My AI Content</h2>
+                    <p class="syllentras-ai-content-view-sub">Study guides, flashcards, and practice quizzes in this course.</p>
                 </div>
-                <div id="syllentras-chat-messages" role="log" aria-live="polite">
-                    <div id="syllentras-chat-load-more" hidden>Loading...</div>
+                <div class="syllentras-ai-content-view-body">
+                    <p class="syllentras-ai-content-empty" hidden>No AI Content yet in this course.</p>
+                    <div class="syllentras-ai-content-list" id="syllentras-ai-content-list"></div>
                 </div>
-                <div id="syllentras-chat-input-resizer" role="separator" aria-label="Resize message input" aria-orientation="horizontal"></div>
-                <div id="syllentras-chat-input-row">
-                    <button
-                        type="button"
-                        id="syllentras-chat-tools-btn"
-                        aria-label="Study tools"
-                        aria-haspopup="menu"
-                        aria-expanded="false"
-                        title="Study tools"
-                    >
-                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false">
-                            <path fill="currentColor" d="M19 11h-6V5a1 1 0 1 0-2 0v6H5a1 1 0 1 0 0 2h6v6a1 1 0 1 0 2 0v-6h6a1 1 0 1 0 0-2z"/>
-                        </svg>
-                    </button>
-                    <textarea
-                        id="syllentras-chat-input"
-                        placeholder="Ask a question about this course..."
-                        rows="2"
-                        aria-label="Your message"
-                    ></textarea>
-                    <button id="syllentras-chat-send" aria-label="Send">Send</button>
-                </div>
-            </main>
+            </div>
         </div>
 
         <div class="syllentras-panel-resize-handle" data-edge="n" role="separator" aria-label="Resize panel from top" aria-orientation="horizontal"></div>

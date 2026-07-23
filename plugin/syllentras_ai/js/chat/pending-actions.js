@@ -209,7 +209,7 @@ function attachPendingAction(messageEl, pendingAction) {
             if (data.response) {
                 appendMessage('assistant', data.response);
             }
-            if (typeof refreshAiContentList === 'function' && aiContentPanel && !aiContentPanel.hidden) {
+            if (typeof refreshAiContentList === 'function' && typeof isAiContentTabActive === 'function' && isAiContentTabActive()) {
                 refreshAiContentList();
             }
             return loadConversations().then(loadReviewOfferForConversation);

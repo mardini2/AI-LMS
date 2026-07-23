@@ -198,7 +198,6 @@
     font-size: 12px;
 }
 #syllentras-chat-new,
-#syllentras-ai-content-btn,
 .syllentras-section-chat-btn {
     background: #0066cc;
     color: #fff;
@@ -207,70 +206,97 @@
     cursor: pointer;
     font-size: 12px;
 }
-#syllentras-chat-new,
-#syllentras-ai-content-btn {
+#syllentras-chat-new {
     padding: 5px 8px;
 }
-#syllentras-ai-content-btn {
-    background: #2f5d8a;
-    white-space: nowrap;
-}
-.syllentras-conversation-group-title {
-    color: #555;
-    font-size: 11px;
-    font-weight: 700;
-    letter-spacing: 0.03em;
-    margin: 12px 0 5px;
-    text-transform: uppercase;
-}
 
-#syllentras-ai-content-panel {
-    border: 1px solid #d7dee7;
-    border-radius: 8px;
-    margin-bottom: 10px;
-    background: #f8fafc;
-    max-height: 42%;
+#syllentras-chat-tabs {
     display: flex;
-    flex-direction: column;
-    min-height: 0;
-}
-#syllentras-ai-content-panel[hidden] {
-    display: none !important;
-}
-.syllentras-ai-content-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 8px 10px;
-    font-size: 12px;
-    font-weight: 700;
+    flex: 0 0 auto;
+    gap: 0;
     border-bottom: 1px solid #e0e6ed;
+    background: #f8f9fb;
 }
-.syllentras-ai-content-close {
+#syllentras-chat-tabs [role="tab"] {
+    flex: 1 1 0;
     border: none;
     background: transparent;
+    color: #556070;
     cursor: pointer;
-    font-size: 16px;
-    line-height: 1;
-    color: #555;
+    font-size: 13px;
+    font-weight: 600;
+    padding: 10px 12px;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -1px;
 }
-.syllentras-ai-content-body {
-    overflow: auto;
-    padding: 6px 8px 10px;
+#syllentras-chat-tabs [role="tab"]:hover {
+    color: #1d4f82;
+    background: #eef3f8;
+}
+#syllentras-chat-tabs [role="tab"][aria-selected="true"] {
+    color: #0066cc;
+    border-bottom-color: #0066cc;
+    background: #fff;
+}
+#syllentras-panel-chat,
+#syllentras-panel-ai-content {
+    flex: 1;
     min-height: 0;
+    display: flex;
+    flex-direction: column;
+}
+#syllentras-panel-chat[hidden],
+#syllentras-panel-ai-content[hidden] {
+    display: none !important;
+}
+#syllentras-panel-chat #syllentras-chat-body {
+    flex: 1;
+    min-height: 0;
+}
+
+.syllentras-ai-content-view {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
+    background: #fff;
+}
+.syllentras-ai-content-view-header {
+    flex: 0 0 auto;
+    padding: 14px 16px 10px;
+    border-bottom: 1px solid #e8edf2;
+}
+.syllentras-ai-content-view-title {
+    margin: 0;
+    font-size: 15px;
+    font-weight: 700;
+    color: #1d2125;
+}
+.syllentras-ai-content-view-sub {
+    margin: 4px 0 0;
+    font-size: 12px;
+    color: #667788;
+    line-height: 1.35;
+}
+.syllentras-ai-content-view-body {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+    padding: 8px 10px 14px;
 }
 .syllentras-ai-content-empty,
 .syllentras-ai-content-loading {
-    margin: 8px 2px;
-    font-size: 12px;
+    margin: 12px 6px;
+    font-size: 13px;
     color: #666;
+    line-height: 1.4;
 }
 .syllentras-ai-content-item {
     display: flex;
     align-items: flex-start;
-    gap: 4px;
-    padding: 6px 4px;
-    border-radius: 6px;
+    gap: 8px;
+    padding: 10px 8px;
+    border-radius: 8px;
 }
 .syllentras-ai-content-item:hover {
     background: #eef3f8;
@@ -282,7 +308,7 @@
 .syllentras-ai-content-name {
     display: block;
     color: #1d4f82;
-    font-size: 12px;
+    font-size: 13px;
     font-weight: 600;
     text-decoration: none;
     word-break: break-word;
@@ -292,8 +318,8 @@
 }
 .syllentras-ai-content-kind {
     display: inline-block;
-    margin-top: 2px;
-    font-size: 10px;
+    margin-top: 4px;
+    font-size: 11px;
     color: #667788;
     text-transform: uppercase;
     letter-spacing: 0.03em;
@@ -303,9 +329,9 @@
     background: transparent;
     cursor: pointer;
     color: #555;
-    font-size: 16px;
+    font-size: 18px;
     line-height: 1;
-    padding: 2px 4px;
+    padding: 4px 6px;
     border-radius: 4px;
 }
 .syllentras-ai-content-menu-btn:hover,
@@ -321,6 +347,15 @@
     border-radius: 8px;
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.16);
     padding: 4px;
+}
+
+.syllentras-conversation-group-title {
+    color: #555;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+    margin: 12px 0 5px;
+    text-transform: uppercase;
 }
 
 .syll-ai-manage-bar {
