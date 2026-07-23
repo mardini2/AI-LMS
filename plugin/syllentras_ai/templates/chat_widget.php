@@ -103,6 +103,42 @@ defined('MOODLE_INTERNAL') || die();
                     <h2 class="syllentras-ai-content-view-title">My AI Content</h2>
                     <p class="syllentras-ai-content-view-sub">Study guides, flashcards, and practice quizzes in this course.</p>
                 </div>
+                <div class="syllentras-ai-content-toolbar" id="syllentras-ai-content-toolbar" hidden>
+                    <div class="syllentras-ai-content-toolbar-row">
+                        <div class="syllentras-ai-content-dd" data-dd="sort">
+                            <button type="button" class="syllentras-ai-content-dd-btn" id="syllentras-ai-sort-btn" aria-haspopup="listbox" aria-expanded="false">
+                                Sort: Course order <span class="syllentras-ai-content-sort-arrow" aria-hidden="true">↑</span>
+                            </button>
+                            <div class="syllentras-ai-content-dd-panel" id="syllentras-ai-sort-panel" hidden role="listbox">
+                                <button type="button" class="syllentras-ai-content-dd-option" data-sort="course" role="option">Course order</button>
+                                <button type="button" class="syllentras-ai-content-dd-option" data-sort="modified" role="option">Recently modified</button>
+                                <button type="button" class="syllentras-ai-content-dd-option" data-sort="alpha" role="option">Alphabetical</button>
+                            </div>
+                        </div>
+                        <div class="syllentras-ai-content-dd" data-dd="filter">
+                            <button type="button" class="syllentras-ai-content-dd-btn" id="syllentras-ai-filter-btn" aria-haspopup="true" aria-expanded="false">
+                                Type: All
+                            </button>
+                            <div class="syllentras-ai-content-dd-panel" id="syllentras-ai-filter-panel" hidden>
+                                <label class="syllentras-ai-content-filter-opt">
+                                    <input type="checkbox" value="study_guide" /> Study guide
+                                </label>
+                                <label class="syllentras-ai-content-filter-opt">
+                                    <input type="checkbox" value="flashcards" /> Flashcards
+                                </label>
+                                <label class="syllentras-ai-content-filter-opt">
+                                    <input type="checkbox" value="practice_quiz" /> Quiz
+                                </label>
+                            </div>
+                        </div>
+                        <button type="button" class="syllentras-ai-content-bulk-toggle" id="syllentras-ai-bulk-toggle">Select</button>
+                    </div>
+                    <div class="syllentras-ai-content-bulk-row" id="syllentras-ai-bulk-row" hidden>
+                        <button type="button" class="syllentras-ai-content-bulk-btn" id="syllentras-ai-select-all">Select all</button>
+                        <button type="button" class="syllentras-ai-content-bulk-btn" id="syllentras-ai-deselect-all">Deselect all</button>
+                        <button type="button" class="syllentras-ai-content-bulk-btn danger" id="syllentras-ai-bulk-delete" disabled>Delete</button>
+                    </div>
+                </div>
                 <div class="syllentras-ai-content-view-body">
                     <p class="syllentras-ai-content-empty" hidden>No AI Content yet in this course.</p>
                     <div class="syllentras-ai-content-list" id="syllentras-ai-content-list"></div>

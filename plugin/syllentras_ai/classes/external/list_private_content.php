@@ -67,39 +67,53 @@ class list_private_content extends external_api {
         }
 
         $modinfo = get_fast_modinfo($course);
-        $items = [];
+        $sectionnum = null;
+        foreach ($modinfo->get_section_info_all() as $sectioninfo) {
+            $sectionname = trim(get_section_name($course, $sectioninfo));
+            if (strcasecmp($sectionname, placement::SECTION_NAME) === 0) {
+                $sectionnum = (int) $sectioninfo->section;
+                break;
+            }
+        }
 
-        foreach ($modinfo->get_cms() as $cminfo) {
-            if ($cminfo->deletioninprogress) {
+        if ($sectionnum === null) {
+            return ['items' => []];
+        }
+
+        $sectioncmids = $modinfo->sections[$sectionnum] ?? [];
+        $items = [];
+        $sortorder = 0;
+
+        foreach ($sectioncmids as $cmid) {
+            $cminfo = $modinfo->cms[$cmid] ?? null;
+            if (!$cminfo || $cminfo->deletioninprogress) {
                 continue;
             }
             if ($cminfo->modname !== 'page' && $cminfo->modname !== 'quiz') {
                 continue;
             }
-
-            $sectioninfo = $modinfo->get_section_info($cminfo->sectionnum);
-            $sectionname = trim(get_section_name($course, $sectioninfo));
-            if (strcasecmp($sectionname, placement::SECTION_NAME) !== 0) {
-                continue;
-            }
-
             if (!placement::availability_requires_group($cminfo->availability, (int) $group->id)) {
                 continue;
             }
 
             $kind = placement::detect_kind($cminfo->modname, (int) $cminfo->instance);
+            $timemodified = 0;
+            $cmrecord = $cminfo->get_course_module_record(true);
+            if ($cmrecord && !empty($cmrecord->timemodified)) {
+                $timemodified = (int) $cmrecord->timemodified;
+            }
+
             $items[] = [
                 'cmid' => (int) $cminfo->id,
                 'modname' => $cminfo->modname,
                 'name' => $cminfo->name,
                 'kind' => $kind,
                 'viewurl' => placement::view_url_for($cminfo->modname, (int) $cminfo->id),
+                'sortorder' => $sortorder,
+                'timemodified' => $timemodified,
             ];
+            $sortorder++;
         }
-
-        usort($items, static function (array $a, array $b): int {
-            return strcasecmp($a['name'], $b['name']);
-        });
 
         return ['items' => $items];
     }
@@ -116,6 +130,8 @@ class list_private_content extends external_api {
                     'name' => new external_value(PARAM_TEXT, 'Activity name'),
                     'kind' => new external_value(PARAM_ALPHANUMEXT, 'study_guide|flashcards|practice_quiz'),
                     'viewurl' => new external_value(PARAM_URL, 'Browser view URL'),
+                    'sortorder' => new external_value(PARAM_INT, 'Index in AI Content section sequence'),
+                    'timemodified' => new external_value(PARAM_INT, 'course_modules.timemodified unix time'),
                 ])
             ),
         ]);

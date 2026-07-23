@@ -63,6 +63,10 @@ export interface AiContentItem {
   name: string;
   kind: AiContentKind;
   viewUrl: string;
+  /** Index in the AI Content section sequence (course page order). */
+  sortOrder: number;
+  /** course_modules.timemodified (unix seconds). */
+  timeModified: number;
 }
 
 export interface RenamedAiContent {

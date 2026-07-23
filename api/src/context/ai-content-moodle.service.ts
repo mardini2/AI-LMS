@@ -29,6 +29,8 @@ export class AiContentMoodleService {
         name: string;
         kind: string;
         viewurl: string;
+        sortorder?: number;
+        timemodified?: number;
       }>;
     }>(
       'local_syllentras_ai_list_private_content',
@@ -39,12 +41,16 @@ export class AiContentMoodleService {
       'POST',
     );
 
-    return (result.items ?? []).map((item) => ({
+    return (result.items ?? []).map((item, index) => ({
       cmId: item.cmid,
       modname: item.modname,
       name: item.name,
       kind: this.normalizeKind(item.kind),
       viewUrl: this.moodle.toPublicMoodleUrl(item.viewurl),
+      sortOrder:
+        typeof item.sortorder === 'number' ? item.sortorder : index,
+      timeModified:
+        typeof item.timemodified === 'number' ? item.timemodified : 0,
     }));
   }
 
