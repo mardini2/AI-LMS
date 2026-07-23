@@ -44,6 +44,7 @@ export interface ConversationSummary {
   sectionName?: string;
   tag: string;
   pinned: boolean;
+  topicSuggestions?: string[];
   createdAt: Date;
   updatedAt: Date;
 }
@@ -247,6 +248,7 @@ export class ConversationService {
     // Main (general) is a singleton — clear history instead of removing it.
     if ((conversation.type ?? 'general') === 'general') {
       await this.messageRepo.delete({ conversationId: id });
+      conversation.topicSuggestions = null;
       conversation.updatedAt = new Date();
       const saved = await this.conversationRepo.save(conversation);
       return { cleared: true, conversation: toSummary(saved) };
@@ -416,6 +418,17 @@ export class ConversationService {
     }
   }
 
+  async updateTopicSuggestions(
+    conversationId: string,
+    topics: string[],
+  ): Promise<string[]> {
+    const normalized = normalizeTopicSuggestions(topics) ?? [];
+    const conversation = await this.findById(conversationId);
+    conversation.topicSuggestions = normalized.length ? normalized : undefined;
+    await this.conversationRepo.save(conversation);
+    return normalized;
+  }
+
   private async findGeneralConversation(
     moodleUserId: number,
     courseId: number,
@@ -470,9 +483,27 @@ function toSummary(conversation: Conversation): ConversationSummary {
     sectionName: conversation.sectionName,
     tag: tagForConversation(type, type === 'section' ? conversation.sectionName ?? title : title),
     pinned: conversation.pinned ?? false,
+    topicSuggestions: normalizeTopicSuggestions(conversation.topicSuggestions),
     createdAt: conversation.createdAt,
     updatedAt: conversation.updatedAt,
   };
+}
+
+function normalizeTopicSuggestions(topics?: string[] | null): string[] | undefined {
+  if (!Array.isArray(topics)) return undefined;
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const raw of topics) {
+    if (typeof raw !== 'string') continue;
+    const cleaned = raw.replace(/\s+/g, ' ').trim().slice(0, 80);
+    if (!cleaned) continue;
+    const key = cleaned.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(cleaned);
+    if (out.length >= 3) break;
+  }
+  return out.length ? out : undefined;
 }
 
 function defaultTitle(type: ConversationType, sectionName?: string): string {

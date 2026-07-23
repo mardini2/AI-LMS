@@ -43,6 +43,11 @@ class before_footer {
                     $sectionname = ($sectionnumber === 0) ? 'General' : 'Section ' . $sectionnumber;
                 }
 
+                // Skip the shared AI Content placement section — not a study topic.
+                if (strcasecmp($sectionname, \local_syllentras_ai\local\placement::SECTION_NAME) === 0) {
+                    continue;
+                }
+
                 $sections[] = [
                     'id' => (int) $sectioninfo->id,
                     'number' => $sectionnumber,

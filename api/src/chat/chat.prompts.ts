@@ -337,3 +337,39 @@ export function buildWrongAnswerExplanationPrompt(input: {
     '---',
   ].join('\n');
 }
+
+export function buildTopicSuggestionsPrompt(input: {
+  courseName?: string;
+  sectionName?: string;
+  recentTurns: Array<{ role: string; content: string }>;
+}): string {
+  const lines = [
+    'Suggest exactly 3 short study topics the student might want a study guide, flashcards, or practice quiz about next.',
+    'Return JSON: { "topics": ["...", "...", "..."] }.',
+    'Each topic: one concise phrase (max ~12 words), specific enough to study, no numbering or quotes.',
+    'Stay strictly on-course. Do not suggest off-topic or personal tasks.',
+    'Prefer topics grounded in the recent conversation; vary the three suggestions.',
+  ];
+
+  if (input.courseName) {
+    lines.push(`Course: ${input.courseName}`);
+  }
+  if (input.sectionName) {
+    lines.push(`Active section focus: ${input.sectionName}`);
+  }
+
+  lines.push('', 'Recent conversation:');
+  const turns = input.recentTurns.slice(-8);
+  if (!turns.length) {
+    lines.push('(no prior messages)');
+  } else {
+    for (const turn of turns) {
+      const role = turn.role === 'user' ? 'Student' : 'Assistant';
+      const content = (turn.content || '').replace(/\s+/g, ' ').trim().slice(0, 500);
+      if (!content) continue;
+      lines.push(`${role}: ${content}`);
+    }
+  }
+
+  return lines.join('\n');
+}

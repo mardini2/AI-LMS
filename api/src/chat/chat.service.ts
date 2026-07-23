@@ -32,6 +32,7 @@ import { PracticeQuizGenerationService } from './practice-quiz-generation.servic
 import { PracticeQuizReviewService } from './practice-quiz-review.service';
 import { StudyGuideGenerationService } from './study-guide-generation.service';
 import { FlashcardsGenerationService } from './flashcards-generation.service';
+import { TopicSuggestionsService } from './topic-suggestions.service';
 import type {
   PracticeQuizPayload,
   StudyGuidePayload,
@@ -80,6 +81,7 @@ export class ChatService {
     private readonly practiceQuizReview: PracticeQuizReviewService,
     private readonly studyGuideGeneration: StudyGuideGenerationService,
     private readonly flashcardsGeneration: FlashcardsGenerationService,
+    private readonly topicSuggestions: TopicSuggestionsService,
   ) {}
 
   async sendMessage(dto: SendMessageDto): Promise<ChatResponse> {
@@ -351,7 +353,34 @@ export class ChatService {
       { role: 'assistant', content: responseText },
     ]);
 
-    return { response: responseText, conversationId, pendingAction };
+    let topicSuggestions = normalizeReturnedTopics(conversation.topicSuggestions);
+
+    if (courseId > 1 && message.trim()) {
+      const historyForTopics = [
+        ...dbHistory.slice(-6),
+        { role: 'user' as const, content: message },
+        { role: 'assistant' as const, content: responseText },
+      ];
+      const refreshed = await this.topicSuggestions.suggestTopics({
+        courseName: resolvedCourseName,
+        sectionName: conversation.sectionName,
+        recentTurns: historyForTopics,
+      });
+      if (refreshed.length) {
+        topicSuggestions =
+          await this.conversationService.updateTopicSuggestions(
+            conversationId,
+            refreshed,
+          );
+      }
+    }
+
+    return {
+      response: responseText,
+      conversationId,
+      pendingAction,
+      topicSuggestions,
+    };
   }
 
   async confirmAction(
@@ -752,4 +781,23 @@ export class ChatService {
       moodleUserId,
     );
   }
+}
+
+function normalizeReturnedTopics(
+  topics?: string[] | null,
+): string[] | undefined {
+  if (!Array.isArray(topics) || !topics.length) return undefined;
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const raw of topics) {
+    if (typeof raw !== 'string') continue;
+    const cleaned = raw.replace(/\s+/g, ' ').trim().slice(0, 80);
+    if (!cleaned) continue;
+    const key = cleaned.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(cleaned);
+    if (out.length >= 3) break;
+  }
+  return out.length ? out : undefined;
 }

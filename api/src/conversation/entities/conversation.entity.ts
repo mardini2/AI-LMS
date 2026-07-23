@@ -44,6 +44,9 @@ export class Conversation {
   @Column({ default: false })
   pinned: boolean;
 
+  @Column({ name: 'topic_suggestions', type: 'json', nullable: true })
+  topicSuggestions?: string[] | null;
+
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;
 

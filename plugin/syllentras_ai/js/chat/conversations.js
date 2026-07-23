@@ -3,6 +3,9 @@
 
 function setActiveConversation(conversation) {
     activeConversation = conversation;
+    if (activeConversation && Array.isArray(conversation.topicSuggestions)) {
+        activeConversation.topicSuggestions = conversation.topicSuggestions;
+    }
     conversationId = conversation.id;
     activeTitle.textContent = conversation.title || 'Conversation';
     activeTag.textContent = conversation.tag || '';
@@ -307,6 +310,10 @@ function sendMessage() {
         renderAssistantContent(loadingEl, data.response);
         loadingEl.dataset.createdAt = new Date().toISOString();
         conversationId = data.conversationId || conversationId;
+        if (Array.isArray(data.topicSuggestions)) {
+            if (!activeConversation) activeConversation = { id: conversationId };
+            activeConversation.topicSuggestions = data.topicSuggestions;
+        }
         if (data.pendingAction) {
             attachPendingAction(loadingEl, data.pendingAction);
         }

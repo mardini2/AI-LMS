@@ -9,6 +9,7 @@ import { PracticeQuizGenerationService } from './practice-quiz-generation.servic
 import { PracticeQuizReviewService } from './practice-quiz-review.service';
 import { StudyGuideGenerationService } from './study-guide-generation.service';
 import { FlashcardsGenerationService } from './flashcards-generation.service';
+import { TopicSuggestionsService } from './topic-suggestions.service';
 import { ContextModule } from '../context/context.module';
 import { ConversationModule } from '../conversation/conversation.module';
 
@@ -27,6 +28,7 @@ import { ConversationModule } from '../conversation/conversation.module';
     PracticeQuizReviewService,
     StudyGuideGenerationService,
     FlashcardsGenerationService,
+    TopicSuggestionsService,
   ],
 })
 export class ChatModule {}

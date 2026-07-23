@@ -35,6 +35,7 @@ export interface ChatResponse {
   response: string;
   conversationId: string;
   pendingAction?: PendingActionDto;
+  topicSuggestions?: string[];
   quizUrl?: string;
   studyGuideUrl?: string;
   flashcardsUrl?: string;
