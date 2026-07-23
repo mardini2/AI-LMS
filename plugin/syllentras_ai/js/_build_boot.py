@@ -17,6 +17,7 @@ ORDER = [
     "messages.js",
     "conversations.js",
     "modals.js",
+    "tools-menu.js",
     "section-buttons.js",
     "wiring.js",
 ]

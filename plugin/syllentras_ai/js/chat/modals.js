@@ -12,6 +12,7 @@ function closeConversationMenu() {
 }
 
 function showConversationMenu(anchor, conversation) {
+    closeToolsMenu();
     closeConversationMenu();
     anchor.classList.add('open');
 
@@ -46,6 +47,7 @@ function addMenuAction(menu, label, handler, disabled, danger) {
 
 function showModal(title, bodyNode, actions) {
     closeConversationMenu();
+    closeToolsMenu();
     modal.querySelector('#syllentras-modal-title').textContent = title;
     var body = modal.querySelector('#syllentras-modal-body');
     var actionArea = modal.querySelector('#syllentras-modal-actions');

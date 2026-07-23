@@ -21,6 +21,7 @@ var expandBtn = document.getElementById('syllentras-chat-expand');
 var resetBtn  = document.getElementById('syllentras-chat-reset');
 var input     = document.getElementById('syllentras-chat-input');
 var send      = document.getElementById('syllentras-chat-send');
+var toolsBtn  = document.getElementById('syllentras-chat-tools-btn');
 var msgs      = document.getElementById('syllentras-chat-messages');
 var loadMore  = document.getElementById('syllentras-chat-load-more');
 var courseEl  = document.getElementById('syllentras-chat-course');

@@ -44,6 +44,18 @@ defined('MOODLE_INTERNAL') || die();
                 </div>
                 <div id="syllentras-chat-input-resizer" role="separator" aria-label="Resize message input" aria-orientation="horizontal"></div>
                 <div id="syllentras-chat-input-row">
+                    <button
+                        type="button"
+                        id="syllentras-chat-tools-btn"
+                        aria-label="Study tools"
+                        aria-haspopup="menu"
+                        aria-expanded="false"
+                        title="Study tools"
+                    >
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false">
+                            <path fill="currentColor" d="M19 11h-6V5a1 1 0 1 0-2 0v6H5a1 1 0 1 0 0 2h6v6a1 1 0 1 0 2 0v-6h6a1 1 0 1 0 0-2z"/>
+                        </svg>
+                    </button>
                     <textarea
                         id="syllentras-chat-input"
                         placeholder="Ask a question about this course..."

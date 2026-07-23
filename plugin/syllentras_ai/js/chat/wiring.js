@@ -188,6 +188,9 @@ document.addEventListener('click', function (e) {
     if (openMenu && !openMenu.contains(e.target) && !e.target.closest('.syllentras-conversation-menu-btn')) {
         closeConversationMenu();
     }
+    if (openToolsMenu && !openToolsMenu.contains(e.target) && !e.target.closest('#syllentras-chat-tools-btn')) {
+        closeToolsMenu();
+    }
 });
 
 modal.addEventListener('click', function (e) {
@@ -197,11 +200,15 @@ modal.addEventListener('click', function (e) {
 document.addEventListener('keydown', function (e) {
     if (e.key === 'Escape') {
         closeConversationMenu();
+        closeToolsMenu();
         if (!modal.hidden) closeModal();
     }
 });
 
-window.addEventListener('resize', clampCurrentPanelLayout);
+window.addEventListener('resize', function () {
+    closeToolsMenu();
+    clampCurrentPanelLayout();
+});
 
 if (window.ResizeObserver) {
     new ResizeObserver(function () {
@@ -214,6 +221,7 @@ if (window.ResizeObserver) {
 applyExpandedState();
 applyStoredSidebarWidth();
 applyStoredInputHeight();
+initToolsMenu();
 loadConversations();
 installSectionButtons();
 if (document.readyState === 'loading') {
