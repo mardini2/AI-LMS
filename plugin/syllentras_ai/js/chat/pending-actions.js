@@ -1,6 +1,11 @@
 // Part of the Syllentras chat widget.
 // Included inside the shared IIFE from before_footer.php — do not load standalone.
 
+var QUIZ_COUNT_MIN = 5;
+var QUIZ_COUNT_MAX = 40;
+var FLASHCARD_COUNT_MIN = 8;
+var FLASHCARD_COUNT_MAX = 40;
+
 function clearPendingActionUi(root) {
     var scope = root || msgs;
     Array.from(scope.querySelectorAll('.syllentras-pending-action, .syllentras-review-offer')).forEach(function (node) {
@@ -19,6 +24,17 @@ function resolvePendingActionType(pendingAction) {
     return 'practice_quiz';
 }
 
+function createPendingField(labelText, inputEl) {
+    var field = document.createElement('label');
+    field.className = 'syllentras-pending-field';
+    var label = document.createElement('span');
+    label.className = 'syllentras-pending-field-label';
+    label.textContent = labelText;
+    field.appendChild(label);
+    field.appendChild(inputEl);
+    return field;
+}
+
 function attachPendingAction(messageEl, pendingAction) {
     if (!messageEl || !pendingAction || !pendingAction.id) return;
     clearPendingActionUi(messageEl);
@@ -31,25 +47,61 @@ function attachPendingAction(messageEl, pendingAction) {
 
     var summary = document.createElement('div');
     summary.className = 'syllentras-pending-summary';
-    summary.innerHTML = '<strong></strong><div></div><div></div>';
+
     var defaultTitle =
         actionType === 'study_guide'
             ? 'Study guide'
             : actionType === 'flashcards'
               ? 'Flashcards'
               : 'Practice quiz';
-    summary.querySelector('strong').textContent =
-        pendingAction.title || defaultTitle;
-    if (actionType === 'study_guide') {
-        summary.children[1].textContent = 'Private study guide Page';
-    } else if (actionType === 'flashcards') {
-        summary.children[1].textContent =
-            (pendingAction.cardCount || '?') + ' flashcards (expand to reveal)';
+
+    var titleInput = document.createElement('input');
+    titleInput.type = 'text';
+    titleInput.className = 'syllentras-pending-title-input';
+    titleInput.maxLength = 200;
+    titleInput.value = pendingAction.title || defaultTitle;
+    titleInput.setAttribute('aria-label', 'Title');
+    summary.appendChild(createPendingField('Title', titleInput));
+
+    var countInput = null;
+    var countMin = null;
+    var countMax = null;
+    if (actionType === 'flashcards') {
+        countMin = FLASHCARD_COUNT_MIN;
+        countMax = FLASHCARD_COUNT_MAX;
+        countInput = document.createElement('input');
+        countInput.type = 'number';
+        countInput.className = 'syllentras-pending-count-input';
+        countInput.min = String(countMin);
+        countInput.max = String(countMax);
+        countInput.step = '1';
+        countInput.value = String(pendingAction.cardCount || FLASHCARD_COUNT_MIN);
+        countInput.setAttribute('aria-label', 'Number of flashcards');
+        summary.appendChild(createPendingField('Flashcards', countInput));
+    } else if (actionType === 'practice_quiz') {
+        countMin = QUIZ_COUNT_MIN;
+        countMax = QUIZ_COUNT_MAX;
+        countInput = document.createElement('input');
+        countInput.type = 'number';
+        countInput.className = 'syllentras-pending-count-input';
+        countInput.min = String(countMin);
+        countInput.max = String(countMax);
+        countInput.step = '1';
+        countInput.value = String(pendingAction.questionCount || QUIZ_COUNT_MIN);
+        countInput.setAttribute('aria-label', 'Number of questions');
+        summary.appendChild(createPendingField('Questions', countInput));
     } else {
-        summary.children[1].textContent = (pendingAction.questionCount || '?')
-            + ' questions (multiple choice and true/false)';
+        var guideNote = document.createElement('div');
+        guideNote.className = 'syllentras-pending-note';
+        guideNote.textContent = 'Private study guide Page';
+        summary.appendChild(guideNote);
     }
-    summary.children[2].textContent = 'Covers: ' + (pendingAction.scopeSummary || 'course material');
+
+    var covers = document.createElement('div');
+    covers.className = 'syllentras-pending-note';
+    covers.textContent = 'Covers: ' + (pendingAction.scopeSummary || 'course material');
+    summary.appendChild(covers);
+
     wrap.appendChild(summary);
 
     var actions = document.createElement('div');
@@ -68,6 +120,8 @@ function attachPendingAction(messageEl, pendingAction) {
     function setBusy(busy) {
         confirmBtn.disabled = busy;
         cancelBtn.disabled = busy;
+        titleInput.disabled = busy;
+        if (countInput) countInput.disabled = busy;
         confirmBtn.textContent = busy ? 'Creating...' : 'Confirm';
     }
 
@@ -82,14 +136,38 @@ function attachPendingAction(messageEl, pendingAction) {
         return 'Could not create the practice quiz. Please try again.';
     }
 
+    function readCount() {
+        if (!countInput || countMin == null || countMax == null) return undefined;
+        var n = Number(countInput.value);
+        if (!Number.isFinite(n)) {
+            n = countMin;
+        }
+        n = Math.round(n);
+        if (n < countMin) n = countMin;
+        if (n > countMax) n = countMax;
+        countInput.value = String(n);
+        return n;
+    }
+
     confirmBtn.addEventListener('click', function () {
+        var title = (titleInput.value || '').trim();
+        if (!title) {
+            titleInput.focus();
+            return;
+        }
+        var count = readCount();
         setBusy(true);
+        var body = {
+            actionId: pendingAction.id,
+            moodleUserId: moodleUserId,
+            title: title
+        };
+        if (typeof count === 'number') {
+            body.count = count;
+        }
         fetchJson('/chat/actions/confirm', {
             method: 'POST',
-            body: JSON.stringify({
-                actionId: pendingAction.id,
-                moodleUserId: moodleUserId
-            })
+            body: JSON.stringify(body)
         })
         .then(function (data) {
             clearPendingActionUi(messageEl);

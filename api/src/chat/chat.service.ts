@@ -50,6 +50,7 @@ import {
   buildStudyGuideContextFilter,
   buildStudyGuideProposalMessage,
   scrubStudyGuideContext,
+  stripUnsafeText,
 } from './study-guide.helpers';
 import {
   buildFlashcardsContextFilter,
@@ -386,11 +387,16 @@ export class ChatService {
   async confirmAction(
     actionId: string,
     moodleUserId: number,
+    edits?: { title?: string; count?: number },
   ): Promise<ChatResponse> {
-    const action = await this.pendingActionService.assertPendingOwned(
+    let action = await this.pendingActionService.assertPendingOwned(
       actionId,
       moodleUserId,
     );
+
+    if (edits?.title !== undefined || edits?.count !== undefined) {
+      action = await this.applyConfirmEdits(action, edits);
+    }
 
     if (action.type === 'practice_quiz') {
       return this.confirmPracticeQuiz(action, moodleUserId);
@@ -403,6 +409,41 @@ export class ChatService {
     }
 
     throw new BadRequestException('Unsupported action type');
+  }
+
+  private async applyConfirmEdits(
+    action: PendingAction,
+    edits: { title?: string; count?: number },
+  ): Promise<PendingAction> {
+    const payload = { ...action.payload } as
+      | PracticeQuizPayload
+      | StudyGuidePayload
+      | FlashcardsPayload;
+
+    if (edits.title !== undefined) {
+      const title = stripUnsafeText(edits.title).trim().slice(0, 200);
+      if (!title) {
+        throw new BadRequestException('Title cannot be empty');
+      }
+      payload.title = title;
+    }
+
+    if (edits.count !== undefined) {
+      if (action.type === 'practice_quiz') {
+        (payload as PracticeQuizPayload).questionCount = clampQuestionCount(
+          edits.count,
+          true,
+        );
+      } else if (action.type === 'flashcards') {
+        (payload as FlashcardsPayload).cardCount = clampCardCount(
+          edits.count,
+          true,
+        );
+      }
+      // study_guide: count is ignored
+    }
+
+    return this.pendingActionService.updatePendingPayload(action.id, payload);
   }
 
   private async confirmPracticeQuiz(

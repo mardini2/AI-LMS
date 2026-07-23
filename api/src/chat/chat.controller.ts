@@ -32,7 +32,10 @@ export class ChatController {
    */
   @Post('actions/confirm')
   confirmAction(@Body() dto: ConfirmActionDto) {
-    return this.chatService.confirmAction(dto.actionId, dto.moodleUserId);
+    return this.chatService.confirmAction(dto.actionId, dto.moodleUserId, {
+      title: dto.title,
+      count: dto.count,
+    });
   }
 
   /**

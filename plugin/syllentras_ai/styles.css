@@ -572,6 +572,47 @@
     display: block;
     margin-bottom: 4px;
 }
+.syllentras-pending-field {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    margin: 0 0 8px;
+    font-size: 13px;
+    color: #234;
+}
+.syllentras-pending-field-label {
+    font-weight: 600;
+    font-size: 12px;
+    color: #456;
+}
+.syllentras-pending-title-input,
+.syllentras-pending-count-input {
+    box-sizing: border-box;
+    border: 1px solid #c5d8ef;
+    border-radius: 6px;
+    padding: 6px 8px;
+    font-size: 13px;
+    color: #234;
+    background: #fff;
+    max-width: 100%;
+}
+.syllentras-pending-title-input {
+    width: 100%;
+}
+.syllentras-pending-count-input {
+    width: 5.5rem;
+}
+.syllentras-pending-title-input:disabled,
+.syllentras-pending-count-input:disabled {
+    opacity: 0.6;
+    cursor: default;
+}
+.syllentras-pending-note {
+    margin: 0 0 4px;
+    font-size: 13px;
+    line-height: 1.4;
+    color: #234;
+}
 .syllentras-pending-actions {
     display: flex;
     gap: 8px;

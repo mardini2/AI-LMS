@@ -7,6 +7,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
 import {
   PendingAction,
+  PendingActionPayload,
   PracticeQuizPayload,
   StudyGuidePayload,
   FlashcardsPayload,
@@ -137,6 +138,21 @@ export class PendingActionService {
       throw new BadRequestException('Pending action has expired');
     }
     return action;
+  }
+
+  async updatePendingPayload(
+    actionId: string,
+    payload: PendingActionPayload,
+  ): Promise<PendingAction> {
+    const action = await this.repo.findOne({ where: { id: actionId } });
+    if (!action) {
+      throw new NotFoundException('Pending action not found');
+    }
+    if (action.status !== 'pending') {
+      throw new BadRequestException(`Action is already ${action.status}`);
+    }
+    action.payload = payload;
+    return this.repo.save(action);
   }
 
   async markConfirmed(actionId: string): Promise<void> {
