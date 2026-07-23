@@ -534,6 +534,53 @@
     background: none;
     padding: 0;
 }
+.syllentras-msg.assistant.syllentras-markdown .syllentras-review-toolbar {
+    display: flex;
+    justify-content: flex-start;
+    margin: 4px 0 2px;
+}
+.syllentras-msg.assistant.syllentras-markdown .syllentras-review-toggle-all {
+    border: 0;
+    border-radius: 6px;
+    padding: 6px 12px;
+    cursor: pointer;
+    font-size: 13px;
+    background: #e8eef5;
+    color: #234;
+}
+.syllentras-msg.assistant.syllentras-markdown .syllentras-review-toggle-all:hover {
+    background: #dce6f0;
+}
+.syllentras-msg.assistant.syllentras-markdown details.syllentras-review-item {
+    margin: 6px 0;
+    border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+}
+.syllentras-msg.assistant.syllentras-markdown details.syllentras-review-item:last-of-type {
+    border-bottom: none;
+}
+.syllentras-msg.assistant.syllentras-markdown summary.syllentras-review-summary {
+    cursor: pointer;
+    padding: 8px 4px;
+    font-size: 13px;
+    line-height: 1.4;
+    color: #234;
+    list-style-position: outside;
+}
+.syllentras-msg.assistant.syllentras-markdown summary.syllentras-review-summary:hover {
+    color: #0b5fff;
+}
+.syllentras-msg.assistant.syllentras-markdown .syllentras-review-body {
+    padding: 0 4px 8px 1.25em;
+}
+.syllentras-msg.assistant.syllentras-markdown .syllentras-review-body p {
+    margin: 6px 0;
+}
+.syllentras-msg.assistant.syllentras-markdown .syllentras-review-body blockquote {
+    margin: 6px 0;
+    padding: 4px 0 4px 10px;
+    border-left: 3px solid rgba(0, 0, 0, 0.12);
+    color: #456;
+}
 .syllentras-content-open-btn {
     display: inline-block;
     margin-top: 8px;

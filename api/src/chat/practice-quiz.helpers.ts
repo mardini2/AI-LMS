@@ -1,6 +1,7 @@
 import type { CourseContextFilter, PracticeQuizQuestion } from '../context/context.types';
 import type { ReviewBlockDto } from './chat.types';
 import type { PracticeQuizPayload } from './entities/pending-action.entity';
+import { escapeHtml } from './study-guide.helpers';
 
 export const QUIZ_QUESTION_COUNT_MIN = 5;
 export const QUIZ_QUESTION_COUNT_AUTO_MAX = 15; // when AI chooses
@@ -82,6 +83,15 @@ export function buildProposalMessage(input: {
   return lines.join('\n');
 }
 
+function isSafeHttpUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
 export function buildReviewMessage(input: {
   title: string;
   score: number;
@@ -95,26 +105,38 @@ export function buildReviewMessage(input: {
   ];
 
   input.blocks.forEach((block) => {
-    lines.push(`**${block.slot}. ❌ ${block.question}**`);
-    lines.push(
-      `You answered: *${block.studentAnswer}* · Correct: *${block.rightAnswer}*`,
-    );
-    lines.push('');
-    lines.push(`**Why:** ${block.why}`);
-    lines.push('');
-    if (block.citationUrl) {
-      lines.push(
-        `**From your course:** [${block.citationTitle}](${block.citationUrl})`,
-      );
+    const summary = escapeHtml(`${block.slot}. ❌ ${block.question}`);
+    const studentAnswer = escapeHtml(block.studentAnswer);
+    const rightAnswer = escapeHtml(block.rightAnswer);
+    const why = escapeHtml(block.why);
+    const citationTitle = escapeHtml(block.citationTitle);
+
+    let citationHtml: string;
+    if (block.citationUrl && isSafeHttpUrl(block.citationUrl)) {
+      citationHtml = `<a href="${escapeHtml(block.citationUrl)}">${citationTitle}</a>`;
     } else {
-      lines.push(`**From your course:** ${block.citationTitle}`);
+      citationHtml = citationTitle;
     }
+
+    const bodyParts = [
+      `<p>You answered: <em>${studentAnswer}</em></p>`,
+      `<p>Correct: <em>${rightAnswer}</em></p>`,
+      `<p><strong>Why:</strong> ${why}</p>`,
+      `<p><strong>From your course:</strong> ${citationHtml}</p>`,
+    ];
     if (block.citationSnippet) {
-      lines.push(`> ${block.citationSnippet}`);
+      bodyParts.push(`<blockquote>${escapeHtml(block.citationSnippet)}</blockquote>`);
     }
-    lines.push('');
-    lines.push('---');
-    lines.push('');
+
+    lines.push(
+      `<details class="syllentras-review-item">`,
+      `<summary class="syllentras-review-summary"><strong>${summary}</strong></summary>`,
+      `<div class="syllentras-review-body">`,
+      ...bodyParts,
+      `</div>`,
+      `</details>`,
+      '',
+    );
   });
 
   return lines.join('\n').trim();
