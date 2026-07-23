@@ -388,8 +388,8 @@
     inset: 0;
     justify-content: center;
     padding: 18px;
-    position: absolute;
-    z-index: 10000;
+    position: fixed;
+    z-index: 10001;
 }
 #syllentras-chat-modal[hidden] { display: none; }
 .syllentras-modal-card {
@@ -1009,9 +1009,230 @@
     color: #4a5560;
 }
 
-.syll-fc-toolbar .syll-fc-btn-restart {
+.syll-fc-score-live {
+    font-size: 0.9rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    color: #4a5560;
+}
+
+.syll-fc-study-controls,
+.syll-fc-edit-controls {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem 0.75rem;
+}
+
+.syll-fc-study-controls[hidden],
+.syll-fc-edit-controls[hidden] {
+    display: none !important;
+}
+
+.syll-fc-toolbar .syll-fc-btn-restart,
+.syll-fc-toolbar .syll-fc-btn-edit,
+.syll-fc-toolbar .syll-fc-btn-add,
+.syll-fc-toolbar .syll-fc-btn-save,
+.syll-fc-toolbar .syll-fc-btn-cancel {
     padding: 0.45rem 0.9rem;
     font-size: 0.875rem;
+}
+
+.syll-fc-toolbar .syll-fc-btn-save {
+    background: #0f6cbf;
+    border-color: #0f6cbf;
+    color: #fff;
+}
+
+.syll-fc-toolbar .syll-fc-btn-save:hover:not(:disabled) {
+    background: #0b5aa0;
+    border-color: #0b5aa0;
+    color: #fff;
+}
+
+.syll-fc-edit-hint,
+.syll-fc-edit-error {
+    flex: 1 1 100%;
+    margin: 0;
+    text-align: center;
+    font-size: 0.85rem;
+}
+
+.syll-fc-edit-hint {
+    color: #6a737b;
+}
+
+.syll-fc-edit-error {
+    color: #8b1a1a;
+}
+
+.syll-fc-edit-hint[hidden],
+.syll-fc-edit-error[hidden],
+.syll-fc-edit-board[hidden] {
+    display: none !important;
+}
+
+.syll-fc-edit-board {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 1rem;
+    margin: 0.75rem 0 1.25rem;
+}
+
+.syll-fc-edit-card {
+    display: flex;
+    flex-direction: column;
+    gap: 0.55rem;
+    padding: 0.9rem 1rem 1rem;
+    border: 1px solid #d7dee7;
+    border-radius: 12px;
+    background: #f8fafc;
+    box-sizing: border-box;
+    cursor: grab;
+}
+
+.syll-fc-edit-card:active {
+    cursor: grabbing;
+}
+
+.syll-fc-edit-card-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+    font-size: 0.8rem;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    color: #6a737b;
+}
+
+.syll-fc-edit-card-title {
+    flex: 1 1 auto;
+}
+
+.syll-fc-edit-menu-btn {
+    appearance: none;
+    flex: 0 0 auto;
+    width: 1.75rem;
+    height: 1.75rem;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    color: #6a737b;
+    font-size: 1.1rem;
+    line-height: 1;
+    cursor: pointer;
+}
+
+.syll-fc-edit-menu-btn:hover,
+.syll-fc-edit-menu-btn.open {
+    background: #e8eef5;
+    color: #1d2125;
+}
+
+.syll-fc-edit-menu-btn:focus-visible {
+    outline: 2px solid #0f6cbf;
+    outline-offset: 1px;
+}
+
+.syll-fc-edit-menu {
+    position: fixed;
+    z-index: 10050;
+    min-width: 7.5rem;
+    padding: 0.25rem;
+    border: 1px solid #d7dee7;
+    border-radius: 8px;
+    background: #fff;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+}
+
+.syll-fc-edit-menu-action {
+    appearance: none;
+    display: block;
+    width: 100%;
+    margin: 0;
+    padding: 0.45rem 0.7rem;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    color: #1d2125;
+    font: inherit;
+    font-size: 0.9rem;
+    text-align: left;
+    cursor: pointer;
+}
+
+.syll-fc-edit-menu-action:hover:not(:disabled) {
+    background: #f0f4f8;
+}
+
+.syll-fc-edit-menu-action.danger {
+    color: #8b1a1a;
+}
+
+.syll-fc-edit-menu-action.danger:hover:not(:disabled) {
+    background: #f8eaea;
+}
+
+.syll-fc-edit-menu-action:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.syll-fc-sortable-ghost {
+    opacity: 0.35;
+}
+
+.syll-fc-sortable-chosen {
+    box-shadow: 0 8px 24px rgba(15, 108, 191, 0.18);
+}
+
+.syll-fc-sortable-drag {
+    cursor: grabbing;
+    opacity: 1;
+}
+
+.syll-fc-edit-label {
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: #4a5560;
+    cursor: default;
+}
+
+.syll-fc-edit-front,
+.syll-fc-edit-back {
+    width: 100%;
+    box-sizing: border-box;
+    resize: vertical;
+    min-height: 4rem;
+    padding: 0.55rem 0.65rem;
+    border: 1px solid #cfd6dd;
+    border-radius: 8px;
+    font: inherit;
+    font-weight: 400;
+    color: #1d2125;
+    background: #fff;
+    cursor: text;
+}
+
+.syll-fc-edit-front:focus,
+.syll-fc-edit-back:focus {
+    outline: 2px solid #0f6cbf;
+    outline-offset: 1px;
+    border-color: #0f6cbf;
+}
+
+.syll-fc.is-edit .syll-fc-stage,
+.syll-fc.is-edit .syll-fc-actions,
+.syll-fc.is-edit .syll-fc-results {
+    display: none !important;
 }
 
 .syll-fc-stage {
@@ -1378,7 +1599,10 @@
 @media print {
     .syll-fc-toolbar,
     .syll-fc-actions,
-    .syll-fc-results {
+    .syll-fc-results,
+    .syll-fc-edit-board,
+    .syll-fc-edit-controls,
+    .syll-fc-study-controls {
         display: none !important;
     }
 

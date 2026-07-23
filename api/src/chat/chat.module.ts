@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ChatController } from './chat.controller';
+import { FlashcardsController } from './flashcards.controller';
 import { ChatService } from './chat.service';
 import { PendingAction } from './entities/pending-action.entity';
 import { GeminiClient } from './gemini.client';
@@ -9,6 +10,7 @@ import { PracticeQuizGenerationService } from './practice-quiz-generation.servic
 import { PracticeQuizReviewService } from './practice-quiz-review.service';
 import { StudyGuideGenerationService } from './study-guide-generation.service';
 import { FlashcardsGenerationService } from './flashcards-generation.service';
+import { FlashcardsUpdateService } from './flashcards-update.service';
 import { TopicSuggestionsService } from './topic-suggestions.service';
 import { ContextModule } from '../context/context.module';
 import { ConversationModule } from '../conversation/conversation.module';
@@ -19,7 +21,7 @@ import { ConversationModule } from '../conversation/conversation.module';
     ConversationModule,
     TypeOrmModule.forFeature([PendingAction]),
   ],
-  controllers: [ChatController],
+  controllers: [ChatController, FlashcardsController],
   providers: [
     GeminiClient,
     ChatService,
@@ -28,6 +30,7 @@ import { ConversationModule } from '../conversation/conversation.module';
     PracticeQuizReviewService,
     StudyGuideGenerationService,
     FlashcardsGenerationService,
+    FlashcardsUpdateService,
     TopicSuggestionsService,
   ],
 })

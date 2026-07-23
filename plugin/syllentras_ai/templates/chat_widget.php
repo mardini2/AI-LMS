@@ -67,14 +67,6 @@ defined('MOODLE_INTERNAL') || die();
             </main>
         </div>
 
-        <div id="syllentras-chat-modal" hidden>
-            <div class="syllentras-modal-card" role="dialog" aria-modal="true" aria-labelledby="syllentras-modal-title">
-                <div id="syllentras-modal-title" class="syllentras-modal-title"></div>
-                <div id="syllentras-modal-body" class="syllentras-modal-body"></div>
-                <div id="syllentras-modal-actions" class="syllentras-modal-actions"></div>
-            </div>
-        </div>
-
         <div class="syllentras-panel-resize-handle" data-edge="n" role="separator" aria-label="Resize panel from top" aria-orientation="horizontal"></div>
         <div class="syllentras-panel-resize-handle" data-edge="s" role="separator" aria-label="Resize panel from bottom" aria-orientation="horizontal"></div>
         <div class="syllentras-panel-resize-handle" data-edge="e" role="separator" aria-label="Resize panel from right" aria-orientation="vertical"></div>
@@ -83,5 +75,14 @@ defined('MOODLE_INTERNAL') || die();
         <div class="syllentras-panel-resize-handle" data-edge="nw" role="separator" aria-label="Resize panel from top-left corner"></div>
         <div class="syllentras-panel-resize-handle" data-edge="se" role="separator" aria-label="Resize panel from bottom-right corner"></div>
         <div class="syllentras-panel-resize-handle" data-edge="sw" role="separator" aria-label="Resize panel from bottom-left corner"></div>
+    </div>
+
+    <!-- Outside the panel so flashcard (and other) confirms work when chat is closed -->
+    <div id="syllentras-chat-modal" hidden>
+        <div class="syllentras-modal-card" role="dialog" aria-modal="true" aria-labelledby="syllentras-modal-title">
+            <div id="syllentras-modal-title" class="syllentras-modal-title"></div>
+            <div id="syllentras-modal-body" class="syllentras-modal-body"></div>
+            <div id="syllentras-modal-actions" class="syllentras-modal-actions"></div>
+        </div>
     </div>
 </div>

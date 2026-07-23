@@ -168,6 +168,7 @@ On the new service page → Add functions:
 | `local_syllentras_ai_ensure_student_placement` | Ensure shared AI Content section + private student group | `local/syllentras_ai:manageplacement` |
 | `local_syllentras_ai_create_practice_quiz` | Create a private practice quiz for one student | `local/syllentras_ai:manageplacement` |
 | `local_syllentras_ai_create_study_guide` | Create a private study guide or flashcards Page for one student | `local/syllentras_ai:manageplacement` |
+| `local_syllentras_ai_update_private_page` | Update content of a private AI Content Page (flashcards / study guide) | `local/syllentras_ai:manageplacement` |
 | `local_syllentras_ai_get_practice_attempt_review` | Get finished practice-quiz attempt results for review | `local/syllentras_ai:manageplacement` |
 
 **Add the API user as an authorised user** (Step 7)
@@ -207,7 +208,8 @@ After installing or upgrading the plugin, complete these Moodle admin steps so t
    Ensure these are listed (Add functions if missing):
    - `local_syllentras_ai_ensure_student_placement`
    - `local_syllentras_ai_create_practice_quiz`
-   - `local_syllentras_ai_create_study_guide` (also used for flashcards Pages — no separate WS)
+   - `local_syllentras_ai_create_study_guide` (also used for flashcards Pages — no separate create WS)
+   - `local_syllentras_ai_update_private_page` (save edited flashcards / private Page HTML)
    - `local_syllentras_ai_get_practice_attempt_review`  
    Recreate the token only if you switch services. Moodle may warn about quiz/question capabilities for `syllentras_api`; with **Manager** at system level those are usually covered.
 

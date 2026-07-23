@@ -72,4 +72,49 @@ export class StudyGuideMoodleService {
       viewUrl: this.moodle.toPublicMoodleUrl(result.viewurl),
     };
   }
+
+  /**
+   * Update HTML content of an existing private AI Content Page.
+   */
+  async updatePrivatePage(input: {
+    courseId: number;
+    moodleUserId: number;
+    cmId: number;
+    contentHtml: string;
+  }): Promise<CreatedStudyGuide> {
+    if (input.courseId <= 1) {
+      throw new Error('courseId must be a real course (greater than 1)');
+    }
+    if (input.moodleUserId < 1) {
+      throw new Error('moodleUserId must be a positive integer');
+    }
+    if (input.cmId < 1) {
+      throw new Error('cmId must be a positive integer');
+    }
+    if (!input.contentHtml.trim()) {
+      throw new Error('contentHtml is required');
+    }
+
+    const result = await this.moodle.callMoodleApi<{
+      pageid: number;
+      cmid: number;
+      name: string;
+      viewurl: string;
+    }>(
+      'local_syllentras_ai_update_private_page',
+      {
+        cmid: input.cmId,
+        userid: input.moodleUserId,
+        content: input.contentHtml,
+      },
+      'POST',
+    );
+
+    return {
+      pageId: result.pageid,
+      cmId: result.cmid,
+      name: result.name,
+      viewUrl: this.moodle.toPublicMoodleUrl(result.viewurl),
+    };
+  }
 }

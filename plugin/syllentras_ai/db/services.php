@@ -27,6 +27,14 @@ $functions = [
         'capabilities' => 'local/syllentras_ai:manageplacement',
         'ajax' => false,
     ],
+    'local_syllentras_ai_update_private_page' => [
+        'classname' => 'local_syllentras_ai\external\update_private_page',
+        'methodname' => 'execute',
+        'description' => 'Update content of a private AI Content Page (study guide / flashcards) for one student',
+        'type' => 'write',
+        'capabilities' => 'local/syllentras_ai:manageplacement',
+        'ajax' => false,
+    ],
     'local_syllentras_ai_get_practice_attempt_review' => [
         'classname' => 'local_syllentras_ai\external\get_practice_attempt_review',
         'methodname' => 'execute',
@@ -54,6 +62,7 @@ $services = [
             'local_syllentras_ai_ensure_student_placement',
             'local_syllentras_ai_create_practice_quiz',
             'local_syllentras_ai_create_study_guide',
+            'local_syllentras_ai_update_private_page',
             'local_syllentras_ai_get_practice_attempt_review',
         ],
         'restrictedusers' => 0,

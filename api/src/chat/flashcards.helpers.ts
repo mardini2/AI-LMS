@@ -130,7 +130,7 @@ export function renderFlashcardsHtml(doc: FlashcardsDocument): string {
     '<div class="syll-fc" data-syll-fc-study="1">',
     '<p class="syll-fc-intro">Flip the card, then mark whether you got it right.</p>',
     '<div class="syll-fc-toolbar" hidden>',
-    `<span class="syll-fc-progress" aria-live="polite">1 / ${total}</span>`,
+    `<span class="syll-fc-progress" aria-live="polite">Card: 1 / ${total}</span>`,
     '<button type="button" class="syll-fc-btn syll-fc-btn-restart">Shuffle &amp; try again</button>',
     '</div>',
     '<div class="syll-fc-stage">',
