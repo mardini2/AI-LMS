@@ -10,6 +10,7 @@ import { GeminiClient } from './gemini.client';
 import {
   normalizeQuestion,
   questionDedupeKey,
+  type QuizDifficulty,
 } from './practice-quiz.helpers';
 
 @Injectable()
@@ -22,6 +23,7 @@ export class PracticeQuizGenerationService {
     title: string;
     scopeSummary: string;
     questionCount: number;
+    difficulty?: QuizDifficulty;
     courseMaterial: string;
   }): Promise<PracticeQuizQuestion[]> {
     const responseSchema = {

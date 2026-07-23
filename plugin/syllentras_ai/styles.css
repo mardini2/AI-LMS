@@ -633,7 +633,8 @@
     color: #456;
 }
 .syllentras-pending-title-input,
-.syllentras-pending-count-input {
+.syllentras-pending-count-input,
+.syllentras-pending-difficulty-select {
     box-sizing: border-box;
     border: 1px solid #c5d8ef;
     border-radius: 6px;
@@ -649,8 +650,13 @@
 .syllentras-pending-count-input {
     width: 5.5rem;
 }
+.syllentras-pending-difficulty-select {
+    width: auto;
+    min-width: 7.5rem;
+}
 .syllentras-pending-title-input:disabled,
-.syllentras-pending-count-input:disabled {
+.syllentras-pending-count-input:disabled,
+.syllentras-pending-difficulty-select:disabled {
     opacity: 0.6;
     cursor: default;
 }

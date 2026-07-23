@@ -35,6 +35,7 @@ export class ChatController {
     return this.chatService.confirmAction(dto.actionId, dto.moodleUserId, {
       title: dto.title,
       count: dto.count,
+      difficulty: dto.difficulty,
     });
   }
 

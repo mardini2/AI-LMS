@@ -1,4 +1,5 @@
 import {
+  IsIn,
   IsInt,
   IsOptional,
   IsString,
@@ -7,6 +8,7 @@ import {
   Min,
 } from 'class-validator';
 import { Type } from 'class-transformer';
+import { QUIZ_DIFFICULTIES } from '../practice-quiz.helpers';
 
 export class ConfirmActionDto {
   @IsUUID()
@@ -27,6 +29,11 @@ export class ConfirmActionDto {
   @IsInt()
   @Min(1)
   count?: number;
+
+  @IsOptional()
+  @IsString()
+  @IsIn([...QUIZ_DIFFICULTIES])
+  difficulty?: string;
 }
 
 export class CancelActionDto {

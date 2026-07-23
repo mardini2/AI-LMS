@@ -1,9 +1,13 @@
 import { Type, type FunctionDeclaration } from '@google/genai';
 import type { PracticeQuizQuestion } from '../context/context.types';
 import {
+  QUIZ_DIFFICULTIES,
+  QUIZ_DIFFICULTY_DEFAULT,
   QUIZ_QUESTION_COUNT_AUTO_MAX,
   QUIZ_QUESTION_COUNT_EXPLICIT_MAX,
   QUIZ_QUESTION_COUNT_MIN,
+  normalizeQuizDifficulty,
+  type QuizDifficulty,
 } from './practice-quiz.helpers';
 import {
   FLASHCARD_COUNT_AUTO_MAX,
@@ -36,12 +40,19 @@ export const PROPOSE_PRACTICE_QUIZ_TOOL: FunctionDeclaration = {
         description:
           'True only when the student explicitly stated how many questions they want. False when you are choosing the count yourself.',
       },
+      difficulty: {
+        type: Type.STRING,
+        format: 'enum',
+        enum: [...QUIZ_DIFFICULTIES],
+        description: `Whole-quiz difficulty. Use the student's stated level when clear (easy/medium/hard/expert). Otherwise use ${QUIZ_DIFFICULTY_DEFAULT}.`,
+      },
     },
     required: [
       'title',
       'scopeSummary',
       'questionCount',
       'countSpecifiedByStudent',
+      'difficulty',
     ],
   },
 };
@@ -134,9 +145,10 @@ export function buildSystemPrompt(ctx: {
       'When the student clearly asks you to create/make/generate flashcards or a flashcard deck in Moodle, call the propose_flashcards tool with a sensible title, scopeSummary, and cardCount.',
       `If the student did not say how many flashcards they want, choose a good count between ${FLASHCARD_COUNT_MIN} and ${FLASHCARD_COUNT_AUTO_MAX} and set countSpecifiedByStudent to false.`,
       `If the student explicitly stated a flashcard count, pass their requested number (even if above ${FLASHCARD_COUNT_EXPLICIT_MAX}) and set countSpecifiedByStudent to true.`,
-      'When the student clearly asks you to create/make/generate a practice quiz in Moodle, call the propose_practice_quiz tool with a sensible title, scopeSummary, and questionCount.',
+      'When the student clearly asks you to create/make/generate a practice quiz in Moodle, call the propose_practice_quiz tool with a sensible title, scopeSummary, questionCount, and difficulty.',
       `If the student did not say how many questions they want, choose a good count between ${QUIZ_QUESTION_COUNT_MIN} and ${QUIZ_QUESTION_COUNT_AUTO_MAX} and set countSpecifiedByStudent to false.`,
       `If the student explicitly stated a question count, pass their requested number (even if above ${QUIZ_QUESTION_COUNT_EXPLICIT_MAX}) and set countSpecifiedByStudent to true. Still call the tool — the system will cap the count and explain the limit in the proposal.`,
+      `For difficulty, use easy, medium, hard, or expert when the student clearly asks for a level; otherwise use ${QUIZ_DIFFICULTY_DEFAULT}.`,
       'Do not call more than one create tool in one turn. Pick study guide vs flashcards vs quiz based on the request.',
       'Do not claim a study guide, flashcards, or quiz already exist. Creation happens only after the student confirms in the UI.',
       'For normal Q&A that is not a create request, answer normally without calling a tool.',
@@ -227,10 +239,21 @@ export function buildPracticeQuestionsPrompt(
     title: string;
     scopeSummary: string;
     courseMaterial: string;
+    difficulty?: QuizDifficulty;
   },
   count: number,
   alreadyAccepted: PracticeQuizQuestion[],
 ): string {
+  const difficulty = normalizeQuizDifficulty(input.difficulty);
+  const difficultyGuidance: Record<QuizDifficulty, string> = {
+    easy: 'Easy: focus on recall and definitions; ask for direct facts clearly stated in the material. Avoid multi-step reasoning.',
+    medium:
+      'Medium: ask for straightforward application of one concept from the material in a simple scenario.',
+    hard: 'Hard: use multi-step reasoning, compare/contrast, or common pitfalls grounded in the material.',
+    expert:
+      'Expert: synthesize across ideas or use edge cases from the material only. Do not invent topics or facts not present in the course material.',
+  };
+
   const qualityRules = [
     'Question quality rules:',
     '- Test concepts, procedures, definitions, and trade-offs from the technical material.',
@@ -243,6 +266,8 @@ export function buildPracticeQuestionsPrompt(
   const lines = [
     `Create exactly ${count} practice quiz questions for: ${input.title}`,
     `Scope: ${input.scopeSummary}`,
+    `Difficulty: ${difficulty} — ${difficultyGuidance[difficulty]}`,
+    'Match every question to that difficulty level. Keep the whole set at that level (do not mix easy and expert in one batch).',
     'Use only multiple choice (exactly one correct answer, fraction 1.0) or true/false.',
     'For true/false, answers must be exactly two entries with text "True" and "False".',
     'For multichoice, provide 3–4 options; exactly one answer has fraction 1.0, others 0.',

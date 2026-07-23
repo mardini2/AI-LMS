@@ -1,3 +1,5 @@
+import type { QuizDifficulty } from './entities/pending-action.entity';
+
 export interface PendingActionDto {
   id: string;
   type: 'practice_quiz' | 'study_guide' | 'flashcards';
@@ -5,6 +7,8 @@ export interface PendingActionDto {
   scopeSummary: string;
   /** Present for practice quizzes only. */
   questionCount?: number;
+  /** Present for practice quizzes only. */
+  difficulty?: QuizDifficulty;
   /** Present for flashcards only. */
   cardCount?: number;
 }

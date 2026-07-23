@@ -16,10 +16,14 @@ export type PendingActionStatus =
   | 'cancelled'
   | 'expired';
 
+export type QuizDifficulty = 'easy' | 'medium' | 'hard' | 'expert';
+
 export interface PracticeQuizPayload {
   title: string;
   scopeSummary: string;
   questionCount: number;
+  /** Whole-quiz difficulty for generation. Defaults to medium when omitted. */
+  difficulty?: QuizDifficulty;
   sectionId?: number;
   sectionNumber?: number;
   sectionName?: string;

@@ -5,6 +5,21 @@ var QUIZ_COUNT_MIN = 5;
 var QUIZ_COUNT_MAX = 40;
 var FLASHCARD_COUNT_MIN = 8;
 var FLASHCARD_COUNT_MAX = 40;
+var QUIZ_DIFFICULTIES = [
+    { value: 'easy', label: 'Easy' },
+    { value: 'medium', label: 'Medium' },
+    { value: 'hard', label: 'Hard' },
+    { value: 'expert', label: 'Expert' }
+];
+var QUIZ_DIFFICULTY_DEFAULT = 'medium';
+
+function normalizePendingDifficulty(value) {
+    var raw = typeof value === 'string' ? value.trim().toLowerCase() : '';
+    for (var i = 0; i < QUIZ_DIFFICULTIES.length; i++) {
+        if (QUIZ_DIFFICULTIES[i].value === raw) return raw;
+    }
+    return QUIZ_DIFFICULTY_DEFAULT;
+}
 
 function clearPendingActionUi(root) {
     var scope = root || msgs;
@@ -66,6 +81,7 @@ function attachPendingAction(messageEl, pendingAction) {
     var countInput = null;
     var countMin = null;
     var countMax = null;
+    var difficultySelect = null;
     if (actionType === 'flashcards') {
         countMin = FLASHCARD_COUNT_MIN;
         countMax = FLASHCARD_COUNT_MAX;
@@ -90,6 +106,21 @@ function attachPendingAction(messageEl, pendingAction) {
         countInput.value = String(pendingAction.questionCount || QUIZ_COUNT_MIN);
         countInput.setAttribute('aria-label', 'Number of questions');
         summary.appendChild(createPendingField('Questions', countInput));
+
+        difficultySelect = document.createElement('select');
+        difficultySelect.className = 'syllentras-pending-difficulty-select';
+        difficultySelect.setAttribute('aria-label', 'Difficulty');
+        var selectedDifficulty = normalizePendingDifficulty(pendingAction.difficulty);
+        QUIZ_DIFFICULTIES.forEach(function (opt) {
+            var option = document.createElement('option');
+            option.value = opt.value;
+            option.textContent = opt.label;
+            if (opt.value === selectedDifficulty) {
+                option.selected = true;
+            }
+            difficultySelect.appendChild(option);
+        });
+        summary.appendChild(createPendingField('Difficulty', difficultySelect));
     } else {
         var guideNote = document.createElement('div');
         guideNote.className = 'syllentras-pending-note';
@@ -122,6 +153,7 @@ function attachPendingAction(messageEl, pendingAction) {
         cancelBtn.disabled = busy;
         titleInput.disabled = busy;
         if (countInput) countInput.disabled = busy;
+        if (difficultySelect) difficultySelect.disabled = busy;
         confirmBtn.textContent = busy ? 'Creating...' : 'Confirm';
     }
 
@@ -164,6 +196,9 @@ function attachPendingAction(messageEl, pendingAction) {
         };
         if (typeof count === 'number') {
             body.count = count;
+        }
+        if (difficultySelect) {
+            body.difficulty = normalizePendingDifficulty(difficultySelect.value);
         }
         fetchJson('/chat/actions/confirm', {
             method: 'POST',

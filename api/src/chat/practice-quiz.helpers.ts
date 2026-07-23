@@ -1,12 +1,40 @@
 import type { CourseContextFilter, PracticeQuizQuestion } from '../context/context.types';
 import type { ReviewBlockDto } from './chat.types';
-import type { PracticeQuizPayload } from './entities/pending-action.entity';
+import type {
+  PracticeQuizPayload,
+  QuizDifficulty,
+} from './entities/pending-action.entity';
 import { escapeHtml } from './study-guide.helpers';
+
+export type { QuizDifficulty };
 
 export const QUIZ_QUESTION_COUNT_MIN = 5;
 export const QUIZ_QUESTION_COUNT_AUTO_MAX = 15; // when AI chooses
 export const QUIZ_QUESTION_COUNT_EXPLICIT_MAX = 40; // when student specifies
 export const QUIZ_QUESTION_COUNT_DEFAULT = 10; // fallback if invalid
+
+export const QUIZ_DIFFICULTY_DEFAULT: QuizDifficulty = 'medium';
+export const QUIZ_DIFFICULTIES: readonly QuizDifficulty[] = [
+  'easy',
+  'medium',
+  'hard',
+  'expert',
+] as const;
+
+export function normalizeQuizDifficulty(value: unknown): QuizDifficulty {
+  if (typeof value !== 'string') {
+    return QUIZ_DIFFICULTY_DEFAULT;
+  }
+  const normalized = value.trim().toLowerCase();
+  if ((QUIZ_DIFFICULTIES as readonly string[]).includes(normalized)) {
+    return normalized as QuizDifficulty;
+  }
+  return QUIZ_DIFFICULTY_DEFAULT;
+}
+
+export function formatQuizDifficultyLabel(difficulty: QuizDifficulty): string {
+  return difficulty.charAt(0).toUpperCase() + difficulty.slice(1);
+}
 
 export function buildPracticeQuizContextFilter(
   payload: Pick<
@@ -56,13 +84,16 @@ export function buildProposalMessage(input: {
   title: string;
   questionCount: number;
   scopeSummary: string;
+  difficulty?: QuizDifficulty;
   requestedCount?: number;
 }): string {
+  const difficulty = normalizeQuizDifficulty(input.difficulty);
   const lines = [
     `I can create a **private practice quiz** in Moodle for you.`,
     '',
     `**${input.title}**`,
     `- **${input.questionCount} questions** (multiple choice and true/false)`,
+    `- Difficulty: **${formatQuizDifficultyLabel(difficulty)}**`,
     `- Covers: ${input.scopeSummary}`,
     `- Practice only — will **not** count toward your course grade`,
     `- Placed under **AI Content** (only you and instructors can see it)`,

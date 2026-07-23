@@ -43,6 +43,8 @@ import {
   buildPracticeQuizContextFilter,
   buildProposalMessage,
   clampQuestionCount,
+  formatQuizDifficultyLabel,
+  normalizeQuizDifficulty,
   QUIZ_QUESTION_COUNT_EXPLICIT_MAX,
   scrubQuizGenerationContext,
 } from './practice-quiz.helpers';
@@ -212,6 +214,7 @@ export class ChatService {
         scopeSummary?: string;
         questionCount?: number;
         countSpecifiedByStudent?: boolean;
+        difficulty?: string;
       };
       const requestedCount =
         typeof args.questionCount === 'number'
@@ -230,6 +233,7 @@ export class ChatService {
       const scopeSummary =
         (args.scopeSummary ?? '').trim() ||
         'Course material from the current conversation';
+      const difficulty = normalizeQuizDifficulty(args.difficulty);
 
       const action = await this.pendingActionService.createPracticeQuizProposal({
         conversationId,
@@ -239,6 +243,7 @@ export class ChatService {
           title,
           scopeSummary,
           questionCount,
+          difficulty,
           sectionId: conversation.sectionId,
           sectionNumber: conversation.sectionNumber,
           sectionName: conversation.sectionName,
@@ -250,6 +255,7 @@ export class ChatService {
         type: 'practice_quiz',
         title,
         questionCount,
+        difficulty,
         scopeSummary,
       };
 
@@ -257,6 +263,7 @@ export class ChatService {
         title,
         questionCount,
         scopeSummary,
+        difficulty,
         requestedCount: exceededMax ? Math.round(requestedCount) : undefined,
       });
     } else if (proposeGuideCall && moodleUserId && courseId > 1) {
@@ -387,14 +394,18 @@ export class ChatService {
   async confirmAction(
     actionId: string,
     moodleUserId: number,
-    edits?: { title?: string; count?: number },
+    edits?: { title?: string; count?: number; difficulty?: string },
   ): Promise<ChatResponse> {
     let action = await this.pendingActionService.assertPendingOwned(
       actionId,
       moodleUserId,
     );
 
-    if (edits?.title !== undefined || edits?.count !== undefined) {
+    if (
+      edits?.title !== undefined ||
+      edits?.count !== undefined ||
+      edits?.difficulty !== undefined
+    ) {
       action = await this.applyConfirmEdits(action, edits);
     }
 
@@ -413,7 +424,7 @@ export class ChatService {
 
   private async applyConfirmEdits(
     action: PendingAction,
-    edits: { title?: string; count?: number },
+    edits: { title?: string; count?: number; difficulty?: string },
   ): Promise<PendingAction> {
     const payload = { ...action.payload } as
       | PracticeQuizPayload
@@ -443,6 +454,12 @@ export class ChatService {
       // study_guide: count is ignored
     }
 
+    if (edits.difficulty !== undefined && action.type === 'practice_quiz') {
+      (payload as PracticeQuizPayload).difficulty = normalizeQuizDifficulty(
+        edits.difficulty,
+      );
+    }
+
     return this.pendingActionService.updatePendingPayload(action.id, payload);
   }
 
@@ -459,6 +476,7 @@ export class ChatService {
       sectionNumber,
       sectionName,
     } = payload;
+    const difficulty = normalizeQuizDifficulty(payload.difficulty);
 
     const resolved = await this.contextService.resolveSectionsFromScope(
       action.courseId,
@@ -493,6 +511,7 @@ export class ChatService {
 
     this.logger.log(
       `Generating ${questionCount} practice questions for action ${action.id}` +
+        ` (difficulty=${difficulty})` +
         (resolved.sectionIds.length > 0
           ? ` (hard-scoped to sections [${resolved.sectionNumbers.join(', ')}])`
           : ' (course-wide scope)'),
@@ -502,6 +521,7 @@ export class ChatService {
         title,
         scopeSummary,
         questionCount,
+        difficulty,
         courseMaterial: scrubQuizGenerationContext(courseMaterial),
       });
 
@@ -526,6 +546,7 @@ export class ChatService {
       `Your practice quiz **${quiz.name}** is ready.`,
       '',
       `- ${questions.length} questions (multiple choice and true/false)`,
+      `- Difficulty: **${formatQuizDifficultyLabel(difficulty)}**`,
       `- Practice only — does not count toward your course grade`,
       `- Placed under **AI Content** (visible to you and instructors)`,
       '',
@@ -799,6 +820,7 @@ export class ChatService {
       type: 'practice_quiz',
       title: payload.title,
       questionCount: payload.questionCount,
+      difficulty: normalizeQuizDifficulty(payload.difficulty),
       scopeSummary: payload.scopeSummary,
     };
   }
