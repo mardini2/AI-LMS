@@ -4,6 +4,8 @@
 var openToolsMenu = null;
 var selectedToolKey = null;
 var selectedTopicId = null;
+var toolsMenu = document.getElementById('syllentras-chat-tools-menu');
+var toolsWrap = toolsBtn ? toolsBtn.closest('.syllentras-tools-wrap') : null;
 
 var STUDY_TOOLS = [
     {
@@ -27,10 +29,11 @@ var STUDY_TOOLS = [
 ];
 
 function closeToolsMenu() {
-    if (openToolsMenu) {
-        openToolsMenu.remove();
-        openToolsMenu = null;
+    if (toolsMenu) {
+        toolsMenu.hidden = true;
+        toolsMenu.innerHTML = '';
     }
+    openToolsMenu = null;
     selectedToolKey = null;
     selectedTopicId = null;
     if (toolsBtn) {
@@ -158,20 +161,6 @@ function findStudyTool(key) {
 
 function hasOpenPendingAction() {
     return !!(msgs && msgs.querySelector('.syllentras-pending-action'));
-}
-
-function positionToolsMenu(menu) {
-    if (!toolsBtn || !menu) return;
-    var rect = toolsBtn.getBoundingClientRect();
-    var menuHeight = menu.offsetHeight;
-    var menuWidth = menu.offsetWidth;
-    var left = Math.max(8, Math.min(rect.left, window.innerWidth - menuWidth - 8));
-    var top = rect.top - menuHeight - 6;
-    if (top < 8) {
-        top = Math.min(window.innerHeight - menuHeight - 8, rect.bottom + 6);
-    }
-    menu.style.left = left + 'px';
-    menu.style.top = top + 'px';
 }
 
 function updateContinueState(panel) {
@@ -331,17 +320,18 @@ function renderTopicPanel(topicsCol) {
 function showToolsMenu() {
     closeConversationMenu();
     closeToolsMenu();
-    if (!toolsBtn || toolsBtn.disabled) return;
+    if (typeof closeModeMenu === 'function') closeModeMenu();
+    if (typeof closeProviderMenu === 'function') closeProviderMenu();
+    if (!toolsBtn || toolsBtn.disabled || !toolsMenu) return;
 
     toolsBtn.classList.add('open');
     toolsBtn.setAttribute('aria-expanded', 'true');
     selectedToolKey = null;
     selectedTopicId = null;
 
-    var menu = document.createElement('div');
-    menu.className = 'syllentras-tools-menu';
-    menu.setAttribute('role', 'menu');
-    menu.setAttribute('aria-label', 'Study tools');
+    toolsMenu.innerHTML = '';
+    toolsMenu.hidden = false;
+    openToolsMenu = toolsMenu;
 
     var toolsCol = document.createElement('div');
     toolsCol.className = 'syllentras-tools-menu-tools';
@@ -383,12 +373,9 @@ function showToolsMenu() {
         toolsCol.appendChild(button);
     });
 
-    menu.appendChild(toolsCol);
-    menu.appendChild(topicsCol);
-    document.body.appendChild(menu);
-    openToolsMenu = menu;
+    toolsMenu.appendChild(toolsCol);
+    toolsMenu.appendChild(topicsCol);
     renderTopicPanel(topicsCol);
-    positionToolsMenu(menu);
 }
 
 function toggleToolsMenu(e) {

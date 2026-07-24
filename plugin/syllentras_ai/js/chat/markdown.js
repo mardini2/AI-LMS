@@ -40,9 +40,13 @@ function attachReviewCollapseControls(el) {
 }
 
 function renderAssistantContent(el, text) {
+    var modeChip = el.querySelector('.syllentras-msg-mode');
     el.classList.add('syllentras-markdown');
     var raw = marked.parse(text, { breaks: true });
     el.innerHTML = DOMPurify.sanitize(raw);
+    if (modeChip) {
+        el.insertBefore(modeChip, el.firstChild);
+    }
     Array.from(el.querySelectorAll('a[href]')).forEach(function (anchor) {
         anchor.setAttribute('target', '_blank');
         anchor.setAttribute('rel', 'noopener noreferrer');

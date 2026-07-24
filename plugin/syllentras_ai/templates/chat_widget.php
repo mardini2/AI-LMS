@@ -62,25 +62,35 @@ defined('MOODLE_INTERNAL') || die();
                     <div id="syllentras-chat-active-meta">
                         <span id="syllentras-chat-active-title"><?php echo s($generaltitle); ?></span>
                         <span id="syllentras-chat-active-tag"><?php echo s($generaltag); ?></span>
+                        <span id="syllentras-chat-active-mode" data-mode="direct">Direct</span>
                     </div>
                     <div id="syllentras-chat-messages" role="log" aria-live="polite">
                         <div id="syllentras-chat-load-more" hidden>Loading...</div>
                     </div>
                     <div id="syllentras-chat-input-resizer" role="separator" aria-label="Resize message input" aria-orientation="horizontal"></div>
                     <div id="syllentras-chat-input-row">
-                        <button
-                            type="button"
-                            id="syllentras-chat-tools-btn"
-                            class="syllentras-chat-icon-btn"
-                            aria-label="Study tools"
-                            aria-haspopup="menu"
-                            aria-expanded="false"
-                            title="Study tools"
-                        >
-                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false">
-                                <path fill="currentColor" d="M19 11h-6V5a1 1 0 1 0-2 0v6H5a1 1 0 1 0 0 2h6v6a1 1 0 1 0 2 0v-6h6a1 1 0 1 0 0-2z"/>
-                            </svg>
-                        </button>
+                        <div class="syllentras-tools-wrap">
+                            <button
+                                type="button"
+                                id="syllentras-chat-tools-btn"
+                                class="syllentras-chat-icon-btn"
+                                aria-label="Study tools"
+                                aria-haspopup="menu"
+                                aria-expanded="false"
+                                title="Study tools"
+                            >
+                                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false">
+                                    <path fill="currentColor" d="M19 11h-6V5a1 1 0 1 0-2 0v6H5a1 1 0 1 0 0 2h6v6a1 1 0 1 0 2 0v-6h6a1 1 0 1 0 0-2z"/>
+                                </svg>
+                            </button>
+                            <div
+                                id="syllentras-chat-tools-menu"
+                                class="syllentras-tools-menu"
+                                role="menu"
+                                aria-label="Study tools"
+                                hidden
+                            ></div>
+                        </div>
                         <div class="syllentras-provider-wrap">
                             <button
                                 type="button"
@@ -99,6 +109,26 @@ defined('MOODLE_INTERNAL') || die();
                                 class="syllentras-provider-menu"
                                 role="listbox"
                                 aria-label="AI providers"
+                                hidden
+                            ></div>
+                        </div>
+                        <div class="syllentras-mode-wrap">
+                            <button
+                                type="button"
+                                id="syllentras-mode-btn"
+                                class="syllentras-mode-btn"
+                                aria-label="Chat mode: Direct. Click to change."
+                                aria-haspopup="menu"
+                                aria-expanded="false"
+                                title="Chat mode: Direct"
+                            >
+                                <span id="syllentras-mode-btn-label">Direct</span>
+                            </button>
+                            <div
+                                id="syllentras-mode-menu"
+                                class="syllentras-mode-menu"
+                                role="menu"
+                                aria-label="Chat modes"
                                 hidden
                             ></div>
                         </div>

@@ -12,6 +12,7 @@ ORDER = [
     "layout.js",
     "api.js",
     "providers.js",
+    "mode-selector.js",
     "markdown.js",
     "pending-actions.js",
     "review-offer.js",

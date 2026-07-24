@@ -97,6 +97,11 @@ export class ChatService {
       conversationId: incomingConvId,
       provider: requestedProvider,
     } = dto;
+    const mode = dto.mode === 'coach' ? 'coach' : 'direct';
+    const guidance =
+      mode === 'coach'
+        ? Math.min(5, Math.max(1, Math.round(dto.guidance ?? 3)))
+        : undefined;
     const llm = this.providers.resolve(requestedProvider);
 
     let conversationId = incomingConvId;
@@ -166,6 +171,8 @@ export class ChatService {
         sectionName: conversation.sectionName,
         courseMaterial,
         canProposeContent,
+        mode,
+        guidance,
       }),
       history: dbHistory,
       message,
@@ -339,8 +346,13 @@ export class ChatService {
     }
 
     await this.conversationService.appendMessages(conversationId, [
-      { role: 'user', content: message },
-      { role: 'assistant', content: responseText },
+      { role: 'user', content: message, mode, guidance: guidance ?? null },
+      {
+        role: 'assistant',
+        content: responseText,
+        mode,
+        guidance: guidance ?? null,
+      },
     ]);
 
     let topicSuggestions = normalizeReturnedTopics(conversation.topicSuggestions);
@@ -374,6 +386,8 @@ export class ChatService {
       pendingAction,
       topicSuggestions,
       provider: llm.id,
+      mode,
+      guidance,
     };
   }
 

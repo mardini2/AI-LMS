@@ -309,6 +309,11 @@ function sendMessage() {
     if (providerId) {
         body.provider = providerId;
     }
+    var modeId = typeof getSelectedModeId === 'function' ? getSelectedModeId() : 'direct';
+    body.mode = modeId === 'coach' ? 'coach' : 'direct';
+    if (body.mode === 'coach' && typeof getSelectedGuidance === 'function') {
+        body.guidance = getSelectedGuidance();
+    }
 
     fetchJson('/chat/message', {
         method: 'POST',
@@ -316,6 +321,7 @@ function sendMessage() {
     })
     .then(function (data) {
         renderAssistantContent(loadingEl, data.response);
+        applyModeChip(loadingEl, data.mode || body.mode);
         loadingEl.dataset.createdAt = new Date().toISOString();
         conversationId = data.conversationId || conversationId;
         if (Array.isArray(data.topicSuggestions)) {

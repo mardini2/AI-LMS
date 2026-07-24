@@ -31,6 +31,12 @@ function setGeneratingState(busy) {
     if (toolsBtn) {
         toolsBtn.disabled = isGeneratingResponse;
     }
+    if (typeof modeBtn !== 'undefined' && modeBtn) {
+        modeBtn.disabled = isGeneratingResponse;
+        if (isGeneratingResponse && typeof closeModeMenu === 'function') {
+            closeModeMenu();
+        }
+    }
 }
 
 function closeProviderMenu() {
@@ -45,6 +51,9 @@ function openProviderMenu() {
     // Close the tools menu if it is open so the two popovers do not overlap.
     if (typeof closeToolsMenu === 'function') {
         closeToolsMenu();
+    }
+    if (typeof closeModeMenu === 'function') {
+        closeModeMenu();
     }
     renderProviderMenu();
     providerMenu.hidden = false;

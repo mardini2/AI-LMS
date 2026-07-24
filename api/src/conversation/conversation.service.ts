@@ -10,13 +10,19 @@ import {
   Conversation,
   ConversationType,
 } from './entities/conversation.entity';
-import { Message, MessageRole } from './entities/message.entity';
+import {
+  ChatMode,
+  Message,
+  MessageRole,
+} from './entities/message.entity';
 
 export interface MessagePageItem {
   id: string;
   role: MessageRole;
   content: string;
   createdAt: Date;
+  mode?: ChatMode | null;
+  guidance?: number | null;
 }
 
 export interface MessagesPageResult {
@@ -372,6 +378,8 @@ export class ConversationService {
         role: m.role,
         content: m.content,
         createdAt: m.createdAt,
+        mode: m.mode ?? null,
+        guidance: m.guidance ?? null,
       })),
       hasMore,
     };
@@ -417,7 +425,12 @@ export class ConversationService {
 
   async appendMessages(
     conversationId: string,
-    pairs: Array<{ role: MessageRole; content: string }>,
+    pairs: Array<{
+      role: MessageRole;
+      content: string;
+      mode?: ChatMode | null;
+      guidance?: number | null;
+    }>,
   ): Promise<void> {
     for (const p of pairs) {
       await this.messageRepo.save(
@@ -425,6 +438,8 @@ export class ConversationService {
           conversationId,
           role: p.role,
           content: p.content,
+          mode: p.mode ?? null,
+          guidance: p.guidance ?? null,
         }),
       );
     }

@@ -30,8 +30,8 @@ function normalizePanelRect(rect) {
     var maxHeight = Math.max(1, window.innerHeight - PANEL_MARGIN * 2);
     var minWidth = Math.min(PANEL_MIN_WIDTH, maxWidth);
     var minHeight = Math.min(PANEL_MIN_HEIGHT, maxHeight);
-    var width = clamp(rect.width || 620, minWidth, maxWidth);
-    var height = clamp(rect.height || panel.offsetHeight || 520, minHeight, maxHeight);
+    var width = clamp(rect.width || PANEL_DEFAULT_WIDTH, minWidth, maxWidth);
+    var height = clamp(rect.height || panel.offsetHeight || PANEL_DEFAULT_HEIGHT, minHeight, maxHeight);
     var left = clamp(rect.left, PANEL_MARGIN, Math.max(PANEL_MARGIN, window.innerWidth - width - PANEL_MARGIN));
     var top = clamp(rect.top, PANEL_MARGIN, Math.max(PANEL_MARGIN, window.innerHeight - height - PANEL_MARGIN));
 
@@ -92,7 +92,7 @@ function applyStoredSidebarWidth() {
 }
 
 function setSidebarWidth(width) {
-    var panelWidth = panel.getBoundingClientRect().width || 620;
+    var panelWidth = panel.getBoundingClientRect().width || PANEL_DEFAULT_WIDTH;
     var maxByPanel = Math.max(SIDEBAR_MIN_WIDTH, panelWidth - 280);
     var nextWidth = clamp(width, SIDEBAR_MIN_WIDTH, Math.min(SIDEBAR_MAX_WIDTH, maxByPanel));
     sidebar.style.width = nextWidth + 'px';

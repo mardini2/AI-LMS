@@ -7,6 +7,7 @@ import {
   ValidateNested,
   IsIn,
   Min,
+  Max,
   MinLength,
 } from 'class-validator';
 import { Type } from 'class-transformer';
@@ -50,6 +51,19 @@ export class SendMessageDto {
   @IsOptional()
   @IsIn([...AI_PROVIDER_IDS])
   provider?: string;
+
+  /** Teaching style for this turn. Defaults to direct in the service. */
+  @IsOptional()
+  @IsIn(['direct', 'coach'])
+  mode?: 'direct' | 'coach';
+
+  /** Coach guidance level 1 (least) – 5 (most). Ignored unless mode is coach. */
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(5)
+  guidance?: number;
 
   @IsOptional()
   @IsArray()

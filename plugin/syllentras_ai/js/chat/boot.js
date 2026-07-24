@@ -24,8 +24,8 @@ var INPUT_MAX_HEIGHT = 180;
 var MESSAGES_MIN_HEIGHT = 120;
 var PANEL_CHROME_HEIGHT = 130;
 var PANEL_MIN_HEIGHT = PANEL_CHROME_HEIGHT + MESSAGES_MIN_HEIGHT + INPUT_MAX_HEIGHT;
-var PANEL_DEFAULT_WIDTH = 620;
-var PANEL_DEFAULT_HEIGHT = 520;
+var PANEL_DEFAULT_WIDTH = 920;
+var PANEL_DEFAULT_HEIGHT = 650;
 var PANEL_DEFAULT_RIGHT = 24;
 var PANEL_DEFAULT_BOTTOM = 88;
 
@@ -157,8 +157,8 @@ function normalizePanelRect(rect) {
     var maxHeight = Math.max(1, window.innerHeight - PANEL_MARGIN * 2);
     var minWidth = Math.min(PANEL_MIN_WIDTH, maxWidth);
     var minHeight = Math.min(PANEL_MIN_HEIGHT, maxHeight);
-    var width = clamp(rect.width || 620, minWidth, maxWidth);
-    var height = clamp(rect.height || panel.offsetHeight || 520, minHeight, maxHeight);
+    var width = clamp(rect.width || PANEL_DEFAULT_WIDTH, minWidth, maxWidth);
+    var height = clamp(rect.height || panel.offsetHeight || PANEL_DEFAULT_HEIGHT, minHeight, maxHeight);
     var left = clamp(rect.left, PANEL_MARGIN, Math.max(PANEL_MARGIN, window.innerWidth - width - PANEL_MARGIN));
     var top = clamp(rect.top, PANEL_MARGIN, Math.max(PANEL_MARGIN, window.innerHeight - height - PANEL_MARGIN));
 
@@ -219,7 +219,7 @@ function applyStoredSidebarWidth() {
 }
 
 function setSidebarWidth(width) {
-    var panelWidth = panel.getBoundingClientRect().width || 620;
+    var panelWidth = panel.getBoundingClientRect().width || PANEL_DEFAULT_WIDTH;
     var maxByPanel = Math.max(SIDEBAR_MIN_WIDTH, panelWidth - 280);
     var nextWidth = clamp(width, SIDEBAR_MIN_WIDTH, Math.min(SIDEBAR_MAX_WIDTH, maxByPanel));
     sidebar.style.width = nextWidth + 'px';
@@ -378,6 +378,12 @@ function setGeneratingState(busy) {
     if (toolsBtn) {
         toolsBtn.disabled = isGeneratingResponse;
     }
+    if (typeof modeBtn !== 'undefined' && modeBtn) {
+        modeBtn.disabled = isGeneratingResponse;
+        if (isGeneratingResponse && typeof closeModeMenu === 'function') {
+            closeModeMenu();
+        }
+    }
 }
 
 function closeProviderMenu() {
@@ -392,6 +398,9 @@ function openProviderMenu() {
     // Close the tools menu if it is open so the two popovers do not overlap.
     if (typeof closeToolsMenu === 'function') {
         closeToolsMenu();
+    }
+    if (typeof closeModeMenu === 'function') {
+        closeModeMenu();
     }
     renderProviderMenu();
     providerMenu.hidden = false;
@@ -575,6 +584,369 @@ document.addEventListener('keydown', function (e) {
     }
 });
 
+// ===== mode-selector.js =====
+// Part of the Syllentras chat widget.
+// Included inside the shared IIFE from before_footer.php — do not load standalone.
+
+var MODE_STORAGE_KEY_LEGACY = 'syllentras_ai_mode';
+var GUIDANCE_STORAGE_KEY_LEGACY = 'syllentras_ai_guidance';
+
+var CHAT_MODES = [
+    {
+        id: 'direct',
+        label: 'Direct',
+        description: 'Clear answers from your course materials'
+    },
+    {
+        id: 'coach',
+        label: 'Coach',
+        description: 'Guides you with questions and hints so you figure it out'
+    }
+];
+
+var GUIDANCE_LEVEL_LABELS = {
+    1: 'Minimal',
+    2: 'Light',
+    3: 'Balanced',
+    4: 'Strong',
+    5: 'Maximum'
+};
+
+var modeBtn = document.getElementById('syllentras-mode-btn');
+var modeMenu = document.getElementById('syllentras-mode-menu');
+var modeWrap = modeBtn ? modeBtn.closest('.syllentras-mode-wrap') : null;
+var modeLabelEl = document.getElementById('syllentras-mode-btn-label');
+var activeModeEl = document.getElementById('syllentras-chat-active-mode');
+var openModeMenu = null;
+
+var selectedModeId = 'direct';
+var selectedGuidance = 3;
+
+function modeStorageKey() {
+    return 'syllentras_ai_mode_' + courseId;
+}
+
+function guidanceStorageKey() {
+    return 'syllentras_ai_guidance_' + courseId;
+}
+
+function coachTipSeenKey() {
+    return 'syllentras_ai_coach_tip_seen_' + moodleUserId;
+}
+
+function normalizeModeId(value) {
+    return value === 'coach' ? 'coach' : 'direct';
+}
+
+function normalizeGuidance(value) {
+    var n = parseInt(value, 10);
+    if (!Number.isFinite(n)) return 3;
+    return Math.min(5, Math.max(1, n));
+}
+
+function guidanceLevelLabel(level) {
+    return GUIDANCE_LEVEL_LABELS[normalizeGuidance(level)] || 'Balanced';
+}
+
+function getSelectedModeId() {
+    return selectedModeId;
+}
+
+function getSelectedGuidance() {
+    return selectedModeId === 'coach' ? selectedGuidance : null;
+}
+
+function modeDisplayLabel(modeId) {
+    return modeId === 'coach' ? 'Coach' : 'Direct';
+}
+
+function hasSeenCoachTip() {
+    try {
+        return localStorage.getItem(coachTipSeenKey()) === '1';
+    } catch (err) {
+        return true;
+    }
+}
+
+function markCoachTipSeen() {
+    try {
+        localStorage.setItem(coachTipSeenKey(), '1');
+    } catch (err) {
+        // Ignore storage failures.
+    }
+}
+
+function persistModePrefs() {
+    try {
+        localStorage.setItem(modeStorageKey(), selectedModeId);
+        localStorage.setItem(guidanceStorageKey(), String(selectedGuidance));
+    } catch (err) {
+        // Ignore storage failures (private mode, quota, etc.).
+    }
+}
+
+function loadModePrefs() {
+    var modeRaw = null;
+    var guidanceRaw = null;
+    var migrated = false;
+    try {
+        modeRaw = localStorage.getItem(modeStorageKey());
+        guidanceRaw = localStorage.getItem(guidanceStorageKey());
+        if (modeRaw === null) {
+            modeRaw = localStorage.getItem(MODE_STORAGE_KEY_LEGACY);
+            migrated = modeRaw !== null;
+        }
+        if (guidanceRaw === null) {
+            guidanceRaw = localStorage.getItem(GUIDANCE_STORAGE_KEY_LEGACY);
+            if (guidanceRaw !== null) migrated = true;
+        }
+    } catch (err) {
+        modeRaw = null;
+        guidanceRaw = null;
+    }
+    selectedModeId = normalizeModeId(modeRaw);
+    selectedGuidance = normalizeGuidance(guidanceRaw);
+    if (migrated) {
+        persistModePrefs();
+    }
+}
+
+function updateModeUi() {
+    if (modeLabelEl) {
+        modeLabelEl.textContent = modeDisplayLabel(selectedModeId);
+    }
+    if (modeBtn) {
+        modeBtn.setAttribute(
+            'aria-label',
+            'Chat mode: ' + modeDisplayLabel(selectedModeId) + '. Click to change.'
+        );
+        modeBtn.title = 'Chat mode: ' + modeDisplayLabel(selectedModeId);
+    }
+    if (activeModeEl) {
+        activeModeEl.textContent = modeDisplayLabel(selectedModeId);
+        activeModeEl.dataset.mode = selectedModeId;
+    }
+}
+
+function setSelectedMode(modeId, options) {
+    options = options || {};
+    var previous = selectedModeId;
+    var next = normalizeModeId(modeId);
+    selectedModeId = next;
+    if (options.guidance !== undefined) {
+        selectedGuidance = normalizeGuidance(options.guidance);
+    }
+    if (options.persist !== false) {
+        persistModePrefs();
+    }
+    updateModeUi();
+    if (options.notify !== false) {
+        announceModeChange(previous, next);
+    }
+    if (openModeMenu || (modeMenu && !modeMenu.hidden)) {
+        renderModeMenu();
+    }
+}
+
+function setSelectedGuidance(level, options) {
+    options = options || {};
+    selectedGuidance = normalizeGuidance(level);
+    if (options.persist !== false) {
+        persistModePrefs();
+    }
+    // Do not rebuild the menu here — recreating the slider mid-drag cancels the drag.
+}
+
+function announceModeChange(previous, next) {
+    if (previous === next) return;
+    if (typeof appendSystemNotice !== 'function') return;
+    appendSystemNotice('Switched to ' + modeDisplayLabel(next));
+    if (next === 'coach' && !hasSeenCoachTip()) {
+        appendSystemNotice(
+            'I\u2019ll answer deadlines and \u201cwhere is X?\u201d directly; I\u2019ll coach concepts and problems.'
+        );
+        markCoachTipSeen();
+    }
+}
+
+function closeModeMenu() {
+    if (modeMenu) {
+        modeMenu.hidden = true;
+        modeMenu.innerHTML = '';
+    }
+    openModeMenu = null;
+    if (modeBtn) {
+        modeBtn.classList.remove('open');
+        modeBtn.setAttribute('aria-expanded', 'false');
+    }
+}
+
+function renderModeSettings(settingsCol, modeId) {
+    settingsCol.innerHTML = '';
+
+    var heading = document.createElement('div');
+    heading.className = 'syllentras-mode-pane-heading';
+    heading.textContent = 'Settings';
+    settingsCol.appendChild(heading);
+
+    if (modeId === 'coach') {
+        var guidanceLabel = document.createElement('div');
+        guidanceLabel.className = 'syllentras-mode-guidance-label';
+        guidanceLabel.textContent = 'Guidance';
+        settingsCol.appendChild(guidanceLabel);
+
+        var valueEl = document.createElement('div');
+        valueEl.className = 'syllentras-mode-guidance-value';
+        valueEl.textContent = guidanceLevelLabel(selectedGuidance);
+        settingsCol.appendChild(valueEl);
+
+        var slider = document.createElement('input');
+        slider.type = 'range';
+        slider.className = 'syllentras-mode-guidance-slider';
+        slider.min = '1';
+        slider.max = '5';
+        slider.step = '1';
+        slider.value = String(selectedGuidance);
+        slider.setAttribute('aria-label', 'Coach guidance level');
+        slider.addEventListener('input', function (e) {
+            e.stopPropagation();
+            setSelectedGuidance(slider.value);
+            valueEl.textContent = guidanceLevelLabel(selectedGuidance);
+        });
+        slider.addEventListener('click', function (e) {
+            e.stopPropagation();
+        });
+        settingsCol.appendChild(slider);
+
+        var ends = document.createElement('div');
+        ends.className = 'syllentras-mode-guidance-ends';
+        var low = document.createElement('span');
+        low.textContent = 'Low';
+        var high = document.createElement('span');
+        high.textContent = 'High';
+        ends.appendChild(low);
+        ends.appendChild(high);
+        settingsCol.appendChild(ends);
+
+        var hint = document.createElement('p');
+        hint.className = 'syllentras-mode-settings-note';
+        hint.textContent = 'Low asks more questions; high gives stronger hints.';
+        settingsCol.appendChild(hint);
+        return;
+    }
+
+    var note = document.createElement('p');
+    note.className = 'syllentras-mode-settings-note';
+    note.textContent = 'No extra settings — answers directly from your course.';
+    settingsCol.appendChild(note);
+}
+
+function renderModeMenu() {
+    if (!modeMenu) return;
+    modeMenu.innerHTML = '';
+
+    var modesCol = document.createElement('div');
+    modesCol.className = 'syllentras-mode-menu-modes';
+
+    var modesHeading = document.createElement('div');
+    modesHeading.className = 'syllentras-mode-pane-heading';
+    modesHeading.textContent = 'Mode';
+    modesCol.appendChild(modesHeading);
+
+    var settingsCol = document.createElement('div');
+    settingsCol.className = 'syllentras-mode-menu-settings';
+
+    CHAT_MODES.forEach(function (mode) {
+        var button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'syllentras-mode-menu-item';
+        if (mode.id === selectedModeId) {
+            button.classList.add('selected');
+        }
+        button.setAttribute('role', 'menuitemradio');
+        button.setAttribute('aria-checked', mode.id === selectedModeId ? 'true' : 'false');
+        button.dataset.modeId = mode.id;
+
+        var label = document.createElement('span');
+        label.className = 'syllentras-mode-menu-item-label';
+        label.textContent = mode.label;
+
+        var desc = document.createElement('span');
+        desc.className = 'syllentras-mode-menu-item-desc';
+        desc.textContent = mode.description;
+
+        button.appendChild(label);
+        button.appendChild(desc);
+        button.addEventListener('click', function (e) {
+            e.stopPropagation();
+            // Avoid double-render: setSelectedMode would rebuild the whole menu.
+            var previous = selectedModeId;
+            selectedModeId = normalizeModeId(mode.id);
+            persistModePrefs();
+            updateModeUi();
+            announceModeChange(previous, selectedModeId);
+            Array.from(modesCol.querySelectorAll('.syllentras-mode-menu-item')).forEach(function (el) {
+                var active = el.dataset.modeId === mode.id;
+                el.classList.toggle('selected', active);
+                el.setAttribute('aria-checked', active ? 'true' : 'false');
+            });
+            renderModeSettings(settingsCol, mode.id);
+        });
+        modesCol.appendChild(button);
+    });
+
+    renderModeSettings(settingsCol, selectedModeId);
+    modeMenu.appendChild(modesCol);
+    modeMenu.appendChild(settingsCol);
+}
+
+function showModeMenu() {
+    if (!modeBtn || modeBtn.disabled || !modeMenu) return;
+    if (typeof closeToolsMenu === 'function') closeToolsMenu();
+    if (typeof closeProviderMenu === 'function') closeProviderMenu();
+
+    modeBtn.classList.add('open');
+    modeBtn.setAttribute('aria-expanded', 'true');
+    modeMenu.hidden = false;
+    openModeMenu = modeMenu;
+    renderModeMenu();
+}
+
+function toggleModeMenu(e) {
+    if (e) e.stopPropagation();
+    if (!modeBtn || modeBtn.disabled) return;
+    if (openModeMenu && modeMenu && !modeMenu.hidden) {
+        closeModeMenu();
+        return;
+    }
+    showModeMenu();
+}
+
+function initModeSelector() {
+    loadModePrefs();
+    updateModeUi();
+
+    if (!modeBtn) return;
+    modeBtn.addEventListener('click', toggleModeMenu);
+}
+
+document.addEventListener('click', function (e) {
+    if (!openModeMenu) return;
+    if (openModeMenu.contains(e.target)) return;
+    if (modeWrap && modeWrap.contains(e.target)) return;
+    closeModeMenu();
+});
+
+document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape') {
+        closeModeMenu();
+    }
+});
+
+window.addEventListener('resize', function () {
+    closeModeMenu();
+});
+
 // ===== markdown.js =====
 // Part of the Syllentras chat widget.
 // Included inside the shared IIFE from before_footer.php — do not load standalone.
@@ -618,9 +990,13 @@ function attachReviewCollapseControls(el) {
 }
 
 function renderAssistantContent(el, text) {
+    var modeChip = el.querySelector('.syllentras-msg-mode');
     el.classList.add('syllentras-markdown');
     var raw = marked.parse(text, { breaks: true });
     el.innerHTML = DOMPurify.sanitize(raw);
+    if (modeChip) {
+        el.insertBefore(modeChip, el.firstChild);
+    }
     Array.from(el.querySelectorAll('a[href]')).forEach(function (anchor) {
         anchor.setAttribute('target', '_blank');
         anchor.setAttribute('rel', 'noopener noreferrer');
@@ -997,12 +1373,43 @@ function loadReviewOfferForConversation() {
 // Part of the Syllentras chat widget.
 // Included inside the shared IIFE from before_footer.php — do not load standalone.
 
-function createMessageElement(role, text, createdAt) {
+function normalizeMessageMode(mode) {
+    if (mode === 'coach') return 'coach';
+    // Legacy / missing mode on assistant turns defaults to Direct.
+    return 'direct';
+}
+
+function applyModeChip(el, mode) {
+    if (!el) return;
+    var existing = el.querySelector('.syllentras-msg-mode');
+    if (existing) existing.remove();
+    var normalized = normalizeMessageMode(mode);
+    var chip = document.createElement('span');
+    chip.className = 'syllentras-msg-mode syllentras-msg-mode-' + normalized;
+    chip.textContent = normalized === 'coach' ? 'Coach' : 'Direct';
+    el.insertBefore(chip, el.firstChild);
+    el.dataset.mode = normalized;
+}
+
+function appendSystemNotice(text, options) {
+    options = options || {};
+    if (!msgs || !text) return null;
+    var div = document.createElement('div');
+    div.className = 'syllentras-msg system';
+    div.textContent = text;
+    msgs.appendChild(div);
+    if (options.scroll !== false) msgs.scrollTop = msgs.scrollHeight;
+    return div;
+}
+
+function createMessageElement(role, text, options) {
+    options = options || {};
     var div = document.createElement('div');
     div.className = 'syllentras-msg ' + role;
-    if (createdAt) div.dataset.createdAt = createdAt;
+    if (options.createdAt) div.dataset.createdAt = options.createdAt;
     if (role === 'assistant' && text !== '...') {
         renderAssistantContent(div, text);
+        applyModeChip(div, options.mode);
     } else {
         div.textContent = text;
     }
@@ -1011,14 +1418,19 @@ function createMessageElement(role, text, createdAt) {
 
 function appendMessage(role, text, options) {
     options = options || {};
-    var div = createMessageElement(role, text, options.createdAt);
+    var div = createMessageElement(role, text, options);
     msgs.appendChild(div);
     if (options.scroll !== false) msgs.scrollTop = msgs.scrollHeight;
     return div;
 }
 
-function prependMessage(role, text, createdAt) {
-    var div = createMessageElement(role, text, createdAt);
+function prependMessage(role, text, options) {
+    options = options || {};
+    if (typeof options === 'string') {
+        // Legacy callers passed createdAt as the third argument.
+        options = { createdAt: options };
+    }
+    var div = createMessageElement(role, text, options);
     msgs.insertBefore(div, loadMore.nextSibling);
     return div;
 }
@@ -1042,14 +1454,14 @@ function renderMessageBatch(messages, prepend) {
     var list = prepend ? messages.slice().reverse() : messages;
     list.forEach(function (m) {
         var role = m.role === 'assistant' ? 'assistant' : 'user';
+        var opts = { scroll: false, createdAt: m.createdAt, mode: m.mode };
         if (prepend) {
-            prependMessage(role, m.content, m.createdAt);
+            prependMessage(role, m.content, opts);
         } else {
-            appendMessage(role, m.content, { scroll: false, createdAt: m.createdAt });
+            appendMessage(role, m.content, opts);
         }
     });
 }
-
 
 // ===== conversations.js =====
 // Part of the Syllentras chat widget.
@@ -1363,6 +1775,11 @@ function sendMessage() {
     if (providerId) {
         body.provider = providerId;
     }
+    var modeId = typeof getSelectedModeId === 'function' ? getSelectedModeId() : 'direct';
+    body.mode = modeId === 'coach' ? 'coach' : 'direct';
+    if (body.mode === 'coach' && typeof getSelectedGuidance === 'function') {
+        body.guidance = getSelectedGuidance();
+    }
 
     fetchJson('/chat/message', {
         method: 'POST',
@@ -1370,6 +1787,7 @@ function sendMessage() {
     })
     .then(function (data) {
         renderAssistantContent(loadingEl, data.response);
+        applyModeChip(loadingEl, data.mode || body.mode);
         loadingEl.dataset.createdAt = new Date().toISOString();
         conversationId = data.conversationId || conversationId;
         if (Array.isArray(data.topicSuggestions)) {
@@ -1717,6 +2135,8 @@ function safeFileName(name) {
 var openToolsMenu = null;
 var selectedToolKey = null;
 var selectedTopicId = null;
+var toolsMenu = document.getElementById('syllentras-chat-tools-menu');
+var toolsWrap = toolsBtn ? toolsBtn.closest('.syllentras-tools-wrap') : null;
 
 var STUDY_TOOLS = [
     {
@@ -1740,10 +2160,11 @@ var STUDY_TOOLS = [
 ];
 
 function closeToolsMenu() {
-    if (openToolsMenu) {
-        openToolsMenu.remove();
-        openToolsMenu = null;
+    if (toolsMenu) {
+        toolsMenu.hidden = true;
+        toolsMenu.innerHTML = '';
     }
+    openToolsMenu = null;
     selectedToolKey = null;
     selectedTopicId = null;
     if (toolsBtn) {
@@ -1871,20 +2292,6 @@ function findStudyTool(key) {
 
 function hasOpenPendingAction() {
     return !!(msgs && msgs.querySelector('.syllentras-pending-action'));
-}
-
-function positionToolsMenu(menu) {
-    if (!toolsBtn || !menu) return;
-    var rect = toolsBtn.getBoundingClientRect();
-    var menuHeight = menu.offsetHeight;
-    var menuWidth = menu.offsetWidth;
-    var left = Math.max(8, Math.min(rect.left, window.innerWidth - menuWidth - 8));
-    var top = rect.top - menuHeight - 6;
-    if (top < 8) {
-        top = Math.min(window.innerHeight - menuHeight - 8, rect.bottom + 6);
-    }
-    menu.style.left = left + 'px';
-    menu.style.top = top + 'px';
 }
 
 function updateContinueState(panel) {
@@ -2044,17 +2451,18 @@ function renderTopicPanel(topicsCol) {
 function showToolsMenu() {
     closeConversationMenu();
     closeToolsMenu();
-    if (!toolsBtn || toolsBtn.disabled) return;
+    if (typeof closeModeMenu === 'function') closeModeMenu();
+    if (typeof closeProviderMenu === 'function') closeProviderMenu();
+    if (!toolsBtn || toolsBtn.disabled || !toolsMenu) return;
 
     toolsBtn.classList.add('open');
     toolsBtn.setAttribute('aria-expanded', 'true');
     selectedToolKey = null;
     selectedTopicId = null;
 
-    var menu = document.createElement('div');
-    menu.className = 'syllentras-tools-menu';
-    menu.setAttribute('role', 'menu');
-    menu.setAttribute('aria-label', 'Study tools');
+    toolsMenu.innerHTML = '';
+    toolsMenu.hidden = false;
+    openToolsMenu = toolsMenu;
 
     var toolsCol = document.createElement('div');
     toolsCol.className = 'syllentras-tools-menu-tools';
@@ -2096,12 +2504,9 @@ function showToolsMenu() {
         toolsCol.appendChild(button);
     });
 
-    menu.appendChild(toolsCol);
-    menu.appendChild(topicsCol);
-    document.body.appendChild(menu);
-    openToolsMenu = menu;
+    toolsMenu.appendChild(toolsCol);
+    toolsMenu.appendChild(topicsCol);
     renderTopicPanel(topicsCol);
-    positionToolsMenu(menu);
 }
 
 function toggleToolsMenu(e) {
@@ -3094,8 +3499,15 @@ document.addEventListener('click', function (e) {
     if (openMenu && !openMenu.contains(e.target) && !e.target.closest('.syllentras-conversation-menu-btn')) {
         closeConversationMenu();
     }
-    if (openToolsMenu && !openToolsMenu.contains(e.target) && !e.target.closest('#syllentras-chat-tools-btn')) {
+    if (openToolsMenu && !openToolsMenu.contains(e.target) && !(toolsWrap && toolsWrap.contains(e.target))) {
         closeToolsMenu();
+    }
+    if (typeof closeModeMenu === 'function' &&
+        openModeMenu &&
+        !openModeMenu.contains(e.target) &&
+        !e.target.closest('#syllentras-mode-btn') &&
+        !e.target.closest('.syllentras-mode-wrap')) {
+        closeModeMenu();
     }
     if (typeof closeAiContentMenu === 'function' &&
         aiContentOpenMenu &&
@@ -3113,6 +3525,7 @@ document.addEventListener('keydown', function (e) {
     if (e.key === 'Escape') {
         closeConversationMenu();
         closeToolsMenu();
+        if (typeof closeModeMenu === 'function') closeModeMenu();
         if (typeof closeAiContentMenu === 'function') closeAiContentMenu();
         if (!modal.hidden) closeModal();
     }
@@ -3120,6 +3533,7 @@ document.addEventListener('keydown', function (e) {
 
 window.addEventListener('resize', function () {
     closeToolsMenu();
+    if (typeof closeModeMenu === 'function') closeModeMenu();
     clampCurrentPanelLayout();
 });
 
@@ -3135,6 +3549,7 @@ applyExpandedState();
 applyStoredSidebarWidth();
 applyStoredInputHeight();
 initToolsMenu();
+initModeSelector();
 loadProviders();
 loadConversations();
 installSectionButtons();

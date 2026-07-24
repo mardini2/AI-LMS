@@ -188,8 +188,15 @@ document.addEventListener('click', function (e) {
     if (openMenu && !openMenu.contains(e.target) && !e.target.closest('.syllentras-conversation-menu-btn')) {
         closeConversationMenu();
     }
-    if (openToolsMenu && !openToolsMenu.contains(e.target) && !e.target.closest('#syllentras-chat-tools-btn')) {
+    if (openToolsMenu && !openToolsMenu.contains(e.target) && !(toolsWrap && toolsWrap.contains(e.target))) {
         closeToolsMenu();
+    }
+    if (typeof closeModeMenu === 'function' &&
+        openModeMenu &&
+        !openModeMenu.contains(e.target) &&
+        !e.target.closest('#syllentras-mode-btn') &&
+        !e.target.closest('.syllentras-mode-wrap')) {
+        closeModeMenu();
     }
     if (typeof closeAiContentMenu === 'function' &&
         aiContentOpenMenu &&
@@ -207,6 +214,7 @@ document.addEventListener('keydown', function (e) {
     if (e.key === 'Escape') {
         closeConversationMenu();
         closeToolsMenu();
+        if (typeof closeModeMenu === 'function') closeModeMenu();
         if (typeof closeAiContentMenu === 'function') closeAiContentMenu();
         if (!modal.hidden) closeModal();
     }
@@ -214,6 +222,7 @@ document.addEventListener('keydown', function (e) {
 
 window.addEventListener('resize', function () {
     closeToolsMenu();
+    if (typeof closeModeMenu === 'function') closeModeMenu();
     clampCurrentPanelLayout();
 });
 
@@ -229,6 +238,7 @@ applyExpandedState();
 applyStoredSidebarWidth();
 applyStoredInputHeight();
 initToolsMenu();
+initModeSelector();
 loadProviders();
 loadConversations();
 installSectionButtons();

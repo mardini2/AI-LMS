@@ -40,6 +40,10 @@ export interface ChatResponse {
   conversationId: string;
   /** Which LLM handled this request (never includes secrets). */
   provider?: string;
+  /** Teaching mode used for this reply. */
+  mode?: 'direct' | 'coach';
+  /** Coach guidance 1–5 when mode is coach. */
+  guidance?: number;
   pendingAction?: PendingActionDto;
   topicSuggestions?: string[];
   quizUrl?: string;
