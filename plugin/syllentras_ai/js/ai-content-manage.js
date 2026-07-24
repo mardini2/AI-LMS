@@ -146,6 +146,11 @@
     renameBtn.className = 'syll-fc-btn syll-ai-manage-rename';
     renameBtn.textContent = 'Rename';
 
+    var pdfBtn = document.createElement('button');
+    pdfBtn.type = 'button';
+    pdfBtn.className = 'syll-fc-btn syll-ai-manage-pdf';
+    pdfBtn.textContent = 'Download PDF';
+
     var editBtn = null;
     var saveBtn = null;
     var cancelBtn = null;
@@ -185,6 +190,7 @@
     statusEl.className = 'syll-ai-manage-status';
     statusEl.hidden = true;
     bar.appendChild(statusEl);
+    bar.appendChild(pdfBtn);
 
     function mountBar() {
         var anchor =
@@ -282,6 +288,36 @@
             input.focus();
             input.select();
         }, 0);
+    });
+
+    pdfBtn.addEventListener('click', function () {
+        if (
+            !window.SyllentrasAiContentPdf ||
+            typeof window.SyllentrasAiContentPdf.download !== 'function'
+        ) {
+            setStatus('PDF export is unavailable on this page.', true);
+            return;
+        }
+        setStatus('Preparing PDF…');
+        window.SyllentrasAiContentPdf.download(
+            {
+                cmId: meta.cmId,
+                kind: meta.kind,
+                name: meta.name,
+            },
+            config
+        )
+            .then(function () {
+                setStatus('');
+            })
+            .catch(function (err) {
+                setStatus(
+                    err && err.message
+                        ? String(err.message)
+                        : 'Could not export this item.',
+                    true
+                );
+            });
     });
 
     deleteBtn.addEventListener('click', function () {

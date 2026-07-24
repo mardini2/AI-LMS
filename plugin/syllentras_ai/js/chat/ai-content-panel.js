@@ -395,13 +395,27 @@ var aiContentPdfBusy = false;
 
 function downloadAiContentItemPdf(item) {
     if (aiContentPdfBusy) return;
+    if (
+        !window.SyllentrasAiContentPdf ||
+        typeof window.SyllentrasAiContentPdf.download !== 'function'
+    ) {
+        showModal('Download PDF', 'PDF export is unavailable on this page.', [
+            { label: 'Close', className: 'syllentras-modal-secondary', onClick: closeModal }
+        ]);
+        return;
+    }
     aiContentPdfBusy = true;
 
     showModal('Download PDF', 'Preparing PDF…', [
         { label: 'Close', className: 'syllentras-modal-secondary', onClick: closeModal }
     ]);
 
-    exportAiContentItemToPdf(item)
+    window.SyllentrasAiContentPdf.download(item, {
+        apiUrl: API_URL,
+        courseId: courseId,
+        moodleUserId: moodleUserId,
+        courseName: courseName
+    })
         .then(function () {
             closeModal();
         })

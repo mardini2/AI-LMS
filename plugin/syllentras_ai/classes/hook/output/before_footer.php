@@ -8,8 +8,9 @@ defined('MOODLE_INTERNAL') || die();
  *
  * Markup: templates/chat_widget.php
  * Styles: styles.css (Moodle auto-includes)
- * Script: js/purify.min.js, js/marked.min.js, js/chat/boot.js,
- *          js/Sortable.min.js, js/flashcards-study.js, js/ai-content-manage.js
+ * Script: js/purify.min.js, js/marked.min.js, js/ai-content-pdf.js,
+ *          js/chat/boot.js, js/Sortable.min.js, js/flashcards-study.js,
+ *          js/ai-content-manage.js
  *          (boot.js bundles js/chat/* modules — rebuild with
  *           .\dev.ps1 rebuild-chat-js or ./dev.sh rebuild-chat-js
  *           or manually with python plugin/syllentras_ai/js/_build_boot.py)
@@ -115,6 +116,7 @@ class before_footer {
         <script>window.__SYLL_AI_CONTENT__ = <?php echo $ownedjson; ?>;</script>
         <script src="<?php echo $wwwroot; ?>/local/syllentras_ai/js/purify.min.js<?php echo $jsqs; ?>"></script>
         <script src="<?php echo $wwwroot; ?>/local/syllentras_ai/js/marked.min.js<?php echo $jsqs; ?>"></script>
+        <script src="<?php echo $wwwroot; ?>/local/syllentras_ai/js/ai-content-pdf.js<?php echo $jsqs; ?>"></script>
         <script src="<?php echo $wwwroot; ?>/local/syllentras_ai/js/chat/boot.js<?php echo $jsqs; ?>"></script>
         <script src="<?php echo $wwwroot; ?>/local/syllentras_ai/js/Sortable.min.js<?php echo $jsqs; ?>"></script>
         <script src="<?php echo $wwwroot; ?>/local/syllentras_ai/js/flashcards-study.js<?php echo $jsqs; ?>"></script>
