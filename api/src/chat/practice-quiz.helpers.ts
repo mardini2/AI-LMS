@@ -234,6 +234,25 @@ export function questionDedupeKey(questiontext: string): string {
   return questiontext.toLowerCase().replace(/\s+/g, ' ').trim();
 }
 
+/** Fisher–Yates shuffle (mutates and returns the same array). */
+export function shuffleInPlace<T>(items: T[]): T[] {
+  for (let i = items.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    const tmp = items[i];
+    items[i] = items[j];
+    items[j] = tmp;
+  }
+  return items;
+}
+
+function isTrueAnswerText(text: string): boolean {
+  return /^true$/i.test(text.trim());
+}
+
+function isFalseAnswerText(text: string): boolean {
+  return /^false$/i.test(text.trim());
+}
+
 export function normalizeQuestion(
   q: PracticeQuizQuestion,
 ): PracticeQuizQuestion | null {
@@ -265,13 +284,17 @@ export function normalizeQuestion(
   }
 
   if (q.type === 'truefalse') {
-    const hasTrue = answers.some((a) => /^true$/i.test(a.text));
-    const hasFalse = answers.some((a) => /^false$/i.test(a.text));
+    const hasTrue = answers.some((a) => isTrueAnswerText(a.text));
+    const hasFalse = answers.some((a) => isFalseAnswerText(a.text));
     if (!hasTrue || !hasFalse) {
       return null;
     }
   } else if (answers.length < 2 || !answers.some((a) => a.fraction === 1)) {
     return null;
+  }
+
+  if (q.type === 'multichoice') {
+    shuffleInPlace(answers);
   }
 
   return {
