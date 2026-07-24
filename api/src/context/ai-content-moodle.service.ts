@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import type {
+  AiContentExport,
   AiContentItem,
   AiContentKind,
   CreatedStudyGuide,
@@ -186,6 +187,57 @@ export class AiContentMoodleService {
       failed: (result.failed ?? []).map((item) => ({
         cmId: item.cmid,
         message: item.message || 'Could not delete',
+      })),
+    };
+  }
+
+  async exportPrivateContent(input: {
+    courseId: number;
+    moodleUserId: number;
+    cmId: number;
+  }): Promise<AiContentExport> {
+    this.assertCourseUser(input.courseId, input.moodleUserId);
+    if (input.cmId < 1) {
+      throw new Error('cmId must be a positive integer');
+    }
+
+    const result = await this.moodle.callMoodleApi<{
+      cmid: number;
+      modname: string;
+      kind: string;
+      name: string;
+      coursename: string;
+      contenthtml: string;
+      questions?: Array<{
+        number: number;
+        qtype: string;
+        questiontext: string;
+        answers?: Array<{ text: string; fraction: number }>;
+      }>;
+    }>(
+      'local_syllentras_ai_get_private_content_export',
+      {
+        cmid: input.cmId,
+        userid: input.moodleUserId,
+      },
+      'POST',
+    );
+
+    return {
+      cmId: result.cmid,
+      modname: result.modname,
+      kind: this.normalizeKind(result.kind),
+      name: result.name,
+      courseName: result.coursename || '',
+      contentHtml: result.contenthtml || '',
+      questions: (result.questions ?? []).map((q) => ({
+        number: q.number,
+        qtype: q.qtype,
+        questiontext: q.questiontext || '',
+        answers: (q.answers ?? []).map((a) => ({
+          text: a.text || '',
+          fraction: Number(a.fraction) || 0,
+        })),
       })),
     };
   }

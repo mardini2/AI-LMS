@@ -24,6 +24,23 @@ export class AiContentCourseUserQueryDto {
   moodleUserId: number;
 }
 
+export class AiContentExportQueryDto {
+  @Type(() => Number)
+  @IsInt()
+  @Min(2)
+  courseId: number;
+
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  moodleUserId: number;
+
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  cmId: number;
+}
+
 export class RenameAiContentDto {
   @Type(() => Number)
   @IsInt()

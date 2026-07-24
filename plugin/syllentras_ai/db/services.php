@@ -75,6 +75,14 @@ $functions = [
         'capabilities' => 'local/syllentras_ai:manageplacement',
         'ajax' => false,
     ],
+    'local_syllentras_ai_get_private_content_export' => [
+        'classname' => 'local_syllentras_ai\external\get_private_content_export',
+        'methodname' => 'execute',
+        'description' => 'Export private AI Content (page HTML or quiz questions) for PDF download',
+        'type' => 'read',
+        'capabilities' => 'local/syllentras_ai:manageplacement',
+        'ajax' => false,
+    ],
 ];
 
 // The API uses Moodle's built-in external functions directly. Keeping them in a
@@ -100,6 +108,7 @@ $services = [
             'local_syllentras_ai_delete_private_activity',
             'local_syllentras_ai_delete_private_activities',
             'local_syllentras_ai_get_practice_attempt_review',
+            'local_syllentras_ai_get_private_content_export',
         ],
         'restrictedusers' => 0,
         'enabled' => 1,

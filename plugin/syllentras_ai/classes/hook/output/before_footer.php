@@ -13,6 +13,7 @@ defined('MOODLE_INTERNAL') || die();
  *          (boot.js bundles js/chat/* modules — rebuild with
  *           .\dev.ps1 rebuild-chat-js or ./dev.sh rebuild-chat-js
  *           or manually with python plugin/syllentras_ai/js/_build_boot.py)
+ *          PDF export loads js/vendor/pdfmake.min.js + vfs_fonts.js on demand.
  */
 class before_footer {
 

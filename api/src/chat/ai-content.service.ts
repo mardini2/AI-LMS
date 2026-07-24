@@ -8,6 +8,7 @@ import { AiContentMoodleService } from '../context/ai-content-moodle.service';
 import { withKindTitlePrefix } from './ai-content-title';
 import { sanitizeStudyGuideHtml } from './study-guide.helpers';
 import type {
+  AiContentExportQueryDto,
   DeleteAiContentDto,
   DeleteManyAiContentDto,
   RenameAiContentDto,
@@ -65,6 +66,19 @@ export class AiContentService {
         courseId: dto.courseId,
         moodleUserId: dto.moodleUserId,
         cmIds: dto.cmIds,
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      throw new HttpException(message, HttpStatus.BAD_GATEWAY);
+    }
+  }
+
+  async export(dto: AiContentExportQueryDto) {
+    try {
+      return await this.aiContentMoodle.exportPrivateContent({
+        courseId: dto.courseId,
+        moodleUserId: dto.moodleUserId,
+        cmId: dto.cmId,
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

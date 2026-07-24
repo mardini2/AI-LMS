@@ -380,6 +380,7 @@ function showAiContentMenu(anchor, item) {
     addAction('Open', function () {
         if (item.viewUrl) window.open(item.viewUrl, '_blank', 'noopener,noreferrer');
     });
+    addAction('Download PDF', function () { downloadAiContentItemPdf(item); });
     addAction('Rename', function () { renameAiContentItem(item); });
     addAction('Delete', function () { deleteAiContentItem(item); }, true);
 
@@ -388,6 +389,34 @@ function showAiContentMenu(anchor, item) {
     menu.style.left = Math.max(8, rect.right - 140) + 'px';
     menu.style.top = Math.min(window.innerHeight - menu.offsetHeight - 8, rect.bottom + 4) + 'px';
     aiContentOpenMenu = menu;
+}
+
+var aiContentPdfBusy = false;
+
+function downloadAiContentItemPdf(item) {
+    if (aiContentPdfBusy) return;
+    aiContentPdfBusy = true;
+
+    showModal('Download PDF', 'Preparing PDF…', [
+        { label: 'Close', className: 'syllentras-modal-secondary', onClick: closeModal }
+    ]);
+
+    exportAiContentItemToPdf(item)
+        .then(function () {
+            closeModal();
+        })
+        .catch(function (err) {
+            var detail = err && err.message ? String(err.message) : '';
+            var message = detail
+                ? 'Could not export this item. ' + detail
+                : 'Could not export this item.';
+            showModal('Download PDF', message, [
+                { label: 'Close', className: 'syllentras-modal-secondary', onClick: closeModal }
+            ]);
+        })
+        .then(function () {
+            aiContentPdfBusy = false;
+        });
 }
 
 function renameAiContentItem(item) {

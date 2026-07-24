@@ -8,6 +8,7 @@ import {
 import { AiContentService } from './ai-content.service';
 import {
   AiContentCourseUserQueryDto,
+  AiContentExportQueryDto,
   DeleteAiContentDto,
   DeleteManyAiContentDto,
   RenameAiContentDto,
@@ -24,6 +25,14 @@ export class AiContentController {
   @Get()
   list(@Query() query: AiContentCourseUserQueryDto) {
     return this.aiContent.list(query.courseId, query.moodleUserId);
+  }
+
+  /**
+   * GET /ai-content/export?courseId=&moodleUserId=&cmId=
+   */
+  @Get('export')
+  exportContent(@Query() query: AiContentExportQueryDto) {
+    return this.aiContent.export(query);
   }
 
   /**

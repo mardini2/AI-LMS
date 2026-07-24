@@ -115,6 +115,28 @@ export interface PracticeAttemptReview {
   questions: PracticeAttemptQuestion[];
 }
 
+export interface AiContentExportAnswer {
+  text: string;
+  fraction: number;
+}
+
+export interface AiContentExportQuestion {
+  number: number;
+  qtype: string;
+  questiontext: string;
+  answers: AiContentExportAnswer[];
+}
+
+export interface AiContentExport {
+  cmId: number;
+  modname: string;
+  kind: AiContentKind;
+  name: string;
+  courseName: string;
+  contentHtml: string;
+  questions: AiContentExportQuestion[];
+}
+
 /** Internal document shape used by course-content ingestion and prompt helpers. */
 export interface CourseContextDocument {
   courseId: number;
