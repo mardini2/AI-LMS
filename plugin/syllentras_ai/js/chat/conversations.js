@@ -7,8 +7,8 @@ function setActiveConversation(conversation) {
         activeConversation.topicSuggestions = conversation.topicSuggestions;
     }
     conversationId = conversation.id;
-    activeTitle.textContent = conversation.title || 'Conversation';
-    activeTag.textContent = conversation.tag || '';
+    activeTitle.textContent = displayConversationTitle(conversation);
+    activeTag.textContent = displayConversationTag(conversation);
     clearMessages();
     hasMore = false;
     loadingHistory = false;
@@ -117,7 +117,7 @@ function loadConversations() {
 function renderConversationList(conversations) {
     conversationsEl.innerHTML = '';
     var pinned = conversations.filter(function (c) { return c.pinned && c.type !== 'general'; });
-    renderConversationGroup('Main', conversations.filter(function (c) { return c.type === 'general'; }));
+    renderConversationGroup(generalConversationGroupTitle(), conversations.filter(function (c) { return c.type === 'general'; }));
     if (pinned.length) renderConversationGroup('Pinned', pinned);
     renderConversationGroup('Course Sections', conversations.filter(function (c) { return !c.pinned && c.type === 'section'; }));
     renderConversationGroup('Other Conversations', conversations.filter(function (c) { return !c.pinned && c.type === 'manual'; }));
@@ -144,9 +144,9 @@ function renderConversationItem(conversation, matchedMessage) {
         '<span class="syllentras-conversation-tag"></span>' +
         '<button type="button" class="syllentras-conversation-menu-btn" aria-label="Conversation menu" aria-haspopup="menu">&#8942;</button>';
     var nameEl = item.querySelector('.syllentras-conversation-name');
-    nameEl.textContent = conversation.title || 'Conversation';
+    nameEl.textContent = displayConversationTitle(conversation);
     nameEl.classList.toggle('pinned', !!conversation.pinned);
-    item.querySelector('.syllentras-conversation-tag').textContent = conversation.tag || '';
+    item.querySelector('.syllentras-conversation-tag').textContent = displayConversationTag(conversation);
     if (matchedMessage && matchedMessage.content) {
         var match = document.createElement('span');
         match.className = 'syllentras-conversation-match';
@@ -292,19 +292,27 @@ function sendMessage() {
 
     input.value = '';
     send.disabled = true;
+    setGeneratingState(true);
     appendMessage('user', text);
     var loadingEl = appendMessage('assistant', '...');
 
+    var body = {
+        courseId: courseId,
+        courseName: courseName || undefined,
+        moodleUserId: moodleUserId,
+        userFirstName: userFirstName || undefined,
+        message: text,
+        conversationId: conversationId
+    };
+    // Selected provider rides along so mid-chat switches apply to the next turn.
+    var providerId = typeof getSelectedProviderId === 'function' ? getSelectedProviderId() : null;
+    if (providerId) {
+        body.provider = providerId;
+    }
+
     fetchJson('/chat/message', {
         method: 'POST',
-        body: JSON.stringify({
-            courseId: courseId,
-            courseName: courseName || undefined,
-            moodleUserId: moodleUserId,
-            userFirstName: userFirstName || undefined,
-            message: text,
-            conversationId: conversationId
-        })
+        body: JSON.stringify(body)
     })
     .then(function (data) {
         renderAssistantContent(loadingEl, data.response);
@@ -319,12 +327,15 @@ function sendMessage() {
         }
         return loadConversations();
     })
-    .catch(function () {
+    .catch(function (err) {
         loadingEl.className = 'syllentras-msg error';
-        loadingEl.textContent = 'Something went wrong. Please try again.';
+        loadingEl.textContent = (err && err.message)
+            ? err.message
+            : 'Something went wrong. Please try again.';
     })
     .finally(function () {
         send.disabled = false;
+        setGeneratingState(false);
         input.focus();
     });
 }

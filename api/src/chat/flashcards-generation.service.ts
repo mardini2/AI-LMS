@@ -3,53 +3,52 @@ import {
   Injectable,
   Logger,
 } from '@nestjs/common';
-import { Type } from '@google/genai';
 import { buildFlashcardsPrompt } from './chat.prompts';
-import { GeminiClient } from './gemini.client';
 import {
   normalizeFlashcardsDocument,
   renderFlashcardsHtml,
   type FlashcardsDocument,
 } from './flashcards.helpers';
+import type { LlmProvider, LlmJsonSchema } from './providers';
+
+const FLASHCARDS_SCHEMA: LlmJsonSchema = {
+  type: 'object',
+  properties: {
+    title: { type: 'string' },
+    cards: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          front: { type: 'string' },
+          back: { type: 'string' },
+        },
+        required: ['front', 'back'],
+      },
+    },
+  },
+  required: ['title', 'cards'],
+};
 
 @Injectable()
 export class FlashcardsGenerationService {
   private readonly logger = new Logger(FlashcardsGenerationService.name);
 
-  constructor(private readonly gemini: GeminiClient) {}
-
-  async generateFlashcards(input: {
-    title: string;
-    scopeSummary: string;
-    courseMaterial: string;
-    cardCount: number;
-  }): Promise<{ document: FlashcardsDocument; html: string }> {
+  async generateFlashcards(
+    input: {
+      title: string;
+      scopeSummary: string;
+      courseMaterial: string;
+      cardCount: number;
+    },
+    llm: LlmProvider,
+  ): Promise<{ document: FlashcardsDocument; html: string }> {
     const prompt = buildFlashcardsPrompt(input);
-    const response = await this.gemini.generateContent({
-      contents: prompt,
-      config: {
-        responseMimeType: 'application/json',
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            title: { type: Type.STRING },
-            cards: {
-              type: Type.ARRAY,
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  front: { type: Type.STRING },
-                  back: { type: Type.STRING },
-                },
-                required: ['front', 'back'],
-              },
-            },
-          },
-          required: ['title', 'cards'],
-        },
-      },
+    const raw = await llm.generateJson({
+      prompt,
+      schema: FLASHCARDS_SCHEMA,
+      schemaName: 'flashcards',
     });
-    const raw = response.text ?? '';
     let parsed: Partial<FlashcardsDocument>;
     try {
       parsed = JSON.parse(raw) as Partial<FlashcardsDocument>;

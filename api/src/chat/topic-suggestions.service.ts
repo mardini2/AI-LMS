@@ -1,38 +1,36 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { Type } from '@google/genai';
 import { buildTopicSuggestionsPrompt } from './chat.prompts';
-import { GeminiClient } from './gemini.client';
+import type { LlmProvider, LlmJsonSchema } from './providers';
+
+const TOPICS_SCHEMA: LlmJsonSchema = {
+  type: 'object',
+  properties: {
+    topics: {
+      type: 'array',
+      items: { type: 'string' },
+    },
+  },
+  required: ['topics'],
+};
 
 @Injectable()
 export class TopicSuggestionsService {
   private readonly logger = new Logger(TopicSuggestionsService.name);
 
-  constructor(private readonly gemini: GeminiClient) {}
-
-  async suggestTopics(input: {
-    courseName?: string;
-    sectionName?: string;
-    recentTurns: Array<{ role: string; content: string }>;
-  }): Promise<string[]> {
+  async suggestTopics(
+    input: {
+      courseName?: string;
+      sectionName?: string;
+      recentTurns: Array<{ role: string; content: string }>;
+    },
+    llm: LlmProvider,
+  ): Promise<string[]> {
     try {
-      const response = await this.gemini.generateContent({
-        contents: buildTopicSuggestionsPrompt(input),
-        config: {
-          responseMimeType: 'application/json',
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              topics: {
-                type: Type.ARRAY,
-                items: { type: Type.STRING },
-              },
-            },
-            required: ['topics'],
-          },
-        },
+      const raw = await llm.generateJson({
+        prompt: buildTopicSuggestionsPrompt(input),
+        schema: TOPICS_SCHEMA,
+        schemaName: 'topic_suggestions',
       });
-
-      const raw = response.text ?? '';
       const parsed = JSON.parse(raw) as { topics?: unknown };
       return normalizeTopics(parsed.topics);
     } catch (err) {

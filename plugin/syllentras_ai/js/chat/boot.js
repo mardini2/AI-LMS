@@ -55,6 +55,51 @@ var openMenu = null;
 
 courseEl.textContent = (courseId > 1 && courseName) ? courseName : 'Dashboard';
 
+// Dashboard default chat is named Home. Course default stays Main.
+function isDashboardContext() {
+    return !(courseId > 1);
+}
+
+function generalChatTitle() {
+    return isDashboardContext() ? 'Home' : 'Main';
+}
+
+function generalChatTag() {
+    return isDashboardContext() ? '#Home' : '#Main';
+}
+
+function generalConversationGroupTitle() {
+    return generalChatTitle();
+}
+
+function generalChatPlaceholder() {
+    return isDashboardContext() ? 'Ask a question from Home...' : 'Ask a question about this course...';
+}
+
+function displayConversationTitle(conversation) {
+    if (conversation && conversation.type === 'general') {
+        return generalChatTitle();
+    }
+    return (conversation && conversation.title) || 'Conversation';
+}
+
+function displayConversationTag(conversation) {
+    if (conversation && conversation.type === 'general') {
+        return generalChatTag();
+    }
+    return (conversation && conversation.tag) || '';
+}
+
+if (activeTitle) {
+    activeTitle.textContent = generalChatTitle();
+}
+if (activeTag) {
+    activeTag.textContent = generalChatTag();
+}
+if (input) {
+    input.placeholder = generalChatPlaceholder();
+}
+
 var conversationId = null;
 var activeConversation = null;
 var hasMore = false;
@@ -275,11 +320,260 @@ function fetchJson(path, options) {
     options = options || {};
     options.headers = Object.assign({ 'Content-Type': 'application/json' }, options.headers || {});
     return fetch(API_URL + path, options).then(function (res) {
-        if (!res.ok) throw new Error('HTTP ' + res.status);
-        return res.json();
+        return res.text().then(function (text) {
+            var data = null;
+            if (text) {
+                try {
+                    data = JSON.parse(text);
+                } catch (e) {
+                    data = null;
+                }
+            }
+            if (!res.ok) {
+                // Nest usually returns { message: "..." } — surface that, never secrets.
+                var msg = null;
+                if (data) {
+                    if (typeof data.message === 'string') msg = data.message;
+                    else if (Array.isArray(data.message)) msg = data.message.join(' ');
+                }
+                throw new Error(msg || ('Request failed (' + res.status + '). Please try again.'));
+            }
+            return data;
+        });
     });
 }
 
+
+// ===== providers.js =====
+// Part of the Syllentras chat widget.
+// Included inside the shared IIFE from before_footer.php — do not load standalone.
+
+var PROVIDER_STORAGE_KEY = 'syllentras_ai_provider';
+var UNAVAILABLE_PROVIDER_MESSAGE =
+    'This AI provider is currently unavailable because it has not been configured yet.';
+
+var providerBtn = document.getElementById('syllentras-provider-btn');
+var providerMenu = document.getElementById('syllentras-provider-menu');
+var providerWrap = providerBtn ? providerBtn.closest('.syllentras-provider-wrap') : null;
+
+var providerList = [];
+var selectedProviderId = null;
+var defaultProviderId = null;
+var providersLoaded = false;
+var isGeneratingResponse = false;
+
+function getSelectedProviderId() {
+    return selectedProviderId || defaultProviderId || null;
+}
+
+function setGeneratingState(busy) {
+    isGeneratingResponse = !!busy;
+    if (providerBtn) {
+        providerBtn.disabled = isGeneratingResponse;
+        providerBtn.setAttribute('aria-busy', isGeneratingResponse ? 'true' : 'false');
+        if (isGeneratingResponse) {
+            closeProviderMenu();
+        }
+    }
+    if (toolsBtn) {
+        toolsBtn.disabled = isGeneratingResponse;
+    }
+}
+
+function closeProviderMenu() {
+    if (!providerMenu || !providerBtn) return;
+    providerMenu.hidden = true;
+    providerBtn.setAttribute('aria-expanded', 'false');
+    providerBtn.classList.remove('open');
+}
+
+function openProviderMenu() {
+    if (!providerMenu || !providerBtn || isGeneratingResponse) return;
+    // Close the tools menu if it is open so the two popovers do not overlap.
+    if (typeof closeToolsMenu === 'function') {
+        closeToolsMenu();
+    }
+    renderProviderMenu();
+    providerMenu.hidden = false;
+    providerBtn.setAttribute('aria-expanded', 'true');
+    providerBtn.classList.add('open');
+}
+
+function toggleProviderMenu() {
+    if (!providerMenu) return;
+    if (providerMenu.hidden) {
+        openProviderMenu();
+    } else {
+        closeProviderMenu();
+    }
+}
+
+function findProvider(id) {
+    for (var i = 0; i < providerList.length; i++) {
+        if (providerList[i].id === id) return providerList[i];
+    }
+    return null;
+}
+
+function updateProviderLabel() {
+    var active = findProvider(getSelectedProviderId());
+    if (providerBtn) {
+        providerBtn.setAttribute(
+            'aria-label',
+            active
+                ? ('AI provider: ' + active.displayName + '. Click to change.')
+                : 'Choose AI provider'
+        );
+    }
+}
+
+function selectProvider(id) {
+    var provider = findProvider(id);
+    if (!provider || !provider.available) return;
+    selectedProviderId = provider.id;
+    try {
+        localStorage.setItem(PROVIDER_STORAGE_KEY, selectedProviderId);
+    } catch (e) { /* ignore quota / private mode */ }
+    updateProviderLabel();
+    closeProviderMenu();
+}
+
+function renderProviderMenu() {
+    if (!providerMenu) return;
+    providerMenu.innerHTML = '';
+
+    var heading = document.createElement('div');
+    heading.className = 'syllentras-provider-menu-heading';
+    heading.textContent = 'AI provider';
+    providerMenu.appendChild(heading);
+
+    var activeId = getSelectedProviderId();
+
+    if (!providerList.length) {
+        var empty = document.createElement('div');
+        empty.className = 'syllentras-provider-empty';
+        empty.textContent = 'No AI providers are configured yet.';
+        providerMenu.appendChild(empty);
+        return;
+    }
+
+    providerList.forEach(function (provider) {
+        var option = document.createElement('button');
+        option.type = 'button';
+        option.className = 'syllentras-provider-option';
+        option.setAttribute('role', 'option');
+        option.dataset.providerId = provider.id;
+
+        var row = document.createElement('span');
+        row.className = 'syllentras-provider-option-row';
+
+        var nameEl = document.createElement('span');
+        nameEl.className = 'syllentras-provider-option-name';
+        nameEl.textContent = provider.displayName;
+        row.appendChild(nameEl);
+
+        if (provider.id === activeId) {
+            option.classList.add('active');
+            option.setAttribute('aria-selected', 'true');
+            var check = document.createElement('span');
+            check.className = 'syllentras-provider-option-check';
+            check.setAttribute('aria-hidden', 'true');
+            check.textContent = '\u2713';
+            row.appendChild(check);
+        } else {
+            option.setAttribute('aria-selected', 'false');
+        }
+
+        option.appendChild(row);
+
+        if (!provider.available) {
+            option.classList.add('disabled');
+            option.setAttribute('aria-disabled', 'true');
+            option.title = UNAVAILABLE_PROVIDER_MESSAGE;
+            var unavailable = document.createElement('span');
+            unavailable.className = 'syllentras-provider-option-status';
+            unavailable.textContent = 'Unavailable';
+            row.appendChild(unavailable);
+
+            option.addEventListener('click', function (e) {
+                e.preventDefault();
+                e.stopPropagation();
+            });
+        } else {
+            option.addEventListener('click', function () {
+                selectProvider(provider.id);
+            });
+        }
+
+        providerMenu.appendChild(option);
+    });
+}
+
+function applyProviderList(data) {
+    providerList = Array.isArray(data && data.providers) ? data.providers : [];
+    defaultProviderId = (data && data.defaultProviderId) || null;
+
+    var stored = null;
+    try {
+        stored = localStorage.getItem(PROVIDER_STORAGE_KEY);
+    } catch (e) {
+        stored = null;
+    }
+
+    var storedProvider = stored ? findProvider(stored) : null;
+    if (storedProvider && storedProvider.available) {
+        selectedProviderId = storedProvider.id;
+    } else if (defaultProviderId && findProvider(defaultProviderId)) {
+        selectedProviderId = defaultProviderId;
+    } else {
+        var firstAvailable = null;
+        for (var i = 0; i < providerList.length; i++) {
+            if (providerList[i].available) {
+                firstAvailable = providerList[i].id;
+                break;
+            }
+        }
+        selectedProviderId = firstAvailable;
+    }
+
+    providersLoaded = true;
+    updateProviderLabel();
+    renderProviderMenu();
+}
+
+function loadProviders() {
+    return fetchJson('/chat/providers')
+        .then(function (data) {
+            applyProviderList(data);
+        })
+        .catch(function () {
+            providerList = [];
+            defaultProviderId = null;
+            selectedProviderId = null;
+            providersLoaded = true;
+            updateProviderLabel();
+        });
+}
+
+if (providerBtn) {
+    providerBtn.addEventListener('click', function (e) {
+        e.stopPropagation();
+        if (isGeneratingResponse) return;
+        toggleProviderMenu();
+    });
+}
+
+document.addEventListener('click', function (e) {
+    if (!providerMenu || providerMenu.hidden) return;
+    if (providerWrap && providerWrap.contains(e.target)) return;
+    closeProviderMenu();
+});
+
+document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape') {
+        closeProviderMenu();
+    }
+});
 
 // ===== markdown.js =====
 // Part of the Syllentras chat widget.
@@ -541,6 +835,11 @@ function attachPendingAction(messageEl, pendingAction) {
         if (difficultySelect) {
             body.difficulty = normalizePendingDifficulty(difficultySelect.value);
         }
+        var providerId = typeof getSelectedProviderId === 'function' ? getSelectedProviderId() : null;
+        if (providerId) {
+            body.provider = providerId;
+        }
+        setGeneratingState(true);
         fetchJson('/chat/actions/confirm', {
             method: 'POST',
             body: JSON.stringify(body)
@@ -555,9 +854,12 @@ function attachPendingAction(messageEl, pendingAction) {
             }
             return loadConversations().then(loadReviewOfferForConversation);
         })
-        .catch(function () {
+        .catch(function (err) {
             setBusy(false);
-            appendMessage('error', createFailedMessage());
+            appendMessage('error', (err && err.message) ? err.message : createFailedMessage());
+        })
+        .finally(function () {
+            setGeneratingState(false);
         });
     });
 
@@ -638,12 +940,18 @@ function attachReviewOffer(messageEl, offer) {
     explainBtn.addEventListener('click', function () {
         explainBtn.disabled = true;
         explainBtn.textContent = 'Explaining...';
+        setGeneratingState(true);
+        var body = {
+            conversationId: conversationId,
+            moodleUserId: moodleUserId
+        };
+        var providerId = typeof getSelectedProviderId === 'function' ? getSelectedProviderId() : null;
+        if (providerId) {
+            body.provider = providerId;
+        }
         fetchJson('/chat/actions/review-explain', {
             method: 'POST',
-            body: JSON.stringify({
-                conversationId: conversationId,
-                moodleUserId: moodleUserId
-            })
+            body: JSON.stringify(body)
         })
         .then(function (data) {
             wrap.remove();
@@ -651,10 +959,15 @@ function attachReviewOffer(messageEl, offer) {
                 appendMessage('assistant', data.response);
             }
         })
-        .catch(function () {
+        .catch(function (err) {
             explainBtn.disabled = false;
             explainBtn.textContent = 'Explain my wrong answers';
-            appendMessage('error', 'Could not explain your wrong answers. Please try again.');
+            appendMessage('error', (err && err.message)
+                ? err.message
+                : 'Could not explain your wrong answers. Please try again.');
+        })
+        .finally(function () {
+            setGeneratingState(false);
         });
     });
 
@@ -748,8 +1061,8 @@ function setActiveConversation(conversation) {
         activeConversation.topicSuggestions = conversation.topicSuggestions;
     }
     conversationId = conversation.id;
-    activeTitle.textContent = conversation.title || 'Conversation';
-    activeTag.textContent = conversation.tag || '';
+    activeTitle.textContent = displayConversationTitle(conversation);
+    activeTag.textContent = displayConversationTag(conversation);
     clearMessages();
     hasMore = false;
     loadingHistory = false;
@@ -858,7 +1171,7 @@ function loadConversations() {
 function renderConversationList(conversations) {
     conversationsEl.innerHTML = '';
     var pinned = conversations.filter(function (c) { return c.pinned && c.type !== 'general'; });
-    renderConversationGroup('Main', conversations.filter(function (c) { return c.type === 'general'; }));
+    renderConversationGroup(generalConversationGroupTitle(), conversations.filter(function (c) { return c.type === 'general'; }));
     if (pinned.length) renderConversationGroup('Pinned', pinned);
     renderConversationGroup('Course Sections', conversations.filter(function (c) { return !c.pinned && c.type === 'section'; }));
     renderConversationGroup('Other Conversations', conversations.filter(function (c) { return !c.pinned && c.type === 'manual'; }));
@@ -885,9 +1198,9 @@ function renderConversationItem(conversation, matchedMessage) {
         '<span class="syllentras-conversation-tag"></span>' +
         '<button type="button" class="syllentras-conversation-menu-btn" aria-label="Conversation menu" aria-haspopup="menu">&#8942;</button>';
     var nameEl = item.querySelector('.syllentras-conversation-name');
-    nameEl.textContent = conversation.title || 'Conversation';
+    nameEl.textContent = displayConversationTitle(conversation);
     nameEl.classList.toggle('pinned', !!conversation.pinned);
-    item.querySelector('.syllentras-conversation-tag').textContent = conversation.tag || '';
+    item.querySelector('.syllentras-conversation-tag').textContent = displayConversationTag(conversation);
     if (matchedMessage && matchedMessage.content) {
         var match = document.createElement('span');
         match.className = 'syllentras-conversation-match';
@@ -1033,19 +1346,27 @@ function sendMessage() {
 
     input.value = '';
     send.disabled = true;
+    setGeneratingState(true);
     appendMessage('user', text);
     var loadingEl = appendMessage('assistant', '...');
 
+    var body = {
+        courseId: courseId,
+        courseName: courseName || undefined,
+        moodleUserId: moodleUserId,
+        userFirstName: userFirstName || undefined,
+        message: text,
+        conversationId: conversationId
+    };
+    // Selected provider rides along so mid-chat switches apply to the next turn.
+    var providerId = typeof getSelectedProviderId === 'function' ? getSelectedProviderId() : null;
+    if (providerId) {
+        body.provider = providerId;
+    }
+
     fetchJson('/chat/message', {
         method: 'POST',
-        body: JSON.stringify({
-            courseId: courseId,
-            courseName: courseName || undefined,
-            moodleUserId: moodleUserId,
-            userFirstName: userFirstName || undefined,
-            message: text,
-            conversationId: conversationId
-        })
+        body: JSON.stringify(body)
     })
     .then(function (data) {
         renderAssistantContent(loadingEl, data.response);
@@ -1060,12 +1381,15 @@ function sendMessage() {
         }
         return loadConversations();
     })
-    .catch(function () {
+    .catch(function (err) {
         loadingEl.className = 'syllentras-msg error';
-        loadingEl.textContent = 'Something went wrong. Please try again.';
+        loadingEl.textContent = (err && err.message)
+            ? err.message
+            : 'Something went wrong. Please try again.';
     })
     .finally(function () {
         send.disabled = false;
+        setGeneratingState(false);
         input.focus();
     });
 }
@@ -1166,9 +1490,10 @@ function closeModal() {
 function deleteConversation(conversation) {
     pendingDeleteConversation = conversation;
     if (conversation.type === 'general') {
+        var generalTitle = generalChatTitle();
         showModal(
-            'Clear Main history?',
-            'Clear all messages in Main? The conversation will stay available. Course content will not be deleted.',
+            'Clear ' + generalTitle + ' history?',
+            'Clear all messages in ' + generalTitle + '? The conversation will stay available. Course content will not be deleted.',
             [
                 { label: 'Cancel', className: 'syllentras-modal-secondary', onClick: cancelDeleteConversation },
                 { label: 'Clear', className: 'syllentras-modal-danger', onClick: confirmDeleteConversation }
@@ -1216,7 +1541,7 @@ function confirmDeleteConversation() {
             clearMessages();
             conversationId = null;
             activeConversation = null;
-            return openConversation({ type: 'general', title: 'Main' });
+            return openConversation({ type: 'general', title: generalChatTitle() });
         }
         return loadConversations();
     });
@@ -1337,8 +1662,8 @@ function fetchConversationMessages(id) {
 
 function formatConversationExport(conversation, messages) {
     var lines = [
-        conversation.title || 'Conversation',
-        conversation.tag || '',
+        displayConversationTitle(conversation),
+        displayConversationTag(conversation),
         courseName ? 'Course: ' + courseName : '',
         'Exported: ' + new Date().toLocaleString(),
         ''
@@ -2592,7 +2917,7 @@ expandBtn.addEventListener('click', function () {
 resetBtn.addEventListener('click', resetPanelLayout);
 
 btn.addEventListener('click', function () {
-    openConversation({ type: 'general', title: 'Main' });
+    openConversation({ type: 'general', title: generalChatTitle() });
 });
 
 close.addEventListener('click', function () {
@@ -2810,6 +3135,7 @@ applyExpandedState();
 applyStoredSidebarWidth();
 applyStoredInputHeight();
 initToolsMenu();
+loadProviders();
 loadConversations();
 installSectionButtons();
 if (document.readyState === 'loading') {

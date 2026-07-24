@@ -3,53 +3,53 @@ import {
   Injectable,
   Logger,
 } from '@nestjs/common';
-import { Type } from '@google/genai';
 import { buildStudyGuidePrompt } from './chat.prompts';
-import { GeminiClient } from './gemini.client';
 import {
   normalizeStudyGuideDocument,
   renderStudyGuideHtml,
   type StudyGuideDocument,
 } from './study-guide.helpers';
+import type { LlmProvider } from './providers';
+import type { LlmJsonSchema } from './providers';
+
+const STUDY_GUIDE_SCHEMA: LlmJsonSchema = {
+  type: 'object',
+  properties: {
+    title: { type: 'string' },
+    introMarkdown: { type: 'string' },
+    sections: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          heading: { type: 'string' },
+          bodyMarkdown: { type: 'string' },
+        },
+        required: ['heading', 'bodyMarkdown'],
+      },
+    },
+  },
+  required: ['title', 'sections'],
+};
 
 @Injectable()
 export class StudyGuideGenerationService {
   private readonly logger = new Logger(StudyGuideGenerationService.name);
 
-  constructor(private readonly gemini: GeminiClient) {}
-
-  async generateStudyGuide(input: {
-    title: string;
-    scopeSummary: string;
-    courseMaterial: string;
-  }): Promise<{ document: StudyGuideDocument; html: string }> {
+  async generateStudyGuide(
+    input: {
+      title: string;
+      scopeSummary: string;
+      courseMaterial: string;
+    },
+    llm: LlmProvider,
+  ): Promise<{ document: StudyGuideDocument; html: string }> {
     const prompt = buildStudyGuidePrompt(input);
-    const response = await this.gemini.generateContent({
-      contents: prompt,
-      config: {
-        responseMimeType: 'application/json',
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            title: { type: Type.STRING },
-            introMarkdown: { type: Type.STRING },
-            sections: {
-              type: Type.ARRAY,
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  heading: { type: Type.STRING },
-                  bodyMarkdown: { type: Type.STRING },
-                },
-                required: ['heading', 'bodyMarkdown'],
-              },
-            },
-          },
-          required: ['title', 'sections'],
-        },
-      },
+    const raw = await llm.generateJson({
+      prompt,
+      schema: STUDY_GUIDE_SCHEMA,
+      schemaName: 'study_guide',
     });
-    const raw = response.text ?? '';
     let parsed: Partial<StudyGuideDocument>;
     try {
       parsed = JSON.parse(raw) as Partial<StudyGuideDocument>;

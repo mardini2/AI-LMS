@@ -3,29 +3,16 @@ import {
   Injectable,
   Logger,
 } from '@nestjs/common';
-import {
-  FunctionCallingConfigMode,
-  HarmBlockThreshold,
-  HarmCategory,
-  type Tool,
-} from '@google/genai';
 import { ContextService } from '../context/context.service';
 import { PracticeQuizMoodleService } from '../context/practice-quiz-moodle.service';
 import { StudyGuideMoodleService } from '../context/study-guide-moodle.service';
 import { ConversationService } from '../conversation/conversation.service';
-import {
-  buildSystemPrompt,
-  PROPOSE_PRACTICE_QUIZ_TOOL,
-  PROPOSE_STUDY_GUIDE_TOOL,
-  PROPOSE_FLASHCARDS_TOOL,
-  toGeminiHistory,
-} from './chat.prompts';
+import { buildSystemPrompt } from './chat.prompts';
 import type {
   ChatResponse,
   PendingActionDto,
   ReviewOfferDto,
 } from './chat.types';
-import { GeminiClient } from './gemini.client';
 import { PendingActionService } from './pending-action.service';
 import { SendMessageDto } from './dto/send-message.dto';
 import { PracticeQuizGenerationService } from './practice-quiz-generation.service';
@@ -62,6 +49,11 @@ import {
   FLASHCARD_COUNT_EXPLICIT_MAX,
   scrubFlashcardsContext,
 } from './flashcards.helpers';
+import {
+  AiProviderRegistry,
+  STUDY_PROPOSAL_TOOLS,
+  type LlmProvider,
+} from './providers';
 
 export type {
   ChatResponse,
@@ -75,7 +67,7 @@ export class ChatService {
   private readonly logger = new Logger(ChatService.name);
 
   constructor(
-    private readonly gemini: GeminiClient,
+    private readonly providers: AiProviderRegistry,
     private readonly contextService: ContextService,
     private readonly practiceQuizMoodle: PracticeQuizMoodleService,
     private readonly studyGuideMoodle: StudyGuideMoodleService,
@@ -88,6 +80,13 @@ export class ChatService {
     private readonly topicSuggestions: TopicSuggestionsService,
   ) {}
 
+  listProviders() {
+    return {
+      providers: this.providers.listProviders(),
+      defaultProviderId: this.providers.getDefaultProviderId(),
+    };
+  }
+
   async sendMessage(dto: SendMessageDto): Promise<ChatResponse> {
     const {
       courseId,
@@ -96,7 +95,9 @@ export class ChatService {
       userFirstName,
       message,
       conversationId: incomingConvId,
+      provider: requestedProvider,
     } = dto;
+    const llm = this.providers.resolve(requestedProvider);
 
     let conversationId = incomingConvId;
     if (conversationId) {
@@ -120,7 +121,7 @@ export class ChatService {
             moodleUserId,
             {
               type: 'general',
-              title: 'Main',
+              title: courseId > 1 ? 'Main' : 'Home',
             },
           )
         : await this.conversationService.create(courseId, moodleUserId);
@@ -151,50 +152,27 @@ export class ChatService {
     const canProposeContent =
       Boolean(moodleUserId) && courseId > 1 && Boolean(courseMaterial);
 
-    const chat = this.gemini.createChat({
-      history: toGeminiHistory(dbHistory),
-      config: {
-        systemInstruction: buildSystemPrompt({
-          courseId,
-          courseName: resolvedCourseName,
-          userFirstName,
-          enrolledCourses,
-          conversationTitle: conversation.title,
-          conversationType: conversation.type,
-          sectionName: conversation.sectionName,
-          courseMaterial,
-          canProposeContent,
-        }),
-        tools: canProposeContent
-          ? ([
-              {
-                functionDeclarations: [
-                  PROPOSE_STUDY_GUIDE_TOOL,
-                  PROPOSE_FLASHCARDS_TOOL,
-                  PROPOSE_PRACTICE_QUIZ_TOOL,
-                ],
-              },
-            ] as Tool[])
-          : undefined,
-        toolConfig: canProposeContent
-          ? {
-              functionCallingConfig: {
-                mode: FunctionCallingConfigMode.AUTO,
-              },
-            }
-          : undefined,
-        safetySettings: [
-          {
-            category: HarmCategory.HARM_CATEGORY_HARASSMENT,
-            threshold: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
-          },
-        ],
-      },
+    this.logger.log(
+      `Sending message for conversation ${conversationId} via ${llm.id}`,
+    );
+    const result = await llm.chat({
+      systemInstruction: buildSystemPrompt({
+        courseId,
+        courseName: resolvedCourseName,
+        userFirstName,
+        enrolledCourses,
+        conversationTitle: conversation.title,
+        conversationType: conversation.type,
+        sectionName: conversation.sectionName,
+        courseMaterial,
+        canProposeContent,
+      }),
+      history: dbHistory,
+      message,
+      tools: canProposeContent ? STUDY_PROPOSAL_TOOLS : undefined,
     });
 
-    this.logger.log(`Sending message for conversation ${conversationId}`);
-    const result = await chat.sendMessage({ message });
-    const functionCalls = result.functionCalls ?? [];
+    const functionCalls = result.toolCalls ?? [];
 
     let responseText = '';
     let pendingAction: PendingActionDto | undefined;
@@ -373,11 +351,14 @@ export class ChatService {
         { role: 'user' as const, content: message },
         { role: 'assistant' as const, content: responseText },
       ];
-      const refreshed = await this.topicSuggestions.suggestTopics({
-        courseName: resolvedCourseName,
-        sectionName: conversation.sectionName,
-        recentTurns: historyForTopics,
-      });
+      const refreshed = await this.topicSuggestions.suggestTopics(
+        {
+          courseName: resolvedCourseName,
+          sectionName: conversation.sectionName,
+          recentTurns: historyForTopics,
+        },
+        llm,
+      );
       if (refreshed.length) {
         topicSuggestions =
           await this.conversationService.updateTopicSuggestions(
@@ -392,6 +373,7 @@ export class ChatService {
       conversationId,
       pendingAction,
       topicSuggestions,
+      provider: llm.id,
     };
   }
 
@@ -399,7 +381,9 @@ export class ChatService {
     actionId: string,
     moodleUserId: number,
     edits?: { title?: string; count?: number; difficulty?: string },
+    providerId?: string,
   ): Promise<ChatResponse> {
+    const llm = this.providers.resolve(providerId);
     let action = await this.pendingActionService.assertPendingOwned(
       actionId,
       moodleUserId,
@@ -414,13 +398,13 @@ export class ChatService {
     }
 
     if (action.type === 'practice_quiz') {
-      return this.confirmPracticeQuiz(action, moodleUserId);
+      return this.confirmPracticeQuiz(action, moodleUserId, llm);
     }
     if (action.type === 'study_guide') {
-      return this.confirmStudyGuide(action, moodleUserId);
+      return this.confirmStudyGuide(action, moodleUserId, llm);
     }
     if (action.type === 'flashcards') {
-      return this.confirmFlashcards(action, moodleUserId);
+      return this.confirmFlashcards(action, moodleUserId, llm);
     }
 
     throw new BadRequestException('Unsupported action type');
@@ -472,6 +456,7 @@ export class ChatService {
   private async confirmPracticeQuiz(
     action: PendingAction,
     moodleUserId: number,
+    llm: LlmProvider,
   ): Promise<ChatResponse> {
     const payload = action.payload as PracticeQuizPayload;
     const {
@@ -523,13 +508,16 @@ export class ChatService {
           : ' (course-wide scope)'),
     );
     const questions =
-      await this.practiceQuizGeneration.generatePracticeQuestions({
-        title,
-        scopeSummary,
-        questionCount,
-        difficulty,
-        courseMaterial: scrubQuizGenerationContext(courseMaterial),
-      });
+      await this.practiceQuizGeneration.generatePracticeQuestions(
+        {
+          title,
+          scopeSummary,
+          questionCount,
+          difficulty,
+          courseMaterial: scrubQuizGenerationContext(courseMaterial),
+        },
+        llm,
+      );
 
     const quiz = await this.practiceQuizMoodle.createPracticeQuiz({
       courseId: action.courseId,
@@ -567,12 +555,14 @@ export class ChatService {
       response: responseText,
       conversationId: action.conversationId,
       quizUrl: quiz.viewUrl,
+      provider: llm.id,
     };
   }
 
   private async confirmStudyGuide(
     action: PendingAction,
     moodleUserId: number,
+    llm: LlmProvider,
   ): Promise<ChatResponse> {
     const payload = action.payload as StudyGuidePayload;
     const { title, scopeSummary, sectionId, sectionNumber, sectionName } =
@@ -617,11 +607,14 @@ export class ChatService {
     );
 
     const { document, html } =
-      await this.studyGuideGeneration.generateStudyGuide({
-        title,
-        scopeSummary,
-        courseMaterial: scrubStudyGuideContext(courseMaterial),
-      });
+      await this.studyGuideGeneration.generateStudyGuide(
+        {
+          title,
+          scopeSummary,
+          courseMaterial: scrubStudyGuideContext(courseMaterial),
+        },
+        llm,
+      );
 
     const page = await this.studyGuideMoodle.createStudyGuide({
       courseId: action.courseId,
@@ -658,12 +651,14 @@ export class ChatService {
       response: responseText,
       conversationId: action.conversationId,
       studyGuideUrl: page.viewUrl,
+      provider: llm.id,
     };
   }
 
   private async confirmFlashcards(
     action: PendingAction,
     moodleUserId: number,
+    llm: LlmProvider,
   ): Promise<ChatResponse> {
     const payload = action.payload as FlashcardsPayload;
     const {
@@ -714,12 +709,15 @@ export class ChatService {
     );
 
     const { document, html } =
-      await this.flashcardsGeneration.generateFlashcards({
-        title,
-        scopeSummary,
-        cardCount,
-        courseMaterial: scrubFlashcardsContext(courseMaterial),
-      });
+      await this.flashcardsGeneration.generateFlashcards(
+        {
+          title,
+          scopeSummary,
+          cardCount,
+          courseMaterial: scrubFlashcardsContext(courseMaterial),
+        },
+        llm,
+      );
 
     const page = await this.studyGuideMoodle.createPrivatePage({
       courseId: action.courseId,
@@ -756,6 +754,7 @@ export class ChatService {
       response: responseText,
       conversationId: action.conversationId,
       flashcardsUrl: page.viewUrl,
+      provider: llm.id,
     };
   }
 
@@ -844,10 +843,13 @@ export class ChatService {
   async explainWrongAnswers(
     conversationId: string,
     moodleUserId: number,
+    providerId?: string,
   ): Promise<ChatResponse> {
+    const llm = this.providers.resolve(providerId);
     return this.practiceQuizReview.explainWrongAnswers(
       conversationId,
       moodleUserId,
+      llm,
     );
   }
 }

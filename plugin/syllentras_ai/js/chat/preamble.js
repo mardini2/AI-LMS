@@ -40,6 +40,51 @@ var openMenu = null;
 
 courseEl.textContent = (courseId > 1 && courseName) ? courseName : 'Dashboard';
 
+// Dashboard default chat is named Home. Course default stays Main.
+function isDashboardContext() {
+    return !(courseId > 1);
+}
+
+function generalChatTitle() {
+    return isDashboardContext() ? 'Home' : 'Main';
+}
+
+function generalChatTag() {
+    return isDashboardContext() ? '#Home' : '#Main';
+}
+
+function generalConversationGroupTitle() {
+    return generalChatTitle();
+}
+
+function generalChatPlaceholder() {
+    return isDashboardContext() ? 'Ask a question from Home...' : 'Ask a question about this course...';
+}
+
+function displayConversationTitle(conversation) {
+    if (conversation && conversation.type === 'general') {
+        return generalChatTitle();
+    }
+    return (conversation && conversation.title) || 'Conversation';
+}
+
+function displayConversationTag(conversation) {
+    if (conversation && conversation.type === 'general') {
+        return generalChatTag();
+    }
+    return (conversation && conversation.tag) || '';
+}
+
+if (activeTitle) {
+    activeTitle.textContent = generalChatTitle();
+}
+if (activeTag) {
+    activeTag.textContent = generalChatTag();
+}
+if (input) {
+    input.placeholder = generalChatPlaceholder();
+}
+
 var conversationId = null;
 var activeConversation = null;
 var hasMore = false;

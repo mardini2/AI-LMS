@@ -38,6 +38,8 @@ export interface ReviewBlockDto {
 export interface ChatResponse {
   response: string;
   conversationId: string;
+  /** Which LLM handled this request (never includes secrets). */
+  provider?: string;
   pendingAction?: PendingActionDto;
   topicSuggestions?: string[];
   quizUrl?: string;

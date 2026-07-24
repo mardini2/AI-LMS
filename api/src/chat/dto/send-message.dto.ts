@@ -10,6 +10,7 @@ import {
   MinLength,
 } from 'class-validator';
 import { Type } from 'class-transformer';
+import { AI_PROVIDER_IDS } from '../providers/provider.types';
 
 export class HistoryEntryDto {
   @IsIn(['user', 'assistant'])
@@ -44,6 +45,11 @@ export class SendMessageDto {
   @IsOptional()
   @IsUUID()
   conversationId?: string;
+
+  /** Which AI backend should answer this turn (openai, gemini, …). */
+  @IsOptional()
+  @IsIn([...AI_PROVIDER_IDS])
+  provider?: string;
 
   @IsOptional()
   @IsArray()

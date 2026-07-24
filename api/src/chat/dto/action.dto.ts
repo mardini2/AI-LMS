@@ -9,6 +9,7 @@ import {
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { QUIZ_DIFFICULTIES } from '../practice-quiz.helpers';
+import { AI_PROVIDER_IDS } from '../providers/provider.types';
 
 export class ConfirmActionDto {
   @IsUUID()
@@ -34,6 +35,10 @@ export class ConfirmActionDto {
   @IsString()
   @IsIn([...QUIZ_DIFFICULTIES])
   difficulty?: string;
+
+  @IsOptional()
+  @IsIn([...AI_PROVIDER_IDS])
+  provider?: string;
 }
 
 export class CancelActionDto {
@@ -54,4 +59,8 @@ export class ExplainReviewDto {
   @IsInt()
   @Min(1)
   moodleUserId: number;
+
+  @IsOptional()
+  @IsIn([...AI_PROVIDER_IDS])
+  provider?: string;
 }

@@ -31,6 +31,9 @@ class before_footer {
         $coursename = ($courseid > 1) ? format_string($PAGE->course->fullname) : '';
         $moodleuserid = (int) $USER->id;
         $userfirstname = format_string($USER->firstname);
+        $generaltitle = ($courseid > 1) ? 'Main' : 'Home';
+        $generaltag = ($courseid > 1) ? '#Main' : '#Home';
+        $chatplaceholder = ($courseid > 1) ? 'Ask a question about this course...' : 'Ask a question from Home...';
         $sections = [];
 
         if ($courseid > 1) {

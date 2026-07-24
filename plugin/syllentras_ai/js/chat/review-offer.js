@@ -30,12 +30,18 @@ function attachReviewOffer(messageEl, offer) {
     explainBtn.addEventListener('click', function () {
         explainBtn.disabled = true;
         explainBtn.textContent = 'Explaining...';
+        setGeneratingState(true);
+        var body = {
+            conversationId: conversationId,
+            moodleUserId: moodleUserId
+        };
+        var providerId = typeof getSelectedProviderId === 'function' ? getSelectedProviderId() : null;
+        if (providerId) {
+            body.provider = providerId;
+        }
         fetchJson('/chat/actions/review-explain', {
             method: 'POST',
-            body: JSON.stringify({
-                conversationId: conversationId,
-                moodleUserId: moodleUserId
-            })
+            body: JSON.stringify(body)
         })
         .then(function (data) {
             wrap.remove();
@@ -43,10 +49,15 @@ function attachReviewOffer(messageEl, offer) {
                 appendMessage('assistant', data.response);
             }
         })
-        .catch(function () {
+        .catch(function (err) {
             explainBtn.disabled = false;
             explainBtn.textContent = 'Explain my wrong answers';
-            appendMessage('error', 'Could not explain your wrong answers. Please try again.');
+            appendMessage('error', (err && err.message)
+                ? err.message
+                : 'Could not explain your wrong answers. Please try again.');
+        })
+        .finally(function () {
+            setGeneratingState(false);
         });
     });
 

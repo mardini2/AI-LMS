@@ -20,6 +20,16 @@ export class ChatController {
   constructor(private readonly chatService: ChatService) {}
 
   /**
+   * GET /chat/providers
+   * Lists supported AI backends and whether each has a configured API key.
+   * Never returns the keys themselves.
+   */
+  @Get('providers')
+  listProviders() {
+    return this.chatService.listProviders();
+  }
+
+  /**
    * POST /chat/message
    */
   @Post('message')
@@ -32,11 +42,16 @@ export class ChatController {
    */
   @Post('actions/confirm')
   confirmAction(@Body() dto: ConfirmActionDto) {
-    return this.chatService.confirmAction(dto.actionId, dto.moodleUserId, {
-      title: dto.title,
-      count: dto.count,
-      difficulty: dto.difficulty,
-    });
+    return this.chatService.confirmAction(
+      dto.actionId,
+      dto.moodleUserId,
+      {
+        title: dto.title,
+        count: dto.count,
+        difficulty: dto.difficulty,
+      },
+      dto.provider,
+    );
   }
 
   /**
@@ -85,6 +100,7 @@ export class ChatController {
     return this.chatService.explainWrongAnswers(
       dto.conversationId,
       dto.moodleUserId,
+      dto.provider,
     );
   }
 }

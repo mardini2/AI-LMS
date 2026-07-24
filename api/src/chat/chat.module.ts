@@ -16,6 +16,11 @@ import { AiContentService } from './ai-content.service';
 import { TopicSuggestionsService } from './topic-suggestions.service';
 import { ContextModule } from '../context/context.module';
 import { ConversationModule } from '../conversation/conversation.module';
+import {
+  AiProviderRegistry,
+  AnthropicProvider,
+  GeminiProvider,
+} from './providers';
 
 @Module({
   imports: [
@@ -26,6 +31,9 @@ import { ConversationModule } from '../conversation/conversation.module';
   controllers: [ChatController, FlashcardsController, AiContentController],
   providers: [
     GeminiClient,
+    GeminiProvider,
+    AnthropicProvider,
+    AiProviderRegistry,
     ChatService,
     PendingActionService,
     PracticeQuizGenerationService,

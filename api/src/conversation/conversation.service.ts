@@ -84,7 +84,11 @@ export class ConversationService {
       throw new BadRequestException('Manual conversations require a title');
     }
 
-    const title = requestedTitle || defaultTitle(type, sectionName);
+    // General is a singleton per course: "Home" on the dashboard, "Main" in courses.
+    const title =
+      type === 'general'
+        ? defaultGeneralTitle(courseId)
+        : requestedTitle || defaultTitle(type, sectionName, courseId);
     const conversation = this.conversationRepo.create({
       courseId,
       moodleUserId,
@@ -93,7 +97,7 @@ export class ConversationService {
       sectionId: options.sectionId,
       sectionNumber: options.sectionNumber,
       sectionName,
-      tag: tagForConversation(type, sectionName ?? title),
+      tag: tagForConversation(type, sectionName ?? title, courseId),
       pinned: options.pinned ?? false,
     });
 
@@ -134,7 +138,11 @@ export class ConversationService {
   ): Promise<Conversation> {
     const type = options.type ?? 'general';
     const sectionName = cleanText(options.sectionName);
-    const title = cleanText(options.title) || defaultTitle(type, sectionName);
+    // Force Home/Main for the general singleton so older client titles stay consistent.
+    const title =
+      type === 'general'
+        ? defaultGeneralTitle(courseId)
+        : cleanText(options.title) || defaultTitle(type, sectionName, courseId);
 
     let existing: Conversation | null = null;
     if (type === 'general') {
@@ -153,7 +161,11 @@ export class ConversationService {
       existing.sectionName = sectionName ?? existing.sectionName;
       existing.sectionId = options.sectionId ?? existing.sectionId;
       existing.sectionNumber = options.sectionNumber ?? existing.sectionNumber;
-      existing.tag = tagForConversation(existing.type, existing.sectionName ?? existing.title);
+      existing.tag = tagForConversation(
+        existing.type,
+        existing.sectionName ?? existing.title,
+        courseId,
+      );
       return this.conversationRepo.save(existing);
     }
 
@@ -468,9 +480,11 @@ export class ConversationService {
 
 function toSummary(conversation: Conversation): ConversationSummary {
   const type = conversation.type ?? 'general';
-  const title = type === 'general'
-    ? defaultTitle(type)
-    : conversation.title || defaultTitle(type, conversation.sectionName);
+  const courseId = conversation.courseId ?? 0;
+  const title =
+    type === 'general'
+      ? defaultGeneralTitle(courseId)
+      : conversation.title || defaultTitle(type, conversation.sectionName, courseId);
 
   return {
     id: conversation.id,
@@ -481,7 +495,11 @@ function toSummary(conversation: Conversation): ConversationSummary {
     sectionId: conversation.sectionId,
     sectionNumber: conversation.sectionNumber,
     sectionName: conversation.sectionName,
-    tag: tagForConversation(type, type === 'section' ? conversation.sectionName ?? title : title),
+    tag: tagForConversation(
+      type,
+      type === 'section' ? conversation.sectionName ?? title : title,
+      courseId,
+    ),
     pinned: conversation.pinned ?? false,
     topicSuggestions: normalizeTopicSuggestions(conversation.topicSuggestions),
     createdAt: conversation.createdAt,
@@ -506,7 +524,20 @@ function normalizeTopicSuggestions(topics?: string[] | null): string[] | undefin
   return out.length ? out : undefined;
 }
 
-function defaultTitle(type: ConversationType, sectionName?: string): string {
+/** Site/dashboard context uses courseId 0 or 1 in Moodle. */
+function isDashboardCourse(courseId: number): boolean {
+  return courseId <= 1;
+}
+
+function defaultGeneralTitle(courseId: number): string {
+  return isDashboardCourse(courseId) ? 'Home' : 'Main';
+}
+
+function defaultTitle(
+  type: ConversationType,
+  sectionName?: string,
+  courseId = 0,
+): string {
   if (type === 'section' && sectionName) {
     return `${sectionName} chat`;
   }
@@ -515,12 +546,16 @@ function defaultTitle(type: ConversationType, sectionName?: string): string {
     return 'New conversation';
   }
 
-  return 'Main';
+  return defaultGeneralTitle(courseId);
 }
 
-function tagForConversation(type: ConversationType, label?: string): string {
+function tagForConversation(
+  type: ConversationType,
+  label?: string,
+  courseId = 0,
+): string {
   if (type === 'general') {
-    return '#main';
+    return isDashboardCourse(courseId) ? '#Home' : '#Main';
   }
 
   return `#${slugTag(label || type)}`;

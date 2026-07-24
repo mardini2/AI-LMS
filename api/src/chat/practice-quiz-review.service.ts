@@ -3,7 +3,6 @@ import {
   Injectable,
   Logger,
 } from '@nestjs/common';
-import { Type } from '@google/genai';
 import { ContextService } from '../context/context.service';
 import type { CourseContextFilter } from '../context/context.types';
 import { PracticeQuizMoodleService } from '../context/practice-quiz-moodle.service';
@@ -15,19 +14,26 @@ import type {
   ReviewOfferDto,
 } from './chat.types';
 import type { PracticeQuizPayload } from './entities/pending-action.entity';
-import { GeminiClient } from './gemini.client';
 import { PendingActionService } from './pending-action.service';
 import {
   buildPracticeQuizContextFilter,
   buildReviewMessage,
 } from './practice-quiz.helpers';
+import type { LlmProvider, LlmJsonSchema } from './providers';
+
+const WHY_SCHEMA: LlmJsonSchema = {
+  type: 'object',
+  properties: {
+    why: { type: 'string' },
+  },
+  required: ['why'],
+};
 
 @Injectable()
 export class PracticeQuizReviewService {
   private readonly logger = new Logger(PracticeQuizReviewService.name);
 
   constructor(
-    private readonly gemini: GeminiClient,
     private readonly contextService: ContextService,
     private readonly practiceQuizMoodle: PracticeQuizMoodleService,
     private readonly conversationService: ConversationService,
@@ -98,6 +104,7 @@ export class PracticeQuizReviewService {
   async explainWrongAnswers(
     conversationId: string,
     moodleUserId: number,
+    llm: LlmProvider,
   ): Promise<ChatResponse> {
     await this.conversationService.assertOwner(conversationId, moodleUserId);
     const action =
@@ -148,12 +155,15 @@ export class PracticeQuizReviewService {
         this.contextService.getContext(action.courseId, query, filter),
         this.contextService.findBestCitation(action.courseId, query, filter),
       ]);
-      const why = await this.generateWrongAnswerExplanation({
-        questiontext: q.questiontext,
-        studentanswer: q.studentanswer,
-        rightanswer: q.rightanswer,
-        courseMaterial: material,
-      });
+      const why = await this.generateWrongAnswerExplanation(
+        {
+          questiontext: q.questiontext,
+          studentanswer: q.studentanswer,
+          rightanswer: q.rightanswer,
+          courseMaterial: material,
+        },
+        llm,
+      );
 
       reviewBlocks.push({
         slot: q.slot,
@@ -189,6 +199,7 @@ export class PracticeQuizReviewService {
       response: responseText,
       conversationId,
       review: reviewBlocks,
+      provider: llm.id,
     };
   }
 
@@ -221,35 +232,30 @@ export class PracticeQuizReviewService {
     });
   }
 
-  private async generateWrongAnswerExplanation(input: {
-    questiontext: string;
-    studentanswer: string;
-    rightanswer: string;
-    courseMaterial: string;
-  }): Promise<string> {
+  private async generateWrongAnswerExplanation(
+    input: {
+      questiontext: string;
+      studentanswer: string;
+      rightanswer: string;
+      courseMaterial: string;
+    },
+    llm: LlmProvider,
+  ): Promise<string> {
     const prompt = buildWrongAnswerExplanationPrompt(input);
 
-    const response = await this.gemini.generateContent({
-      contents: prompt,
-      config: {
-        responseMimeType: 'application/json',
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            why: { type: Type.STRING },
-          },
-          required: ['why'],
-        },
-      },
-    });
     try {
-      const parsed = JSON.parse(response.text ?? '') as { why?: string };
+      const raw = await llm.generateJson({
+        prompt,
+        schema: WHY_SCHEMA,
+        schemaName: 'wrong_answer_why',
+      });
+      const parsed = JSON.parse(raw) as { why?: string };
       const why = (parsed.why ?? '').trim();
       if (why) {
         return why;
       }
     } catch {
-      // fall through
+      // fall through to a safe non-LLM fallback
     }
     return `The correct answer is "${input.rightanswer}". Your answer ("${input.studentanswer}") did not match. Review the related course section and try a similar question again.`;
   }

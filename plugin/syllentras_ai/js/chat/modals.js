@@ -78,9 +78,10 @@ function closeModal() {
 function deleteConversation(conversation) {
     pendingDeleteConversation = conversation;
     if (conversation.type === 'general') {
+        var generalTitle = generalChatTitle();
         showModal(
-            'Clear Main history?',
-            'Clear all messages in Main? The conversation will stay available. Course content will not be deleted.',
+            'Clear ' + generalTitle + ' history?',
+            'Clear all messages in ' + generalTitle + '? The conversation will stay available. Course content will not be deleted.',
             [
                 { label: 'Cancel', className: 'syllentras-modal-secondary', onClick: cancelDeleteConversation },
                 { label: 'Clear', className: 'syllentras-modal-danger', onClick: confirmDeleteConversation }
@@ -128,7 +129,7 @@ function confirmDeleteConversation() {
             clearMessages();
             conversationId = null;
             activeConversation = null;
-            return openConversation({ type: 'general', title: 'Main' });
+            return openConversation({ type: 'general', title: generalChatTitle() });
         }
         return loadConversations();
     });
@@ -249,8 +250,8 @@ function fetchConversationMessages(id) {
 
 function formatConversationExport(conversation, messages) {
     var lines = [
-        conversation.title || 'Conversation',
-        conversation.tag || '',
+        displayConversationTitle(conversation),
+        displayConversationTag(conversation),
         courseName ? 'Course: ' + courseName : '',
         'Exported: ' + new Date().toLocaleString(),
         ''

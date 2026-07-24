@@ -3,63 +3,62 @@ import {
   Injectable,
   Logger,
 } from '@nestjs/common';
-import { Type } from '@google/genai';
 import type { PracticeQuizQuestion } from '../context/context.types';
 import { buildPracticeQuestionsPrompt } from './chat.prompts';
-import { GeminiClient } from './gemini.client';
 import {
   normalizeQuestion,
   questionDedupeKey,
   type QuizDifficulty,
 } from './practice-quiz.helpers';
+import type { LlmProvider, LlmJsonSchema } from './providers';
+
+const PRACTICE_QUESTIONS_SCHEMA: LlmJsonSchema = {
+  type: 'object',
+  properties: {
+    questions: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          type: {
+            type: 'string',
+            enum: ['multichoice', 'truefalse'],
+          },
+          name: { type: 'string' },
+          questiontext: { type: 'string' },
+          answers: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                text: { type: 'string' },
+                fraction: { type: 'number' },
+              },
+              required: ['text', 'fraction'],
+            },
+          },
+        },
+        required: ['type', 'name', 'questiontext', 'answers'],
+      },
+    },
+  },
+  required: ['questions'],
+};
 
 @Injectable()
 export class PracticeQuizGenerationService {
   private readonly logger = new Logger(PracticeQuizGenerationService.name);
 
-  constructor(private readonly gemini: GeminiClient) {}
-
-  async generatePracticeQuestions(input: {
-    title: string;
-    scopeSummary: string;
-    questionCount: number;
-    difficulty?: QuizDifficulty;
-    courseMaterial: string;
-  }): Promise<PracticeQuizQuestion[]> {
-    const responseSchema = {
-      type: Type.OBJECT,
-      properties: {
-        questions: {
-          type: Type.ARRAY,
-          items: {
-            type: Type.OBJECT,
-            properties: {
-              type: {
-                type: Type.STRING,
-                format: 'enum',
-                enum: ['multichoice', 'truefalse'],
-              },
-              name: { type: Type.STRING },
-              questiontext: { type: Type.STRING },
-              answers: {
-                type: Type.ARRAY,
-                items: {
-                  type: Type.OBJECT,
-                  properties: {
-                    text: { type: Type.STRING },
-                    fraction: { type: Type.NUMBER },
-                  },
-                  required: ['text', 'fraction'],
-                },
-              },
-            },
-            required: ['type', 'name', 'questiontext', 'answers'],
-          },
-        },
-      },
-      required: ['questions'],
-    };
-
+  async generatePracticeQuestions(
+    input: {
+      title: string;
+      scopeSummary: string;
+      questionCount: number;
+      difficulty?: QuizDifficulty;
+      courseMaterial: string;
+    },
+    llm: LlmProvider,
+  ): Promise<PracticeQuizQuestion[]> {
     const parseAndNormalize = (raw: string): PracticeQuizQuestion[] => {
       const parsed = JSON.parse(raw) as { questions?: PracticeQuizQuestion[] };
       return (parsed.questions ?? [])
@@ -77,15 +76,21 @@ export class PracticeQuizGenerationService {
         break;
       }
 
-      const response = await this.gemini.generateContent({
-        contents: buildPracticeQuestionsPrompt(input, needed, accepted),
-        config: {
-          responseMimeType: 'application/json',
-          responseSchema,
-        },
+      const raw = await llm.generateJson({
+        prompt: buildPracticeQuestionsPrompt(input, needed, accepted),
+        schema: PRACTICE_QUESTIONS_SCHEMA,
+        schemaName: 'practice_questions',
       });
 
-      const batch = parseAndNormalize(response.text ?? '');
+      let batch: PracticeQuizQuestion[] = [];
+      try {
+        batch = parseAndNormalize(raw);
+      } catch {
+        this.logger.warn(
+          `Practice quiz gen attempt ${attempt + 1} returned non-JSON`,
+        );
+        continue;
+      }
 
       let added = 0;
       for (const q of batch) {

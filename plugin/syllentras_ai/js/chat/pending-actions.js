@@ -200,6 +200,11 @@ function attachPendingAction(messageEl, pendingAction) {
         if (difficultySelect) {
             body.difficulty = normalizePendingDifficulty(difficultySelect.value);
         }
+        var providerId = typeof getSelectedProviderId === 'function' ? getSelectedProviderId() : null;
+        if (providerId) {
+            body.provider = providerId;
+        }
+        setGeneratingState(true);
         fetchJson('/chat/actions/confirm', {
             method: 'POST',
             body: JSON.stringify(body)
@@ -214,9 +219,12 @@ function attachPendingAction(messageEl, pendingAction) {
             }
             return loadConversations().then(loadReviewOfferForConversation);
         })
-        .catch(function () {
+        .catch(function (err) {
             setBusy(false);
-            appendMessage('error', createFailedMessage());
+            appendMessage('error', (err && err.message) ? err.message : createFailedMessage());
+        })
+        .finally(function () {
+            setGeneratingState(false);
         });
     });
 

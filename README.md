@@ -1,16 +1,16 @@
 # AI-LMS-Tool — Syllentras AI
 
-An AI chat assistant plugin for Moodle that lets students ask questions about course material, powered by Google Gemini. Built as a capstone project.
+An AI chat assistant plugin for Moodle that lets students ask questions about course material. Supports multiple AI providers (Google Gemini, OpenAI ChatGPT, Anthropic Claude, xAI Grok, and Mistral). Built as a capstone project.
 
 ## Architecture
 
 ```
 Browser (Moodle page)
-  └── Plugin JS (local_syllentras_ai) — floating chat widget
-        └── POST /chat/message → NestJS API
-                                    ├── Moodle REST API (course content)
-                                    ├── PostgreSQL (conversation history)
-                                    └── Gemini API (LLM response)
+  └── Plugin JS (local_syllentras_ai) — floating chat widget + provider selector
+        └── NestJS API
+              ├── Moodle REST API (course content)
+              ├── PostgreSQL (conversation history)
+              └── Selected LLM provider (Gemini / OpenAI / Claude / Grok / Mistral)
 ```
 
 
@@ -72,9 +72,14 @@ Open `.env` and set:
 | `MOODLE_ADMIN_PASSWORD` | Choose any password for the local Moodle admin account |
 | `POSTGRES_PASSWORD`     | Choose any password for the local PostgreSQL database  |
 | `DATABASE_URL`          | Replace `CHANGEME` with your `POSTGRES_PASSWORD`       |
-| `GEMINI_API_KEY`        | Get this from your team lead                           |
+| `GEMINI_API_KEY`        | Google Gemini key (optional if another provider is set)|
+| `OPENAI_API_KEY`        | OpenAI / ChatGPT key (optional)                        |
+| `ANTHROPIC_API_KEY`     | Anthropic Claude key (optional)                        |
+| `XAI_API_KEY`           | xAI Grok key (optional)                                |
+| `MISTRAL_API_KEY`       | Mistral key (optional)                                 |
 | `MOODLE_TOKEN`          | Leave blank for now — generated in step 8 below        |
 
+Configure at least one provider key. Providers without a key still appear in the chatbox selector but are disabled. Keys stay on the NestJS API only — they are never sent to the browser or Moodle.
 
 ### 5. Start all services
 
@@ -279,9 +284,28 @@ Sections and groups are created automatically by the web service — no need to 
 
 ## API Reference
 
+### `GET /chat/providers`
+
+Lists supported AI backends and whether each has a configured API key. Used by the chatbox provider selector. Never returns API keys.
+
+**Response:**
+
+```json
+{
+  "providers": [
+    { "id": "openai", "displayName": "OpenAI ChatGPT", "available": false },
+    { "id": "gemini", "displayName": "Google Gemini", "available": true },
+    { "id": "anthropic", "displayName": "Anthropic Claude", "available": false },
+    { "id": "xai", "displayName": "xAI Grok", "available": false },
+    { "id": "mistral", "displayName": "Mistral", "available": false }
+  ],
+  "defaultProviderId": "gemini"
+}
+```
+
 ### `POST /chat/message`
 
-Send a student message and receive an AI response.
+Send a student message and receive an AI response from the selected provider.
 
 **Request body:**
 
@@ -292,9 +316,12 @@ Send a student message and receive an AI response.
   "moodleUserId": 5,
   "userFirstName": "Alex",
   "message": "What is the difference between X and Y?",
-  "conversationId": "optional-uuid-for-existing-conversation"
+  "conversationId": "optional-uuid-for-existing-conversation",
+  "provider": "gemini"
 }
 ```
+
+`provider` is optional (`openai` | `gemini` | `anthropic` | `xai` | `mistral`). When omitted, the API uses the first available provider (Gemini preferred). Switching providers mid-conversation only changes which backend answers the next message — history stays in the same conversation.
 
 The plugin sends `courseName`, `moodleUserId`, and `userFirstName` from the logged-in Moodle session. `conversationId` is persisted in the browser (`localStorage`, keyed per user+course) and resumed via `GET /conversations/active` when missing. Chat history is loaded from `GET /conversations/:id/messages` when the student opens the panel — not from the POST body.
 
@@ -303,7 +330,8 @@ The plugin sends `courseName`, `moodleUserId`, and `userFirstName` from the logg
 ```json
 {
   "response": "Based on the course material...",
-  "conversationId": "uuid"
+  "conversationId": "uuid",
+  "provider": "gemini"
 }
 ```
 
@@ -376,11 +404,11 @@ Search conversation titles, tags, section names, and message content.
 
 ### `DELETE /conversations/:id`
 
-Delete one conversation and its message history. For the general/Main conversation, messages are cleared and the conversation row is kept so Main always remains available. Moodle course content and ingestion data are not deleted.
+Delete one conversation and its message history. For the general Home/Main conversation, messages are cleared and the conversation row is kept so it always remains available. Moodle course content and ingestion data are not deleted.
 
 **Query:** `moodleUserId`
 
-**Response:** `{ "deleted": true }` for section/manual conversations, or `{ "cleared": true, "conversation": { ... } }` when clearing Main.
+**Response:** `{ "deleted": true }` for section/manual conversations, or `{ "cleared": true, "conversation": { ... } }` when clearing Home (dashboard) or Main (course).
 
 ---
 
@@ -403,7 +431,7 @@ AI-LMS-Tool/
 └── api/
     ├── Dockerfile               — production build
     └── src/
-        ├── chat/                — POST /chat/message
+        ├── chat/                — POST /chat/message, GET /chat/providers, multi-provider LLM layer
         ├── conversation/        — conversation CRUD + paginated messages
         └── context/             — Moodle content fetching + cache
 ```
@@ -418,14 +446,35 @@ See `.env.example` for the full list with descriptions. Key variables:
 | Variable                | Description                                                            |
 | ----------------------- | ---------------------------------------------------------------------- |
 | `MOODLE_DOCKER_WWWROOT` | Absolute path to Moodle source — set automatically by the setup script |
-| `GEMINI_API_KEY`        | Google Gemini API key                                                  |
+| `OPENAI_API_KEY`        | OpenAI / ChatGPT API key (optional)                                    |
+| `GEMINI_API_KEY`        | Google Gemini API key (optional)                                       |
+| `ANTHROPIC_API_KEY`     | Anthropic Claude API key (optional)                                    |
+| `XAI_API_KEY`           | xAI Grok API key (optional)                                            |
+| `MISTRAL_API_KEY`       | Mistral API key (optional)                                             |
+| `OPENAI_MODEL`          | Optional OpenAI model override (default `gpt-4o-mini`)                 |
+| `GEMINI_MODEL`          | Optional Gemini model override (default `gemini-3.5-flash-lite`)       |
+| `ANTHROPIC_MODEL`       | Optional Claude model override                                         |
+| `XAI_MODEL`             | Optional Grok model override (default `grok-3-mini`)                   |
+| `MISTRAL_MODEL`         | Optional Mistral model override (default `mistral-small-latest`)       |
 | `MOODLE_TOKEN`          | Moodle web service token (generated after first boot)                  |
 | `DATABASE_URL`          | PostgreSQL connection string for the API                               |
 | `MOODLE_INTERNAL_URL`   | Docker-internal URL to Moodle (`http://webserver` in dev)              |
 | `MOODLE_INTERNAL_HOST`  | Host header for internal Moodle requests (`localhost:8000` in dev). Required with moodle-docker — requests to `http://webserver` otherwise trigger Behat mode and return HTML instead of JSON. |
 | `NODE_ENV`              | `development` locally, `production` in deployment                      |
 
+At least one provider API key is required for chat to work. Keys are read only by the NestJS API container and are never exposed to Moodle, the browser, logs, or API responses.
+
 Course content fetched from Moodle is cached in the API for 15 minutes. Restart the API container (`.\dev.ps1 restart`) after editing course pages if you need fresh content immediately.
+
+### Chat widget rebuild
+
+After editing files under `plugin/syllentras_ai/js/chat/` (except hand-editing `boot.js`):
+
+```powershell
+.\dev.ps1 rebuild-chat-js
+```
+
+That rebuilds `boot.js`, runs Moodle plugin upgrade when `version.php` changed, and purges caches. Hard-refresh the Moodle page afterward. No Moodle web-service function changes are required for multi-provider chat — provider selection uses NestJS `/chat/providers` and `/chat/message`.
 
 
 ---

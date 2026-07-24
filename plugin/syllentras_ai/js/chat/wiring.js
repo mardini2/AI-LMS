@@ -11,7 +11,7 @@ expandBtn.addEventListener('click', function () {
 resetBtn.addEventListener('click', resetPanelLayout);
 
 btn.addEventListener('click', function () {
-    openConversation({ type: 'general', title: 'Main' });
+    openConversation({ type: 'general', title: generalChatTitle() });
 });
 
 close.addEventListener('click', function () {
@@ -229,6 +229,7 @@ applyExpandedState();
 applyStoredSidebarWidth();
 applyStoredInputHeight();
 initToolsMenu();
+loadProviders();
 loadConversations();
 installSectionButtons();
 if (document.readyState === 'loading') {
