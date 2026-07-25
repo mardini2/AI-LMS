@@ -13,7 +13,7 @@ var CHAT_MODES = [
     {
         id: 'coach',
         label: 'Coach',
-        description: 'Guides you with questions and hints so you figure it out'
+        description: 'Questions and hints so you figure it out'
     }
 ];
 

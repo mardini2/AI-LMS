@@ -1193,9 +1193,9 @@
     display: flex;
     align-items: stretch;
     /* Explicit width — absolute CB is the 36px tools wrap, so max-content shrinks badly. */
-    width: 480px;
-    min-width: 480px;
-    max-width: min(480px, calc(100vw - 24px));
+    width: 540px;
+    min-width: 540px;
+    max-width: min(540px, calc(100vw - 24px));
     padding: 0;
     position: absolute;
     bottom: calc(100% + 8px);
@@ -1281,9 +1281,6 @@
     padding: 8px 10px;
     text-align: left;
     width: 100%;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
     box-sizing: border-box;
 }
 .syllentras-tools-topic-option:hover {
