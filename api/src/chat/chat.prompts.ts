@@ -45,6 +45,7 @@ export function buildSystemPrompt(ctx: {
   canProposeContent: boolean;
   mode?: 'direct' | 'coach';
   guidance?: number;
+  conversationStarted: boolean;
 }): string {
   const mode = ctx.mode === 'coach' ? 'coach' : 'direct';
   const lines: string[] = [
@@ -73,9 +74,21 @@ export function buildSystemPrompt(ctx: {
     'When declining, briefly say you can only help with course content, then invite a course-related question or offer study tools when available.',
     'Do not help with cheating: do not provide exam answer keys, graded assignment solutions, or ways to bypass academic integrity. Offer legitimate study help instead (explanations, study guides, flashcards, practice quizzes).',
     'Refuse harmful or dangerous requests (weapons, explosives, illegal activity, etc.) and redirect to course help.',
-    'If the student sends a short greeting or opener with no real question (e.g. "hi", "hey", "hello", "what\'s up"), or asks what you can help with / what you can do, do not reply with only a generic greeting.',
-    'Instead, briefly welcome them and explain how you can help with the current course, grounded in the course name and material when available. Include concrete topic examples from the course material when possible. Keep it scannable: short intro, then a short bullet/list of ways you can help, then invite them to pick a topic or ask for a study tool. Do not invent course topics that are not supported by the course material or course name.',
   );
+
+  const mayGreet =
+    !ctx.conversationStarted && ctx.conversationType === 'general';
+  if (mayGreet) {
+    lines.push(
+      'This is the beginning of a new general chat. Greet the student briefly only when their first message is a greeting, capability question, or other conversational opener. If their first message is a substantive course question, answer it directly without a ceremonial welcome.',
+      'For a greeting or capability question, briefly explain how you can help with the current course. Use concrete topic examples only when supported by the retrieved material or course name.',
+    );
+  } else {
+    lines.push(
+      'This conversation has already started or is a section-specific chat. Do not begin with Hi, Hello, Hey, Welcome, or another greeting. Answer the current message directly.',
+      'A section chat may already show an introductory message such as "What would you like to know about Week 3?" Do not repeat or replace that introduction.',
+    );
+  }
 
   if (ctx.canProposeContent) {
     lines.push(
@@ -103,7 +116,7 @@ export function buildSystemPrompt(ctx: {
   if (ctx.userFirstName?.trim()) {
     const firstName = ctx.userFirstName.trim();
     lines.push(
-      `The student's first name is ${firstName}. Use their name where it feels natural and warm — especially in greetings, capability overviews, off-topic redirects, and closing invites (e.g. "Hi ${firstName}," or "What would you like to work on, ${firstName}?").`,
+      `The student's first name is ${firstName}. Use their name where it feels natural and warm${mayGreet ? `, including an appropriate first-turn greeting such as "Hi ${firstName},"` : ''}.`,
       `Do not force their name into every reply. For ordinary course Q&A and tool proposals, answer directly without repeating ${firstName} unless it adds a genuine personal touch.`,
     );
   }
@@ -119,7 +132,7 @@ export function buildSystemPrompt(ctx: {
       `The student is currently viewing the course: ${ctx.courseName}.`,
     );
     lines.push(
-      'Use the course material below as your primary source. If the answer is not in the material but the question is still on-topic for this course, say so honestly and give limited course-topic help or ask which week/section to focus on. Never pivot to unrelated topics.',
+      'Use the retrieved course material below as your primary source. It contains only the chunks most relevant to this request, not the whole course. If the answer is not in the retrieved material but the question is still on-topic for this course, say so honestly and give limited course-topic help or ask which week/section to focus on. Never pivot to unrelated topics.',
     );
   } else if (ctx.courseId > 1) {
     lines.push(`The student is currently viewing course ID ${ctx.courseId}.`);
@@ -138,7 +151,14 @@ export function buildSystemPrompt(ctx: {
   }
 
   if (ctx.courseMaterial) {
-    lines.push('', 'Course Material:', '---', ctx.courseMaterial, '---');
+    lines.push(
+      '',
+      'Retrieved Course Material:',
+      '---',
+      ctx.courseMaterial,
+      '---',
+      'Announcement posts in the retrieved material (type=announcement_post, or Subject: lines under General / Announcements) are real Moodle discussion posts. Never claim the Announcements section is empty when those posts are present. The short forum intro text alone is not the full announcements list.',
+    );
   }
 
   return lines.join('\n');
@@ -303,7 +323,10 @@ export function buildTopicSuggestionsPrompt(input: {
   } else {
     for (const turn of turns) {
       const role = turn.role === 'user' ? 'Student' : 'Assistant';
-      const content = (turn.content || '').replace(/\s+/g, ' ').trim().slice(0, 500);
+      const content = (turn.content || '')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .slice(0, 500);
       if (!content) continue;
       lines.push(`${role}: ${content}`);
     }

@@ -33,6 +33,10 @@ export class Message {
   @Column({ type: 'text' })
   content: string;
 
+  /** Semantic vector used to retrieve relevant conversation memory. */
+  @Column({ type: 'jsonb', nullable: true })
+  embedding?: number[] | null;
+
   /** Teaching mode used for this turn (`direct` | `coach`). */
   @Column({ type: 'varchar', length: 16, nullable: true })
   mode?: ChatMode | null;

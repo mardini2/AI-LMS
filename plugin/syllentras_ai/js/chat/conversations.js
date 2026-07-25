@@ -2,6 +2,11 @@
 // Included inside the shared IIFE from before_footer.php — do not load standalone.
 
 function setActiveConversation(conversation) {
+    prepareActiveConversation(conversation);
+    return loadCurrentHistory();
+}
+
+function prepareActiveConversation(conversation) {
     activeConversation = conversation;
     if (activeConversation && Array.isArray(conversation.topicSuggestions)) {
         activeConversation.topicSuggestions = conversation.topicSuggestions;
@@ -12,8 +17,68 @@ function setActiveConversation(conversation) {
     clearMessages();
     hasMore = false;
     loadingHistory = false;
+    loadingOlder = false;
+    loadMore.hidden = true;
     updateActiveConversationButtons();
-    return loadCurrentHistory();
+}
+
+function setActiveConversationAtMessage(conversation, targetMessage) {
+    prepareActiveConversation(conversation);
+    if (!targetMessage || !targetMessage.id) return loadCurrentHistory();
+
+    loadingHistory = true;
+    loadingOlder = true;
+    loadMore.hidden = false;
+    return fetchJson('/conversations/' + encodeURIComponent(conversationId)
+        + '/messages?moodleUserId=' + encodeURIComponent(moodleUserId)
+        + '&limit=' + PAGE_SIZE)
+    .then(function (page) {
+        if (page.messages && page.messages.length) {
+            renderMessageBatch(page.messages, false);
+            hasMore = !!page.hasMore;
+        }
+        return loadHistoryUntilMessage(targetMessage.id);
+    })
+    .then(function (found) {
+        return loadPendingActionForConversation()
+            .then(loadReviewOfferForConversation)
+            .then(function () { return found; });
+    })
+    .then(function (found) {
+        if (!found || !focusSearchMessage(targetMessage.id)) {
+            throw new Error('The matched message could not be displayed.');
+        }
+    })
+    .catch(function () {
+        appendMessage('error', 'Could not navigate to the matched message.', { scroll: false });
+    })
+    .finally(function () {
+        loadingHistory = false;
+        loadingOlder = false;
+        loadMore.hidden = true;
+    });
+}
+
+function loadHistoryUntilMessage(messageId) {
+    if (findMessageElement(messageId)) return Promise.resolve(true);
+    if (!hasMore || !conversationId) return Promise.resolve(false);
+
+    var before = getOldestMessageCreatedAt();
+    if (!before) return Promise.resolve(false);
+
+    return fetchJson('/conversations/' + encodeURIComponent(conversationId)
+        + '/messages?moodleUserId=' + encodeURIComponent(moodleUserId)
+        + '&limit=' + PAGE_SIZE
+        + '&before=' + encodeURIComponent(before))
+    .then(function (page) {
+        if (!page.messages || !page.messages.length) {
+            hasMore = false;
+            return false;
+        }
+        renderMessageBatch(page.messages, true);
+        hasMore = !!page.hasMore;
+        return loadHistoryUntilMessage(messageId);
+    });
 }
 
 function loadCurrentHistory() {
@@ -93,15 +158,17 @@ function openConversation(options) {
     });
 }
 
-function openConversationById(id) {
+function openConversationById(id, targetMessage) {
     showPanel();
     return fetchJson('/conversations/' + encodeURIComponent(id)
         + '?moodleUserId=' + encodeURIComponent(moodleUserId))
     .then(function (conversation) {
-        return setActiveConversation(conversation);
+        return targetMessage
+            ? setActiveConversationAtMessage(conversation, targetMessage)
+            : setActiveConversation(conversation);
     })
     .then(function () {
-        input.focus();
+        if (!targetMessage) input.focus();
     });
 }
 
@@ -154,12 +221,12 @@ function renderConversationItem(conversation, matchedMessage) {
         item.appendChild(match);
     }
     item.addEventListener('click', function () {
-        openConversationById(conversation.id);
+        openConversationById(conversation.id, matchedMessage);
     });
     item.addEventListener('keydown', function (e) {
         if (e.key === 'Enter' || e.key === ' ') {
             e.preventDefault();
-            openConversationById(conversation.id);
+            openConversationById(conversation.id, matchedMessage);
         }
     });
     item.querySelector('.syllentras-conversation-menu-btn').addEventListener('click', function (e) {

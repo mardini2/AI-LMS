@@ -34,6 +34,7 @@ function createMessageElement(role, text, options) {
     options = options || {};
     var div = document.createElement('div');
     div.className = 'syllentras-msg ' + role;
+    if (options.messageId) div.dataset.messageId = options.messageId;
     if (options.createdAt) div.dataset.createdAt = options.createdAt;
     if (role === 'assistant' && text !== '...') {
         renderAssistantContent(div, text);
@@ -78,15 +79,55 @@ function scrollToBottom() {
     msgs.scrollTop = msgs.scrollHeight;
 }
 
+function findMessageElement(messageId) {
+    if (!messageId) return null;
+    var nodes = msgs.querySelectorAll('.syllentras-msg[data-message-id]');
+    return Array.from(nodes).find(function (node) {
+        return node.dataset.messageId === messageId;
+    }) || null;
+}
+
 function renderMessageBatch(messages, prepend) {
     var list = prepend ? messages.slice().reverse() : messages;
     list.forEach(function (m) {
         var role = m.role === 'assistant' ? 'assistant' : 'user';
-        var opts = { scroll: false, createdAt: m.createdAt, mode: m.mode };
+        var opts = {
+            scroll: false,
+            createdAt: m.createdAt,
+            messageId: m.id,
+            mode: m.mode
+        };
         if (prepend) {
             prependMessage(role, m.content, opts);
         } else {
             appendMessage(role, m.content, opts);
         }
     });
+}
+
+function focusSearchMessage(messageId) {
+    var target = findMessageElement(messageId);
+    if (!target) return false;
+
+    var top = target.offsetTop - Math.max(0, (msgs.clientHeight - target.offsetHeight) / 2);
+    if (typeof msgs.scrollTo === 'function') {
+        msgs.scrollTo({ top: top, behavior: 'smooth' });
+    } else {
+        msgs.scrollTop = top;
+    }
+    target.classList.remove('syllentras-search-match');
+    // Restart the animation when the same result is selected twice.
+    void target.offsetWidth;
+    target.classList.add('syllentras-search-match');
+    window.setTimeout(function () {
+        target.classList.remove('syllentras-search-match');
+    }, 3200);
+    return true;
+}
+
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports = {
+        findMessageElement: findMessageElement,
+        focusSearchMessage: focusSearchMessage
+    };
 }

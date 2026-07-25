@@ -780,6 +780,20 @@
     font-size: 14px;
     word-break: break-word;
 }
+.syllentras-msg.syllentras-search-match {
+    animation: syllentras-search-highlight 3.2s ease-out;
+    outline: 3px solid rgba(245, 166, 35, 0);
+}
+@keyframes syllentras-search-highlight {
+    0%, 35% {
+        outline-color: #f5a623;
+        box-shadow: 0 0 0 5px rgba(245, 166, 35, 0.28);
+    }
+    100% {
+        outline-color: rgba(245, 166, 35, 0);
+        box-shadow: 0 0 0 8px rgba(245, 166, 35, 0);
+    }
+}
 .syllentras-msg.user {
     align-self: flex-end;
     background: #0066cc;

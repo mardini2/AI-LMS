@@ -10,6 +10,9 @@ import { ContextModule } from './context/context.module';
 import { Conversation } from './conversation/entities/conversation.entity';
 import { Message } from './conversation/entities/message.entity';
 import { PendingAction } from './chat/entities/pending-action.entity';
+import { CourseChunk } from './context/entities/course-chunk.entity';
+import { RagModule } from './rag/rag.module';
+import { AddRagStorage1784959200000 } from './migrations/1784959200000-AddRagStorage';
 
 @Module({
   imports: [
@@ -35,6 +38,8 @@ import { PendingAction } from './chat/entities/pending-action.entity';
         ANTHROPIC_MODEL: Joi.string().allow('').optional(),
         XAI_MODEL: Joi.string().allow('').optional(),
         MISTRAL_MODEL: Joi.string().allow('').optional(),
+        RAG_GEMINI_EMBEDDING_MODEL: Joi.string().allow('').optional(),
+        RAG_OPENAI_EMBEDDING_MODEL: Joi.string().allow('').optional(),
         CORS_ORIGIN: Joi.string().required(),
       }),
     }),
@@ -45,11 +50,14 @@ import { PendingAction } from './chat/entities/pending-action.entity';
       useFactory: (config: ConfigService) => ({
         type: 'postgres',
         url: config.get<string>('DATABASE_URL'),
-        entities: [Conversation, Message, PendingAction],
+        entities: [Conversation, Message, PendingAction, CourseChunk],
+        migrations: [AddRagStorage1784959200000],
+        migrationsRun: config.get('NODE_ENV') === 'production',
         synchronize: config.get('NODE_ENV') !== 'production',
-        ssl: config.get('NODE_ENV') === 'production'
-          ? { rejectUnauthorized: false }
-          : false,
+        ssl:
+          config.get('NODE_ENV') === 'production'
+            ? { rejectUnauthorized: false }
+            : false,
       }),
       inject: [ConfigService],
     }),
@@ -61,6 +69,7 @@ import { PendingAction } from './chat/entities/pending-action.entity';
     }),
 
     // ── Feature modules ───────────────────────────────────────────────────
+    RagModule,
     ContextModule,
     ConversationModule,
     ChatModule,

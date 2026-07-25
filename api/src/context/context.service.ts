@@ -5,12 +5,10 @@ import {
   extractSectionIndexNumbers,
   extractWeekNumbers,
   formatCitationTitle,
-  formatDocumentsForPrompt,
   formatForumPostText,
   looksLikePdf,
   normalizeSection,
   parsePdfText,
-  pickBestDocument,
   scopeIncludesSectionName,
   sectionNameMatchesWeekNumbers,
   stripHtml,
@@ -27,6 +25,7 @@ import type {
   ResolvedSectionScope,
 } from './context.types';
 import { MoodleClient } from './moodle-client.service';
+import { CourseRetrievalService } from './course-retrieval.service';
 
 /**
  * ContextService is the API boundary for Moodle course content.
@@ -46,19 +45,28 @@ export class ContextService {
   constructor(
     private readonly moodle: MoodleClient,
     @Inject(CACHE_MANAGER) private readonly cache: Cache,
+    private readonly retrieval: CourseRetrievalService,
   ) {}
 
   async getContext(
     courseId: number,
     question: string,
     filter: CourseContextFilter = {},
+    queryEmbedding?: number[] | null,
   ): Promise<string> {
     if (courseId <= 1) {
       return '';
     }
 
     const documents = await this.getCourseDocuments(courseId);
-    return formatDocumentsForPrompt(documents, filter, question);
+    const chunks = await this.retrieval.retrieve(
+      courseId,
+      documents,
+      question,
+      filter,
+      queryEmbedding,
+    );
+    return this.retrieval.formatForPrompt(chunks);
   }
 
   /**
@@ -74,11 +82,21 @@ export class ContextService {
     }
 
     const documents = await this.getCourseDocuments(courseId);
-    const best = pickBestDocument(documents, filter, question);
-    if (!best?.text?.trim()) {
+    const [bestChunk] = await this.retrieval.retrieve(
+      courseId,
+      documents,
+      question,
+      filter,
+    );
+    if (!bestChunk?.text?.trim()) {
       return null;
     }
 
+    const best: CourseContextDocument = {
+      courseId,
+      ...bestChunk.metadata,
+      text: bestChunk.text,
+    };
     const title = formatCitationTitle(best);
     const url =
       best.source && /^https?:\/\//i.test(best.source)
@@ -261,7 +279,7 @@ export class ContextService {
   private async getCourseDocuments(
     courseId: number,
   ): Promise<CourseContextDocument[]> {
-    const cacheKey = `course_context_documents_v4_${courseId}`;
+    const cacheKey = `course_context_documents_v7_${courseId}`;
     const cached = await this.cache.get<CourseContextDocument[]>(cacheKey);
     if (cached) {
       this.logger.debug(`Course document cache hit for course ${courseId}`);
@@ -418,11 +436,17 @@ export class ContextService {
 
         if (module.modname === 'forum') {
           const forum = forums.find((f) => f.cmid === module.id);
+          // Moodle news forums use type=news; some courses also label a normal
+          // forum "Announcements", so treat either as announcement content.
+          const isAnnouncementForum = isCourseAnnouncementForum(
+            forum?.type,
+            module.name,
+            forum?.name,
+          );
           if (forum?.intro) {
             documents.push({
               ...moduleBase,
-              contentType:
-                forum.type === 'news' ? 'announcement_forum' : 'forum',
+              contentType: isAnnouncementForum ? 'announcement_forum' : 'forum',
               lastUpdated: forum.timemodified ?? moduleBase.lastUpdated,
               text: stripHtml(forum.intro),
             });
@@ -433,8 +457,9 @@ export class ContextService {
             for (const post of posts) {
               documents.push({
                 ...moduleBase,
-                contentType:
-                  forum.type === 'news' ? 'announcement_post' : 'forum_post',
+                contentType: isAnnouncementForum
+                  ? 'announcement_post'
+                  : 'forum_post',
                 source: `forum:${forum.id}:discussion:${post.discussionId}:post:${post.id}`,
                 lastUpdated:
                   post.modified ?? post.created ?? moduleBase.lastUpdated,
@@ -523,7 +548,30 @@ export class ContextService {
           { forumid: forum.id },
         );
       const discussions = response.discussions ?? [];
-      const posts: MoodleForumPost[] = [];
+      const postsById = new Map<number, MoodleForumPost>();
+
+      // Moodle already embeds each discussion's first post (subject + body).
+      // Index those first so announcement bodies are never lost when the
+      // per-discussion posts endpoint fails or returns incomplete data.
+      for (const discussion of discussions) {
+        const discussionId = discussion.discussion ?? discussion.id;
+        if (!discussionId || !discussion.message?.trim()) {
+          continue;
+        }
+        const firstPostId = discussion.id;
+        if (!firstPostId) {
+          continue;
+        }
+        postsById.set(firstPostId, {
+          id: firstPostId,
+          discussionId,
+          subject: discussion.subject ?? discussion.name,
+          message: discussion.message,
+          created: discussion.created,
+          modified: discussion.timemodified,
+          userfullname: discussion.userfullname,
+        });
+      }
 
       for (const discussion of discussions) {
         const discussionId = discussion.discussion ?? discussion.id;
@@ -537,33 +585,25 @@ export class ContextService {
               'mod_forum_get_discussion_posts',
               { discussionid: discussionId },
             );
-          posts.push(
-            ...(postResponse.posts ?? []).map((post) => ({
+          for (const post of postResponse.posts ?? []) {
+            if (!post.id) {
+              continue;
+            }
+            postsById.set(post.id, {
               ...post,
               discussionId,
-            })),
-          );
+              created: post.created ?? discussion.created,
+              modified: post.modified ?? discussion.timemodified,
+            });
+          }
         } catch (err) {
           this.logger.warn(
             `Failed to fetch posts for forum discussion ${discussionId}: ${(err as Error).message}`,
           );
-          // Moodle includes the first post in the discussions response, so use it
-          // as a fallback when the post-detail endpoint is unavailable.
-          if (discussion.message) {
-            posts.push({
-              id: discussion.id,
-              discussionId,
-              subject: discussion.subject ?? discussion.name,
-              message: discussion.message,
-              created: discussion.created,
-              modified: discussion.timemodified,
-              userfullname: discussion.userfullname,
-            });
-          }
         }
       }
 
-      return posts;
+      return [...postsById.values()];
     } catch (err) {
       this.logger.warn(
         `Failed to fetch forum discussions for ${forum.name}: ${(err as Error).message}`,
@@ -708,4 +748,15 @@ interface MoodleCourseSummary {
   fullname: string;
   summary?: string;
   timemodified?: number;
+}
+
+function isCourseAnnouncementForum(
+  forumType?: string,
+  moduleName?: string,
+  forumName?: string,
+): boolean {
+  if ((forumType ?? '').toLowerCase() === 'news') {
+    return true;
+  }
+  return /\bannouncements?\b/i.test(`${moduleName ?? ''} ${forumName ?? ''}`);
 }

@@ -1,8 +1,4 @@
-import {
-  BadRequestException,
-  Injectable,
-  Logger,
-} from '@nestjs/common';
+import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { ContextService } from '../context/context.service';
 import { PracticeQuizMoodleService } from '../context/practice-quiz-moodle.service';
 import { StudyGuideMoodleService } from '../context/study-guide-moodle.service';
@@ -54,6 +50,7 @@ import {
   STUDY_PROPOSAL_TOOLS,
   type LlmProvider,
 } from './providers';
+import { EmbeddingService } from '../rag/embedding.service';
 
 export type {
   ChatResponse,
@@ -78,6 +75,7 @@ export class ChatService {
     private readonly studyGuideGeneration: StudyGuideGenerationService,
     private readonly flashcardsGeneration: FlashcardsGenerationService,
     private readonly topicSuggestions: TopicSuggestionsService,
+    private readonly embeddings: EmbeddingService,
   ) {}
 
   listProviders() {
@@ -136,23 +134,35 @@ export class ChatService {
     const conversation =
       await this.conversationService.findById(conversationId);
 
-    const [courseMaterial, resolvedCourseName, enrolledCourses] =
-      await Promise.all([
-        this.contextService.getContext(courseId, message, {
+    const queryEmbedding = await this.embeddings.embedQuery(message);
+    const [
+      courseMaterial,
+      resolvedCourseName,
+      enrolledCourses,
+      conversationStarted,
+      dbHistory,
+    ] = await Promise.all([
+      this.contextService.getContext(
+        courseId,
+        message,
+        {
           sectionId: conversation.sectionId,
           sectionNumber: conversation.sectionNumber,
           sectionName: conversation.sectionName,
-        }),
-        this.contextService.resolveCourseName(courseId, courseName),
-        moodleUserId
-          ? this.contextService.getEnrolledCourseNames(moodleUserId)
-          : Promise.resolve([]),
-      ]);
-
-    const dbHistory = await this.conversationService.getRecentHistory(
-      conversationId,
-      20,
-    );
+        },
+        queryEmbedding,
+      ),
+      this.contextService.resolveCourseName(courseId, courseName),
+      moodleUserId
+        ? this.contextService.getEnrolledCourseNames(moodleUserId)
+        : Promise.resolve([]),
+      this.conversationService.hasUserMessages(conversationId),
+      this.conversationService.getRelevantHistory(
+        conversationId,
+        message,
+        queryEmbedding,
+      ),
+    ]);
 
     const canProposeContent =
       Boolean(moodleUserId) && courseId > 1 && Boolean(courseMaterial);
@@ -173,6 +183,7 @@ export class ChatService {
         canProposeContent,
         mode,
         guidance,
+        conversationStarted,
       }),
       history: dbHistory,
       message,
@@ -222,20 +233,22 @@ export class ChatService {
         'Course material from the current conversation';
       const difficulty = normalizeQuizDifficulty(args.difficulty);
 
-      const action = await this.pendingActionService.createPracticeQuizProposal({
-        conversationId,
-        courseId,
-        moodleUserId,
-        payload: {
-          title,
-          scopeSummary,
-          questionCount,
-          difficulty,
-          sectionId: conversation.sectionId,
-          sectionNumber: conversation.sectionNumber,
-          sectionName: conversation.sectionName,
+      const action = await this.pendingActionService.createPracticeQuizProposal(
+        {
+          conversationId,
+          courseId,
+          moodleUserId,
+          payload: {
+            title,
+            scopeSummary,
+            questionCount,
+            difficulty,
+            sectionId: conversation.sectionId,
+            sectionNumber: conversation.sectionNumber,
+            sectionName: conversation.sectionName,
+          },
         },
-      });
+      );
 
       pendingAction = {
         id: action.id,
@@ -297,10 +310,7 @@ export class ChatService {
           ? args.cardCount
           : Number(args.cardCount);
       const countSpecifiedByStudent = args.countSpecifiedByStudent === true;
-      const cardCount = clampCardCount(
-        requestedCount,
-        countSpecifiedByStudent,
-      );
+      const cardCount = clampCardCount(requestedCount, countSpecifiedByStudent);
       const exceededMax =
         countSpecifiedByStudent &&
         Number.isFinite(requestedCount) &&
@@ -345,8 +355,20 @@ export class ChatService {
         'I can help with course questions, or create a private study guide, flashcards, or practice quiz in Moodle when you ask for one.';
     }
 
+    responseText = preventRepeatedGreeting(
+      responseText,
+      conversationStarted || conversation.type !== 'general',
+      userFirstName,
+    );
+
     await this.conversationService.appendMessages(conversationId, [
-      { role: 'user', content: message, mode, guidance: guidance ?? null },
+      {
+        role: 'user',
+        content: message,
+        mode,
+        guidance: guidance ?? null,
+        embedding: queryEmbedding,
+      },
       {
         role: 'assistant',
         content: responseText,
@@ -355,7 +377,9 @@ export class ChatService {
       },
     ]);
 
-    let topicSuggestions = normalizeReturnedTopics(conversation.topicSuggestions);
+    let topicSuggestions = normalizeReturnedTopics(
+      conversation.topicSuggestions,
+    );
 
     if (courseId > 1 && message.trim()) {
       const historyForTopics = [
@@ -848,10 +872,7 @@ export class ChatService {
     conversationId: string,
     moodleUserId: number,
   ): Promise<ReviewOfferDto | null> {
-    return this.practiceQuizReview.getReviewOffer(
-      conversationId,
-      moodleUserId,
-    );
+    return this.practiceQuizReview.getReviewOffer(conversationId, moodleUserId);
   }
 
   async explainWrongAnswers(
@@ -885,4 +906,29 @@ function normalizeReturnedTopics(
     if (out.length >= 3) break;
   }
   return out.length ? out : undefined;
+}
+
+export function preventRepeatedGreeting(
+  response: string,
+  suppressGreeting: boolean,
+  firstName?: string,
+): string {
+  if (!suppressGreeting || !response.trim()) {
+    return response;
+  }
+
+  const escapedName = firstName?.trim()
+    ? escapeRegExp(firstName.trim())
+    : '[\\p{L}\\p{N}_-]+';
+  const greeting = new RegExp(
+    `^\\s*(?:#{1,3}\\s*)?(?:hi|hello|hey|welcome back)` +
+      `(?:\\s+there)?(?:\\s*,?\\s*${escapedName})?\\s*[!.,:;-]+\\s*`,
+    'iu',
+  );
+  const cleaned = response.replace(greeting, '').trimStart();
+  return cleaned || response;
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }

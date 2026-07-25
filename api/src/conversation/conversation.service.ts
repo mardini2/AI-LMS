@@ -6,15 +6,10 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Brackets, Repository } from 'typeorm';
-import {
-  Conversation,
-  ConversationType,
-} from './entities/conversation.entity';
-import {
-  ChatMode,
-  Message,
-  MessageRole,
-} from './entities/message.entity';
+import { Conversation, ConversationType } from './entities/conversation.entity';
+import { ChatMode, Message, MessageRole } from './entities/message.entity';
+import { EmbeddingService } from '../rag/embedding.service';
+import { rankHybrid, selectWithinBudget } from '../rag/retrieval.helpers';
 
 export interface MessagePageItem {
   id: string;
@@ -76,6 +71,7 @@ export class ConversationService {
     private readonly conversationRepo: Repository<Conversation>,
     @InjectRepository(Message)
     private readonly messageRepo: Repository<Message>,
+    private readonly embeddings: EmbeddingService,
   ) {}
 
   async create(
@@ -113,8 +109,6 @@ export class ConversationService {
   async findById(id: string): Promise<Conversation> {
     const conversation = await this.conversationRepo.findOne({
       where: { id },
-      relations: ['messages'],
-      order: { messages: { createdAt: 'ASC' } },
     });
 
     if (!conversation) {
@@ -290,7 +284,9 @@ export class ConversationService {
       }
 
       if ((conversation.type ?? 'general') !== 'manual') {
-        throw new BadRequestException('Only user-created conversations can be renamed');
+        throw new BadRequestException(
+          'Only user-created conversations can be renamed',
+        );
       }
 
       conversation.title = title;
@@ -373,14 +369,7 @@ export class ConversationService {
     ).reverse();
 
     return {
-      messages: page.map((m) => ({
-        id: m.id,
-        role: m.role,
-        content: m.content,
-        createdAt: m.createdAt,
-        mode: m.mode ?? null,
-        guidance: m.guidance ?? null,
-      })),
+      messages: page.map(toMessagePageItem),
       hasMore,
     };
   }
@@ -423,6 +412,83 @@ export class ConversationService {
     }));
   }
 
+  async hasUserMessages(conversationId: string): Promise<boolean> {
+    return (
+      (await this.messageRepo.count({
+        where: { conversationId, role: 'user' },
+      })) > 0
+    );
+  }
+
+  async getRelevantHistory(
+    conversationId: string,
+    question: string,
+    queryEmbedding?: number[] | null,
+  ): Promise<Array<{ role: MessageRole; content: string }>> {
+    const messages = filterSyntheticMainWelcome(
+      await this.messageRepo.find({
+        where: { conversationId },
+        order: { createdAt: 'ASC' },
+      }),
+      undefined,
+    );
+    if (!messages.length) {
+      return [];
+    }
+
+    await this.backfillMessageEmbeddings(messages);
+    const vector =
+      queryEmbedding === undefined
+        ? await this.embeddings.embedQuery(question)
+        : queryEmbedding;
+    const ranked = selectWithinBudget(
+      rankHybrid(
+        messages,
+        question,
+        vector,
+        (message) => message.content,
+        (message) => message.embedding,
+      ),
+      6,
+      7_000,
+      (message) => message.content,
+    );
+
+    // Keep a small recent window for conversational continuity, then add the
+    // neighbors of semantic matches so recalled questions retain their answers.
+    const selectedIds = new Set(
+      messages.slice(-4).map((message) => message.id),
+    );
+    for (const { item } of ranked) {
+      const index = messages.findIndex((message) => message.id === item.id);
+      selectedIds.add(item.id);
+      if (item.role === 'user' && messages[index + 1]?.role === 'assistant') {
+        selectedIds.add(messages[index + 1].id);
+      } else if (
+        item.role === 'assistant' &&
+        messages[index - 1]?.role === 'user'
+      ) {
+        selectedIds.add(messages[index - 1].id);
+      }
+    }
+
+    let characters = 0;
+    return messages
+      .filter((message) => selectedIds.has(message.id))
+      .slice(-12)
+      .filter((message) => {
+        if (characters > 0 && characters + message.content.length > 10_000) {
+          return false;
+        }
+        characters += message.content.length;
+        return true;
+      })
+      .map((message) => ({
+        role: message.role,
+        content: message.content,
+      }));
+  }
+
   async appendMessages(
     conversationId: string,
     pairs: Array<{
@@ -430,9 +496,24 @@ export class ConversationService {
       content: string;
       mode?: ChatMode | null;
       guidance?: number | null;
+      embedding?: number[] | null;
     }>,
   ): Promise<void> {
+    const missing = pairs.filter((pair) => !pair.embedding);
+    let generated: Array<number[] | null> = [];
+    if (missing.length && this.embeddings.isConfigured()) {
+      try {
+        generated = await this.embeddings.embedDocuments(
+          missing.map((pair) => pair.content),
+        );
+      } catch {
+        // Retrieval falls back to lexical scoring if an embedding call fails.
+      }
+    }
+    let generatedIndex = 0;
+
     for (const p of pairs) {
+      const embedding = p.embedding ?? generated[generatedIndex++] ?? null;
       await this.messageRepo.save(
         this.messageRepo.create({
           conversationId,
@@ -440,8 +521,30 @@ export class ConversationService {
           content: p.content,
           mode: p.mode ?? null,
           guidance: p.guidance ?? null,
+          embedding,
         }),
       );
+    }
+  }
+
+  private async backfillMessageEmbeddings(messages: Message[]): Promise<void> {
+    const missing = messages.filter(
+      (message) => !message.embedding?.length && message.content.trim(),
+    );
+    if (!missing.length || !this.embeddings.isConfigured()) {
+      return;
+    }
+
+    try {
+      const vectors = await this.embeddings.embedDocuments(
+        missing.map((message) => message.content),
+      );
+      missing.forEach((message, index) => {
+        message.embedding = vectors[index] ?? null;
+      });
+      await this.messageRepo.save(missing, { chunk: 50 });
+    } catch {
+      // Older rows remain usable through lexical retrieval.
     }
   }
 
@@ -499,7 +602,8 @@ function toSummary(conversation: Conversation): ConversationSummary {
   const title =
     type === 'general'
       ? defaultGeneralTitle(courseId)
-      : conversation.title || defaultTitle(type, conversation.sectionName, courseId);
+      : conversation.title ||
+        defaultTitle(type, conversation.sectionName, courseId);
 
   return {
     id: conversation.id,
@@ -512,7 +616,7 @@ function toSummary(conversation: Conversation): ConversationSummary {
     sectionName: conversation.sectionName,
     tag: tagForConversation(
       type,
-      type === 'section' ? conversation.sectionName ?? title : title,
+      type === 'section' ? (conversation.sectionName ?? title) : title,
       courseId,
     ),
     pinned: conversation.pinned ?? false,
@@ -522,7 +626,20 @@ function toSummary(conversation: Conversation): ConversationSummary {
   };
 }
 
-function normalizeTopicSuggestions(topics?: string[] | null): string[] | undefined {
+function toMessagePageItem(message: Message): MessagePageItem {
+  return {
+    id: message.id,
+    role: message.role,
+    content: message.content,
+    createdAt: message.createdAt,
+    mode: message.mode ?? null,
+    guidance: message.guidance ?? null,
+  };
+}
+
+function normalizeTopicSuggestions(
+  topics?: string[] | null,
+): string[] | undefined {
   if (!Array.isArray(topics)) return undefined;
   const seen = new Set<string>();
   const out: string[] = [];
@@ -595,10 +712,9 @@ function cleanText(value?: string): string | undefined {
   return cleaned || undefined;
 }
 
-function filterSyntheticMainWelcome<T extends { role: MessageRole; content: string }>(
-  messages: T[],
-  conversation?: Conversation,
-): T[] {
+function filterSyntheticMainWelcome<
+  T extends { role: MessageRole; content: string },
+>(messages: T[], conversation?: Conversation): T[] {
   if (conversation && (conversation.type ?? 'general') !== 'general') {
     return messages;
   }
