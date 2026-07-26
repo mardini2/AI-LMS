@@ -54,6 +54,11 @@ import {
   STUDY_PROPOSAL_TOOLS,
   type LlmProvider,
 } from './providers';
+import {
+  formatHistoryForLog,
+  logGreetingDebug,
+  shouldLogGreetingDebug,
+} from './greeting-debug';
 
 export type {
   ChatResponse,
@@ -61,6 +66,86 @@ export type {
   ReviewBlockDto,
   ReviewOfferDto,
 } from './chat.types';
+
+/**
+ * Remove leading ceremonial greeting(s) from assistant text.
+ * Used for provider history normalization and follow-up response cleanup.
+ * Loops so stacked openers like "Hello Admin! Welcome to …" are fully cleared.
+ */
+export function stripLeadingAssistantGreeting(
+  text: string,
+  userFirstName?: string,
+): string {
+  if (!text?.trim()) {
+    return text;
+  }
+
+  const patterns: RegExp[] = [
+    /^(?:hi|hello|hey)\s*[,!.]\s*/i,
+    /^welcome(?:\s+back)?(?:\s*,?\s*[^\n!.?]{0,40})?[,!.]?\s*/i,
+  ];
+  const firstName = userFirstName?.trim();
+  if (firstName) {
+    const escapedName = firstName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    // Prefer the named form first so "Hi Admin, …" is stripped cleanly.
+    patterns.unshift(
+      new RegExp(
+        `^(?:hi|hello|hey)\\s*,?\\s*${escapedName}\\s*[,!.]?\\s*\\n*`,
+        'i',
+      ),
+    );
+  }
+
+  let result = text;
+  for (let i = 0; i < 3; i++) {
+    let stripped = false;
+    for (const pattern of patterns) {
+      const next = result.replace(pattern, '').trimStart();
+      if (next && next !== result) {
+        result = next;
+        stripped = true;
+        break;
+      }
+    }
+    if (!stripped) break;
+  }
+  return result || text;
+}
+
+/**
+ * Strip a leading ceremonial greeting when the chat has already started
+ * (or is a section chat that already has its own intro).
+ */
+export function preventRepeatedGreeting(
+  text: string,
+  shouldStrip: boolean,
+  userFirstName?: string,
+): string {
+  if (!shouldStrip) {
+    return text;
+  }
+  return stripLeadingAssistantGreeting(text, userFirstName);
+}
+
+/**
+ * Normalize history for the LLM only: strip greeting prefixes from assistant
+ * turns so prior "Hi/Hello …" openings are not replayed as few-shot examples.
+ * User messages are unchanged. Callers must not persist this result.
+ */
+export function normalizeHistoryForLlm(
+  history: Array<{ role: 'user' | 'assistant'; content: string }>,
+  userFirstName?: string,
+): Array<{ role: 'user' | 'assistant'; content: string }> {
+  return history.map((entry) => {
+    if (entry.role !== 'assistant') {
+      return entry;
+    }
+    return {
+      ...entry,
+      content: stripLeadingAssistantGreeting(entry.content, userFirstName),
+    };
+  });
+}
 
 @Injectable()
 export class ChatService {
@@ -136,48 +221,98 @@ export class ChatService {
     const conversation =
       await this.conversationService.findById(conversationId);
 
-    const [courseMaterial, resolvedCourseName, enrolledCourses] =
-      await Promise.all([
-        this.contextService.getContext(courseId, message, {
-          sectionId: conversation.sectionId,
-          sectionNumber: conversation.sectionNumber,
-          sectionName: conversation.sectionName,
-        }),
-        this.contextService.resolveCourseName(courseId, courseName),
-        moodleUserId
-          ? this.contextService.getEnrolledCourseNames(moodleUserId)
-          : Promise.resolve([]),
-      ]);
-
-    const dbHistory = await this.conversationService.getRecentHistory(
-      conversationId,
-      20,
-    );
+    const [
+      courseMaterial,
+      resolvedCourseName,
+      enrolledCourses,
+      conversationStarted,
+      dbHistory,
+    ] = await Promise.all([
+      this.contextService.getContext(courseId, message, {
+        sectionId: conversation.sectionId,
+        sectionNumber: conversation.sectionNumber,
+        sectionName: conversation.sectionName,
+      }),
+      this.contextService.resolveCourseName(courseId, courseName),
+      moodleUserId
+        ? this.contextService.getEnrolledCourseNames(moodleUserId)
+        : Promise.resolve([]),
+      this.conversationService.hasUserMessages(conversationId),
+      this.conversationService.getRecentHistory(conversationId, 20),
+    ]);
 
     const canProposeContent =
       Boolean(moodleUserId) && courseId > 1 && Boolean(courseMaterial);
+    // Section chats already show "What would you like to know about …?" — never re-greet.
+    const mayGreet =
+      !conversationStarted && (conversation.type ?? 'general') === 'general';
+    const priorUserTurns = dbHistory.filter((m) => m.role === 'user').length;
+    const systemInstruction = buildSystemPrompt({
+      courseId,
+      courseName: resolvedCourseName,
+      userFirstName,
+      enrolledCourses,
+      conversationTitle: conversation.title,
+      conversationType: conversation.type ?? 'general',
+      sectionName: conversation.sectionName,
+      courseMaterial,
+      canProposeContent,
+      mode,
+      guidance,
+      conversationStarted,
+    });
+    // Provider-only view: do not persist or return this to the UI.
+    const providerHistory = normalizeHistoryForLlm(dbHistory, userFirstName);
+    const debugSecondTurn = shouldLogGreetingDebug(priorUserTurns);
+
+    if (debugSecondTurn) {
+      logGreetingDebug(
+        'REQUEST',
+        [
+          `conversationId: ${conversationId}`,
+          `conversationType: ${conversation.type ?? 'general'}`,
+          `priorUserTurns: ${priorUserTurns}`,
+          `allowGreeting: ${mayGreet}`,
+          `providerId: ${llm.id}`,
+          '',
+          '----- SYSTEM PROMPT -----',
+          systemInstruction,
+          '',
+          '----- HISTORY (DB, unchanged) -----',
+          formatHistoryForLog(dbHistory),
+          '',
+          '----- HISTORY (SENT TO PROVIDER, normalized) -----',
+          formatHistoryForLog(providerHistory),
+          '',
+          '----- USER MESSAGE -----',
+          message,
+        ].join('\n'),
+      );
+    }
 
     this.logger.log(
       `Sending message for conversation ${conversationId} via ${llm.id}`,
     );
     const result = await llm.chat({
-      systemInstruction: buildSystemPrompt({
-        courseId,
-        courseName: resolvedCourseName,
-        userFirstName,
-        enrolledCourses,
-        conversationTitle: conversation.title,
-        conversationType: conversation.type,
-        sectionName: conversation.sectionName,
-        courseMaterial,
-        canProposeContent,
-        mode,
-        guidance,
-      }),
-      history: dbHistory,
+      systemInstruction,
+      history: providerHistory,
       message,
       tools: canProposeContent ? STUDY_PROPOSAL_TOOLS : undefined,
     });
+
+    if (debugSecondTurn) {
+      logGreetingDebug(
+        'RAW PROVIDER RESPONSE',
+        [
+          `conversationId: ${conversationId}`,
+          `providerId: ${llm.id}`,
+          `toolCalls: ${JSON.stringify(result.toolCalls ?? [])}`,
+          '',
+          '----- RAW PROVIDER RESPONSE -----',
+          result.text ?? '(empty text)',
+        ].join('\n'),
+      );
+    }
 
     const functionCalls = result.toolCalls ?? [];
 
@@ -340,9 +475,28 @@ export class ChatService {
         requestedCount: exceededMax ? Math.round(requestedCount) : undefined,
       });
     } else {
-      responseText =
+      const rawText =
         result.text?.trim() ||
         'I can help with course questions, or create a private study guide, flashcards, or practice quiz in Moodle when you ask for one.';
+      responseText = preventRepeatedGreeting(
+        rawText,
+        !mayGreet,
+        userFirstName,
+      );
+      if (debugSecondTurn) {
+        logGreetingDebug(
+          'POST-PROCESS',
+          [
+            `conversationId: ${conversationId}`,
+            `allowGreeting: ${mayGreet}`,
+            `preventRepeatedGreetingApplied: ${!mayGreet}`,
+            `rawEqualsFinal: ${rawText === responseText}`,
+            '',
+            '----- FINAL RESPONSE AFTER PROCESSING -----',
+            responseText,
+          ].join('\n'),
+        );
+      }
     }
 
     await this.conversationService.appendMessages(conversationId, [

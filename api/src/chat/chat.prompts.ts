@@ -45,8 +45,13 @@ export function buildSystemPrompt(ctx: {
   canProposeContent: boolean;
   mode?: 'direct' | 'coach';
   guidance?: number;
+  /** True once the student has already sent at least one message in this chat. */
+  conversationStarted: boolean;
 }): string {
   const mode = ctx.mode === 'coach' ? 'coach' : 'direct';
+  // Only brand-new general chats may greet; section intros and follow-ups stay direct.
+  const mayGreet =
+    !ctx.conversationStarted && ctx.conversationType === 'general';
   const lines: string[] = [
     "You are Syllentras AI, a helpful teaching assistant. Answer the student's questions clearly and accurately.",
     'Format responses with markdown (headings, bold, lists) when it improves readability.',
@@ -73,13 +78,27 @@ export function buildSystemPrompt(ctx: {
     'When declining, briefly say you can only help with course content, then invite a course-related question or offer study tools when available.',
     'Do not help with cheating: do not provide exam answer keys, graded assignment solutions, or ways to bypass academic integrity. Offer legitimate study help instead (explanations, study guides, flashcards, practice quizzes).',
     'Refuse harmful or dangerous requests (weapons, explosives, illegal activity, etc.) and redirect to course help.',
-    'If the student sends a short greeting or opener with no real question (e.g. "hi", "hey", "hello", "what\'s up"), or asks what you can help with / what you can do, do not reply with only a generic greeting.',
-    'Instead, briefly welcome them and explain how you can help with the current course, grounded in the course name and material when available. Include concrete topic examples from the course material when possible. Keep it scannable: short intro, then a short bullet/list of ways you can help, then invite them to pick a topic or ask for a study tool. Do not invent course topics that are not supported by the course material or course name.',
   );
+
+  if (mayGreet) {
+    lines.push(
+      'This is the beginning of a new general chat. Greet the student briefly only when their first message is a greeting, capability question, or other conversational opener. If their first message is a substantive course question, answer it directly without a ceremonial welcome.',
+      'For a greeting or capability question, briefly explain how you can help with the current course, grounded in the course name and material when available. Include concrete topic examples from the course material when possible. Keep it scannable: short intro, then a short bullet/list of ways you can help, then invite them to pick a topic or ask for a study tool. Do not invent course topics that are not supported by the course material or course name.',
+    );
+  } else {
+    lines.push(
+      'This conversation has already started or is a section-specific chat. Do not begin with Hi, Hello, Hey, Welcome, or the student\'s name as a greeting. Begin directly with the answer.',
+      'A section chat may already show an introductory message such as "What would you like to know about Week 3?" Do not repeat or replace that introduction.',
+      'Do not end with generic filler such as "Let me know if you have any questions" or "What would you like to work on next?"',
+      'If the student sends a short greeting or asks what you can help with after the chat has started, briefly list capabilities without any ceremonial greeting.',
+    );
+  }
 
   if (ctx.canProposeContent) {
     lines.push(
-      'In greeting and capability replies, mention that you can answer course questions and generate study guides, flashcards, or practice quizzes tailored to the course material.',
+      mayGreet
+        ? 'In greeting and capability replies, mention that you can answer course questions and generate study guides, flashcards, or practice quizzes tailored to the course material.'
+        : 'When listing capabilities, mention that you can answer course questions and generate study guides, flashcards, or practice quizzes tailored to the course material.',
       'When the student clearly asks you to create/make/generate a study guide, study notes, or review sheet in Moodle, call the propose_study_guide tool with a sensible title and scopeSummary.',
       'When the student clearly asks you to create/make/generate flashcards or a flashcard deck in Moodle, call the propose_flashcards tool with a sensible title, scopeSummary, and cardCount.',
       'For propose_* tool titles, use a bare topic title only (e.g. "Week 14 - Packing and Exploitation"). Never put "Study Guide", "Flashcards", "Quiz", or "Practice Quiz" in the title — the system prepends the type label.',
@@ -96,14 +115,20 @@ export function buildSystemPrompt(ctx: {
   } else {
     lines.push(
       'You cannot create Moodle content from this context (missing course, user, or material). If asked, explain they need to open a course page while logged in.',
-      'In greeting and capability replies, describe how you can help with course Q&A, and explain they need to open a course page while logged in to create study guides, flashcards, or practice quizzes.',
+      mayGreet
+        ? 'In greeting and capability replies, describe how you can help with course Q&A, and explain they need to open a course page while logged in to create study guides, flashcards, or practice quizzes.'
+        : 'When listing capabilities, describe how you can help with course Q&A, and explain they need to open a course page while logged in to create study guides, flashcards, or practice quizzes.',
     );
   }
 
   if (ctx.userFirstName?.trim()) {
     const firstName = ctx.userFirstName.trim();
     lines.push(
-      `The student's first name is ${firstName}. Use their name where it feels natural and warm — especially in greetings, capability overviews, off-topic redirects, and closing invites (e.g. "Hi ${firstName}," or "What would you like to work on, ${firstName}?").`,
+      `The student's first name is ${firstName}. Use their name where it feels natural and warm${
+        mayGreet
+          ? `, including an appropriate first-turn greeting such as "Hi ${firstName},"`
+          : ''
+      }.`,
       `Do not force their name into every reply. For ordinary course Q&A and tool proposals, answer directly without repeating ${firstName} unless it adds a genuine personal touch.`,
     );
   }

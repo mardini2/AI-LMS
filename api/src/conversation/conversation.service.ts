@@ -423,6 +423,14 @@ export class ConversationService {
     }));
   }
 
+  /** True once the student has sent at least one message in this conversation. */
+  async hasUserMessages(conversationId: string): Promise<boolean> {
+    const count = await this.messageRepo.count({
+      where: { conversationId, role: 'user' },
+    });
+    return count > 0;
+  }
+
   async appendMessages(
     conversationId: string,
     pairs: Array<{

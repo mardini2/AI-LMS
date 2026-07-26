@@ -14,6 +14,11 @@ import type {
   LlmTool,
   LlmToolCall,
 } from './provider.types';
+import {
+  formatHistoryForLog,
+  logGreetingDebug,
+  shouldLogGreetingDebug,
+} from '../greeting-debug';
 
 export interface OpenAiCompatibleConfig {
   id: AiProviderId;
@@ -68,6 +73,25 @@ export class OpenAiCompatibleProvider implements LlmProvider {
         })),
         { role: 'user', content: request.message },
       ];
+      const priorUserTurns = request.history.filter((m) => m.role === 'user').length;
+      if (shouldLogGreetingDebug(priorUserTurns)) {
+        logGreetingDebug(
+          `PROVIDER_PAYLOAD:${this.id}`,
+          [
+            'system message role=system included as messages[0]: YES',
+            `systemInstructionLength: ${request.systemInstruction.length}`,
+            `model: ${this.model}`,
+            '',
+            '----- MESSAGES SENT TO chat.completions.create -----',
+            formatHistoryForLog(
+              messages.map((m) => ({
+                role: String(m.role),
+                content: typeof m.content === 'string' ? m.content : JSON.stringify(m.content),
+              })),
+            ),
+          ].join('\n'),
+        );
+      }
 
       const completion = await client.chat.completions.create({
         model: this.model,
@@ -88,6 +112,16 @@ export class OpenAiCompatibleProvider implements LlmProvider {
 
       if (!text && toolCalls.length === 0) {
         throw new Error('empty response');
+      }
+
+      if (shouldLogGreetingDebug(priorUserTurns)) {
+        logGreetingDebug(
+          `PROVIDER_RAW:${this.id}`,
+          [
+            '----- RAW PROVIDER RESPONSE (choice.message.content) -----',
+            text || '(empty text)',
+          ].join('\n'),
+        );
       }
 
       return { text, toolCalls };

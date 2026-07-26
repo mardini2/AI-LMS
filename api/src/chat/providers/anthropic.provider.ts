@@ -15,6 +15,11 @@ import type {
   LlmTool,
   LlmToolCall,
 } from './provider.types';
+import {
+  formatHistoryForLog,
+  logGreetingDebug,
+  shouldLogGreetingDebug,
+} from '../greeting-debug';
 
 @Injectable()
 export class AnthropicProvider implements LlmProvider {
@@ -53,6 +58,28 @@ export class AnthropicProvider implements LlmProvider {
 
       // Anthropic wants alternating roles; merge consecutive same-role turns.
       const normalized = normalizeAnthropicMessages(messages);
+      const priorUserTurns = request.history.filter((m) => m.role === 'user').length;
+      if (shouldLogGreetingDebug(priorUserTurns)) {
+        logGreetingDebug(
+          'PROVIDER_PAYLOAD:anthropic',
+          [
+            'system passed to messages.create as top-level `system`: YES',
+            `systemInstructionLength: ${request.systemInstruction.length}`,
+            `model: ${this.model}`,
+            '',
+            '----- MESSAGES SENT TO messages.create (after normalize) -----',
+            formatHistoryForLog(
+              normalized.map((m) => ({
+                role: String(m.role),
+                content:
+                  typeof m.content === 'string'
+                    ? m.content
+                    : JSON.stringify(m.content),
+              })),
+            ),
+          ].join('\n'),
+        );
+      }
 
       const response = await client.messages.create({
         model: this.model,
@@ -81,6 +108,16 @@ export class AnthropicProvider implements LlmProvider {
       const text = textParts.join('\n').trim();
       if (!text && toolCalls.length === 0) {
         throw new Error('empty response');
+      }
+
+      if (shouldLogGreetingDebug(priorUserTurns)) {
+        logGreetingDebug(
+          'PROVIDER_RAW:anthropic',
+          [
+            '----- RAW PROVIDER RESPONSE (anthropic text blocks) -----',
+            text || '(empty text)',
+          ].join('\n'),
+        );
       }
 
       return { text, toolCalls };
@@ -173,9 +210,10 @@ function normalizeAnthropicMessages(
     }
     out.push({ role: msg.role, content: msg.content });
   }
-  // Anthropic requires the first message to be from the user.
-  while (out.length && out[0].role !== 'user') {
-    out.shift();
+  // Anthropic requires the first message to be from the user. Keep section
+  // welcome assistant turns by seeding a minimal opener instead of dropping them.
+  if (out.length && out[0].role !== 'user') {
+    out.unshift({ role: 'user', content: '(Conversation opened.)' });
   }
   return out;
 }

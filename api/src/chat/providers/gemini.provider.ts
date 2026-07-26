@@ -24,6 +24,11 @@ import type {
   LlmTool,
   LlmToolCall,
 } from './provider.types';
+import {
+  formatHistoryForLog,
+  logGreetingDebug,
+  shouldLogGreetingDebug,
+} from '../greeting-debug';
 
 @Injectable()
 export class GeminiProvider implements LlmProvider {
@@ -54,8 +59,32 @@ export class GeminiProvider implements LlmProvider {
           ] as Tool[])
         : undefined;
 
+      const geminiHistory = toGeminiHistory(request.history);
+      const priorUserTurns = request.history.filter((m) => m.role === 'user').length;
+      if (shouldLogGreetingDebug(priorUserTurns)) {
+        logGreetingDebug(
+          'PROVIDER_PAYLOAD:gemini',
+          [
+            'systemInstruction passed to createChat.config.systemInstruction: YES',
+            `systemInstructionLength: ${request.systemInstruction.length}`,
+            `systemInstructionShaPreview: ${request.systemInstruction.slice(0, 120).replace(/\s+/g, ' ')}…`,
+            '',
+            '----- HISTORY PASSED TO createChat (after toGeminiHistory) -----',
+            formatHistoryForLog(
+              geminiHistory.map((m) => ({
+                role: m.role,
+                content: m.parts[0]?.text ?? '',
+              })),
+            ),
+            '',
+            '----- USER MESSAGE PASSED TO sendMessage -----',
+            request.message,
+          ].join('\n'),
+        );
+      }
+
       const chat = this.gemini.createChat({
-        history: toGeminiHistory(request.history),
+        history: geminiHistory,
         config: {
           systemInstruction: request.systemInstruction,
           tools,
@@ -82,6 +111,16 @@ export class GeminiProvider implements LlmProvider {
           name: call.name as string,
           args: (call.args ?? {}) as Record<string, unknown>,
         }));
+
+      if (shouldLogGreetingDebug(priorUserTurns)) {
+        logGreetingDebug(
+          'PROVIDER_RAW:gemini',
+          [
+            '----- RAW PROVIDER RESPONSE (gemini SDK result.text) -----',
+            (result.text ?? '').trim() || '(empty text)',
+          ].join('\n'),
+        );
+      }
 
       return {
         text: (result.text ?? '').trim(),
@@ -135,8 +174,13 @@ function toGeminiHistory(
   for (const m of history) {
     const role: 'user' | 'model' = m.role === 'assistant' ? 'model' : 'user';
 
+    // Gemini chats must start with a user turn. Keep section-welcome assistant
+    // messages by seeding a minimal opener instead of dropping them.
     if (geminiHistory.length === 0 && role === 'model') {
-      continue;
+      geminiHistory.push({
+        role: 'user',
+        parts: [{ text: '(Conversation opened.)' }],
+      });
     }
 
     const last = geminiHistory[geminiHistory.length - 1];
