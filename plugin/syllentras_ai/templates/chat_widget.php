@@ -63,6 +63,36 @@ defined('MOODLE_INTERNAL') || die();
                         <span id="syllentras-chat-active-title"><?php echo s($generaltitle); ?></span>
                         <span id="syllentras-chat-active-tag"><?php echo s($generaltag); ?></span>
                         <span id="syllentras-chat-active-mode" data-mode="direct">Direct</span>
+                        <button
+                            type="button"
+                            id="syllentras-msg-search-toggle"
+                            class="syllentras-msg-search-toggle"
+                            aria-label="Find in conversation"
+                            aria-expanded="false"
+                            aria-controls="syllentras-msg-search"
+                            title="Find in conversation"
+                        >Find</button>
+                    </div>
+                    <div id="syllentras-msg-search" hidden>
+                        <div class="syllentras-msg-search-bar">
+                            <input
+                                id="syllentras-msg-search-input"
+                                type="search"
+                                placeholder="Find in conversation"
+                                aria-label="Find in conversation"
+                                autocomplete="off"
+                            >
+                            <span id="syllentras-msg-search-count" aria-live="polite"></span>
+                            <button type="button" id="syllentras-msg-search-prev" aria-label="Previous match" title="Previous match">&#9650;</button>
+                            <button type="button" id="syllentras-msg-search-next" aria-label="Next match" title="Next match">&#9660;</button>
+                            <button type="button" id="syllentras-msg-search-close" aria-label="Close find" title="Close find">&times;</button>
+                        </div>
+                        <div
+                            id="syllentras-msg-search-results"
+                            class="syllentras-msg-search-results"
+                            role="listbox"
+                            aria-label="Matching messages"
+                        ></div>
                     </div>
                     <div id="syllentras-chat-messages" role="log" aria-live="polite">
                         <div id="syllentras-chat-load-more" hidden>Loading...</div>

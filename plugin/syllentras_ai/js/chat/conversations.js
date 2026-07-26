@@ -1,7 +1,8 @@
 // Part of the Syllentras chat widget.
 // Included inside the shared IIFE from before_footer.php — do not load standalone.
 
-function setActiveConversation(conversation) {
+function setActiveConversation(conversation, options) {
+    options = options || {};
     activeConversation = conversation;
     if (activeConversation && Array.isArray(conversation.topicSuggestions)) {
         activeConversation.topicSuggestions = conversation.topicSuggestions;
@@ -9,14 +10,18 @@ function setActiveConversation(conversation) {
     conversationId = conversation.id;
     activeTitle.textContent = displayConversationTitle(conversation);
     activeTag.textContent = displayConversationTag(conversation);
+    if (typeof closeMessageSearch === 'function') {
+        closeMessageSearch();
+    }
     clearMessages();
     hasMore = false;
     loadingHistory = false;
     updateActiveConversationButtons();
-    return loadCurrentHistory();
+    return loadCurrentHistory(options);
 }
 
-function loadCurrentHistory() {
+function loadCurrentHistory(options) {
+    options = options || {};
     if (!conversationId || loadingHistory) return Promise.resolve();
     loadingHistory = true;
 
@@ -27,7 +32,10 @@ function loadCurrentHistory() {
         if (page.messages && page.messages.length) {
             renderMessageBatch(page.messages, false);
             hasMore = !!page.hasMore;
-            scrollToBottom();
+            // Skip jumping to the bottom when a search hit is about to scroll us elsewhere.
+            if (!options.deferScroll) {
+                scrollToBottom();
+            }
         }
         return loadPendingActionForConversation().then(loadReviewOfferForConversation);
     })
@@ -39,17 +47,27 @@ function loadCurrentHistory() {
     });
 }
 
+var loadOlderMessagesInFlight = null;
+
 function loadOlderMessages() {
-    if (loadingOlder || !hasMore || !conversationId) return;
+    // Reuse the same request if scroll-up and find-in-chat both ask at once.
+    if (loadOlderMessagesInFlight) {
+        return loadOlderMessagesInFlight;
+    }
+    if (!hasMore || !conversationId) {
+        return Promise.resolve(false);
+    }
 
     var before = getOldestMessageCreatedAt();
-    if (!before) return;
+    if (!before) {
+        return Promise.resolve(false);
+    }
 
     loadingOlder = true;
     loadMore.hidden = false;
 
     var prevScrollHeight = msgs.scrollHeight;
-    fetchJson('/conversations/' + encodeURIComponent(conversationId)
+    loadOlderMessagesInFlight = fetchJson('/conversations/' + encodeURIComponent(conversationId)
         + '/messages?moodleUserId=' + encodeURIComponent(moodleUserId)
         + '&limit=' + PAGE_SIZE
         + '&before=' + encodeURIComponent(before))
@@ -58,17 +76,22 @@ function loadOlderMessages() {
             renderMessageBatch(page.messages, true);
             hasMore = !!page.hasMore;
             msgs.scrollTop = msgs.scrollHeight - prevScrollHeight;
-        } else {
-            hasMore = false;
+            return true;
         }
+        hasMore = false;
+        return false;
     })
     .catch(function () {
         hasMore = false;
+        return false;
     })
     .finally(function () {
         loadingOlder = false;
         loadMore.hidden = true;
+        loadOlderMessagesInFlight = null;
     });
+
+    return loadOlderMessagesInFlight;
 }
 
 function openConversation(options) {
@@ -93,14 +116,28 @@ function openConversation(options) {
     });
 }
 
-function openConversationById(id) {
+function openConversationById(id, options) {
+    options = options || {};
+    var focusMessageId = options.messageId || null;
+    var focusQuery = options.query || '';
     showPanel();
+
+    // Already on this chat? Just reuse the Find jump helper.
+    if (conversationId === id && focusMessageId) {
+        return navigateToSearchMessage(focusMessageId, focusQuery);
+    }
+
     return fetchJson('/conversations/' + encodeURIComponent(id)
         + '?moodleUserId=' + encodeURIComponent(moodleUserId))
     .then(function (conversation) {
-        return setActiveConversation(conversation);
+        return setActiveConversation(conversation, {
+            deferScroll: !!focusMessageId
+        });
     })
     .then(function () {
+        if (focusMessageId) {
+            return navigateToSearchMessage(focusMessageId, focusQuery);
+        }
         input.focus();
     });
 }
@@ -154,12 +191,12 @@ function renderConversationItem(conversation, matchedMessage) {
         item.appendChild(match);
     }
     item.addEventListener('click', function () {
-        openConversationById(conversation.id);
+        openConversationFromSearch(conversation, matchedMessage);
     });
     item.addEventListener('keydown', function (e) {
         if (e.key === 'Enter' || e.key === ' ') {
             e.preventDefault();
-            openConversationById(conversation.id);
+            openConversationFromSearch(conversation, matchedMessage);
         }
     });
     item.querySelector('.syllentras-conversation-menu-btn').addEventListener('click', function (e) {
@@ -245,6 +282,18 @@ function confirmNewConversation() {
         });
 }
 
+function openConversationFromSearch(conversation, matchedMessage) {
+    var query = (searchInput && searchInput.value ? searchInput.value : '').trim();
+    if (matchedMessage && matchedMessage.id) {
+        // Same navigateToSearchMessage path as the Find panel / Ctrl+F.
+        return openConversationById(conversation.id, {
+            messageId: matchedMessage.id,
+            query: query
+        });
+    }
+    return openConversationById(conversation.id);
+}
+
 function searchConversations(query) {
     if (!query.trim()) {
         loadConversations();
@@ -295,6 +344,8 @@ function sendMessage() {
     setGeneratingState(true);
     appendMessage('user', text);
     var loadingEl = appendMessage('assistant', '...');
+    var pendingAssistantId = loadingEl.dataset.messageId || nextLocalMessageId();
+    loadingEl.dataset.messageId = pendingAssistantId;
 
     var body = {
         courseId: courseId,
@@ -323,6 +374,15 @@ function sendMessage() {
         renderAssistantContent(loadingEl, data.response);
         applyModeChip(loadingEl, data.mode || body.mode);
         loadingEl.dataset.createdAt = new Date().toISOString();
+        upsertMessageSearchEntry({
+            id: pendingAssistantId,
+            role: 'assistant',
+            content: data.response,
+            createdAt: loadingEl.dataset.createdAt
+        });
+        if (messageSearchOpen && msgSearchInput && msgSearchInput.value.trim()) {
+            runMessageSearch(msgSearchInput.value);
+        }
         conversationId = data.conversationId || conversationId;
         if (Array.isArray(data.topicSuggestions)) {
             if (!activeConversation) activeConversation = { id: conversationId };

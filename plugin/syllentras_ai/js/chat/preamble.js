@@ -35,6 +35,14 @@ var searchInput = document.getElementById('syllentras-chat-search');
 var newBtn = document.getElementById('syllentras-chat-new');
 var activeTitle = document.getElementById('syllentras-chat-active-title');
 var activeTag = document.getElementById('syllentras-chat-active-tag');
+var msgSearchToggle = document.getElementById('syllentras-msg-search-toggle');
+var msgSearchPanel = document.getElementById('syllentras-msg-search');
+var msgSearchInput = document.getElementById('syllentras-msg-search-input');
+var msgSearchCount = document.getElementById('syllentras-msg-search-count');
+var msgSearchResults = document.getElementById('syllentras-msg-search-results');
+var msgSearchPrev = document.getElementById('syllentras-msg-search-prev');
+var msgSearchNext = document.getElementById('syllentras-msg-search-next');
+var msgSearchClose = document.getElementById('syllentras-msg-search-close');
 var pendingDeleteConversation = null;
 var openMenu = null;
 

@@ -50,6 +50,14 @@ var searchInput = document.getElementById('syllentras-chat-search');
 var newBtn = document.getElementById('syllentras-chat-new');
 var activeTitle = document.getElementById('syllentras-chat-active-title');
 var activeTag = document.getElementById('syllentras-chat-active-tag');
+var msgSearchToggle = document.getElementById('syllentras-msg-search-toggle');
+var msgSearchPanel = document.getElementById('syllentras-msg-search');
+var msgSearchInput = document.getElementById('syllentras-msg-search-input');
+var msgSearchCount = document.getElementById('syllentras-msg-search-count');
+var msgSearchResults = document.getElementById('syllentras-msg-search-results');
+var msgSearchPrev = document.getElementById('syllentras-msg-search-prev');
+var msgSearchNext = document.getElementById('syllentras-msg-search-next');
+var msgSearchClose = document.getElementById('syllentras-msg-search-close');
 var pendingDeleteConversation = null;
 var openMenu = null;
 
@@ -1369,9 +1377,173 @@ function loadReviewOfferForConversation() {
 }
 
 
+// ===== message-search.js =====
+// Part of the Syllentras chat widget.
+// Included inside the shared IIFE from before_footer.php — do not load standalone.
+//
+// Find-in-chat guts. Keeps a tiny searchable list of the messages we already
+// loaded so typing in the find box doesn't walk the whole message DOM.
+// Rendering / scrolling lives in messages.js; this file just indexes + queries.
+
+var MESSAGE_SEARCH_DEBOUNCE_MS = 160;
+var MESSAGE_SEARCH_PREVIEW_RADIUS = 42;
+
+var messageSearchIndex = [];
+var messageSearchLocalSeq = 0;
+var messageSearchQuery = '';
+var messageSearchResults = [];
+var messageSearchActiveIndex = -1;
+var messageSearchDebounceTimer = null;
+var messageSearchOpen = false;
+
+function nextLocalMessageId() {
+    messageSearchLocalSeq += 1;
+    return 'local-' + Date.now() + '-' + messageSearchLocalSeq;
+}
+
+function resetMessageSearchIndex() {
+    messageSearchIndex = [];
+}
+
+function upsertMessageSearchEntry(entry) {
+    if (!entry || !entry.id || entry.role === 'error' || entry.role === 'system') {
+        return;
+    }
+    var content = entry.content == null ? '' : String(entry.content);
+    if (content === '...') {
+        return;
+    }
+    var row = {
+        id: String(entry.id),
+        role: entry.role === 'assistant' ? 'assistant' : 'user',
+        content: content,
+        createdAt: entry.createdAt || null
+    };
+    for (var i = 0; i < messageSearchIndex.length; i++) {
+        if (messageSearchIndex[i].id === row.id) {
+            messageSearchIndex[i] = row;
+            return;
+        }
+    }
+    messageSearchIndex.push(row);
+}
+
+function escapeRegExp(value) {
+    return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function escapeHtml(value) {
+    return String(value)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+}
+
+function findMatchRanges(content, query) {
+    var ranges = [];
+    if (!content || !query) return ranges;
+    var hay = content.toLowerCase();
+    var needle = query.toLowerCase();
+    var from = 0;
+    while (from <= hay.length) {
+        var hit = hay.indexOf(needle, from);
+        if (hit === -1) break;
+        ranges.push({ start: hit, end: hit + needle.length });
+        from = hit + Math.max(needle.length, 1);
+    }
+    return ranges;
+}
+
+function buildMatchPreview(content, query) {
+    var ranges = findMatchRanges(content, query);
+    if (!ranges.length) {
+        return escapeHtml(content).slice(0, MESSAGE_SEARCH_PREVIEW_RADIUS * 2);
+    }
+    var first = ranges[0];
+    var start = Math.max(0, first.start - MESSAGE_SEARCH_PREVIEW_RADIUS);
+    var end = Math.min(content.length, first.end + MESSAGE_SEARCH_PREVIEW_RADIUS);
+    var slice = content.slice(start, end);
+    var localQuery = query;
+    var re = new RegExp(escapeRegExp(localQuery), 'ig');
+    var highlighted = escapeHtml(slice).replace(re, function (match) {
+        return '<mark class="syllentras-search-mark">' + match + '</mark>';
+    });
+    return (start > 0 ? '…' : '') + highlighted + (end < content.length ? '…' : '');
+}
+
+// Pure query over the index. Cheap enough for big chats because we never touch the DOM here.
+function queryMessageSearchIndex(rawQuery) {
+    var query = (rawQuery || '').trim();
+    if (!query) return [];
+
+    var out = [];
+    for (var i = 0; i < messageSearchIndex.length; i++) {
+        var entry = messageSearchIndex[i];
+        var ranges = findMatchRanges(entry.content, query);
+        if (!ranges.length) continue;
+        out.push({
+            id: entry.id,
+            role: entry.role,
+            content: entry.content,
+            matchCount: ranges.length,
+            previewHtml: buildMatchPreview(entry.content, query)
+        });
+    }
+    return out;
+}
+
+function setMessageSearchResults(results, query) {
+    messageSearchResults = results || [];
+    messageSearchQuery = query || '';
+    messageSearchActiveIndex = messageSearchResults.length ? 0 : -1;
+}
+
+function getActiveMessageSearchResult() {
+    if (messageSearchActiveIndex < 0 || messageSearchActiveIndex >= messageSearchResults.length) {
+        return null;
+    }
+    return messageSearchResults[messageSearchActiveIndex];
+}
+
+function moveMessageSearchSelection(delta) {
+    if (!messageSearchResults.length) {
+        messageSearchActiveIndex = -1;
+        return null;
+    }
+    var next = messageSearchActiveIndex + delta;
+    if (next < 0) next = messageSearchResults.length - 1;
+    if (next >= messageSearchResults.length) next = 0;
+    messageSearchActiveIndex = next;
+    return getActiveMessageSearchResult();
+}
+
+function scheduleMessageSearch(rawQuery, onDone) {
+    if (messageSearchDebounceTimer) {
+        clearTimeout(messageSearchDebounceTimer);
+    }
+    messageSearchDebounceTimer = setTimeout(function () {
+        messageSearchDebounceTimer = null;
+        var query = (rawQuery || '').trim();
+        var results = query ? queryMessageSearchIndex(query) : [];
+        setMessageSearchResults(results, query);
+        if (typeof onDone === 'function') onDone(results, query);
+    }, MESSAGE_SEARCH_DEBOUNCE_MS);
+}
+
+function clearMessageSearchSchedule() {
+    if (messageSearchDebounceTimer) {
+        clearTimeout(messageSearchDebounceTimer);
+        messageSearchDebounceTimer = null;
+    }
+}
+
 // ===== messages.js =====
 // Part of the Syllentras chat widget.
 // Included inside the shared IIFE from before_footer.php — do not load standalone.
+
+var messageFlashTimer = null;
+var messageMarkFadeTimer = null;
 
 function normalizeMessageMode(mode) {
     if (mode === 'coach') return 'coach';
@@ -1407,11 +1579,21 @@ function createMessageElement(role, text, options) {
     var div = document.createElement('div');
     div.className = 'syllentras-msg ' + role;
     if (options.createdAt) div.dataset.createdAt = options.createdAt;
+    var messageId = options.id || nextLocalMessageId();
+    div.dataset.messageId = String(messageId);
     if (role === 'assistant' && text !== '...') {
         renderAssistantContent(div, text);
         applyModeChip(div, options.mode);
     } else {
         div.textContent = text;
+    }
+    if (role === 'user' || (role === 'assistant' && text !== '...')) {
+        upsertMessageSearchEntry({
+            id: messageId,
+            role: role,
+            content: text,
+            createdAt: options.createdAt || null
+        });
     }
     return div;
 }
@@ -1439,6 +1621,17 @@ function clearMessages() {
     Array.from(msgs.querySelectorAll('.syllentras-msg')).forEach(function (node) {
         node.remove();
     });
+    resetMessageSearchIndex();
+    clearMessageTextHighlights();
+    if (typeof setMessageSearchResults === 'function') {
+        setMessageSearchResults([], '');
+    }
+    if (typeof renderMessageSearchResults === 'function') {
+        renderMessageSearchResults([]);
+    }
+    if (typeof updateMessageSearchCount === 'function') {
+        updateMessageSearchCount();
+    }
 }
 
 function getOldestMessageCreatedAt() {
@@ -1454,7 +1647,12 @@ function renderMessageBatch(messages, prepend) {
     var list = prepend ? messages.slice().reverse() : messages;
     list.forEach(function (m) {
         var role = m.role === 'assistant' ? 'assistant' : 'user';
-        var opts = { scroll: false, createdAt: m.createdAt, mode: m.mode };
+        var opts = {
+            scroll: false,
+            createdAt: m.createdAt,
+            mode: m.mode,
+            id: m.id
+        };
         if (prepend) {
             prependMessage(role, m.content, opts);
         } else {
@@ -1463,11 +1661,172 @@ function renderMessageBatch(messages, prepend) {
     });
 }
 
+function findMessageElement(messageId) {
+    if (!msgs || messageId == null) return null;
+    var id = String(messageId);
+    var nodes = msgs.querySelectorAll('.syllentras-msg[data-message-id]');
+    for (var i = 0; i < nodes.length; i++) {
+        if (nodes[i].dataset.messageId === id) return nodes[i];
+    }
+    return null;
+}
+
+function clearMessageTextHighlights() {
+    if (!msgs) return;
+    Array.from(msgs.querySelectorAll('mark.syllentras-search-mark')).forEach(function (mark) {
+        var parent = mark.parentNode;
+        if (!parent) return;
+        parent.replaceChild(document.createTextNode(mark.textContent), mark);
+        parent.normalize();
+    });
+    Array.from(msgs.querySelectorAll('.syllentras-msg-flash')).forEach(function (el) {
+        el.classList.remove('syllentras-msg-flash');
+    });
+    if (messageFlashTimer) {
+        clearTimeout(messageFlashTimer);
+        messageFlashTimer = null;
+    }
+    if (messageMarkFadeTimer) {
+        clearTimeout(messageMarkFadeTimer);
+        messageMarkFadeTimer = null;
+    }
+}
+
+function highlightTextNodeMatches(root, query) {
+    if (!root || !query) return;
+    var needle = query.toLowerCase();
+    var walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+        acceptNode: function (node) {
+            if (!node.nodeValue || !node.nodeValue.toLowerCase().includes(needle)) {
+                return NodeFilter.FILTER_REJECT;
+            }
+            // Don't mess with mode chips or other chrome.
+            if (node.parentElement && node.parentElement.closest('.syllentras-msg-mode')) {
+                return NodeFilter.FILTER_REJECT;
+            }
+            return NodeFilter.FILTER_ACCEPT;
+        }
+    });
+
+    var textNodes = [];
+    var current = walker.nextNode();
+    while (current) {
+        textNodes.push(current);
+        current = walker.nextNode();
+    }
+
+    textNodes.forEach(function (textNode) {
+        var value = textNode.nodeValue;
+        var lower = value.toLowerCase();
+        var frag = document.createDocumentFragment();
+        var cursor = 0;
+        var hit = lower.indexOf(needle, cursor);
+        while (hit !== -1) {
+            if (hit > cursor) {
+                frag.appendChild(document.createTextNode(value.slice(cursor, hit)));
+            }
+            var mark = document.createElement('mark');
+            mark.className = 'syllentras-search-mark';
+            mark.textContent = value.slice(hit, hit + needle.length);
+            frag.appendChild(mark);
+            cursor = hit + needle.length;
+            hit = lower.indexOf(needle, cursor);
+        }
+        if (cursor < value.length) {
+            frag.appendChild(document.createTextNode(value.slice(cursor)));
+        }
+        textNode.parentNode.replaceChild(frag, textNode);
+    });
+}
+
+function flashMessageElement(el, query) {
+    if (!el) return;
+    clearMessageTextHighlights();
+    el.classList.add('syllentras-msg-flash');
+    if (query) {
+        highlightTextNodeMatches(el, query);
+    }
+    messageFlashTimer = setTimeout(function () {
+        el.classList.remove('syllentras-msg-flash');
+        messageFlashTimer = null;
+    }, 2400);
+    messageMarkFadeTimer = setTimeout(function () {
+        Array.from(el.querySelectorAll('mark.syllentras-search-mark')).forEach(function (mark) {
+            mark.classList.add('is-fading');
+        });
+        setTimeout(function () {
+            Array.from(el.querySelectorAll('mark.syllentras-search-mark')).forEach(function (mark) {
+                var parent = mark.parentNode;
+                if (!parent) return;
+                parent.replaceChild(document.createTextNode(mark.textContent), mark);
+                parent.normalize();
+            });
+            messageMarkFadeTimer = null;
+        }, 900);
+    }, 1800);
+}
+
+function scrollMessageIntoView(el) {
+    if (!el || !msgs) return;
+    // Scroll the messages pane itself. scrollIntoView can move the wrong
+    // parent in this layout and leave you stuck where you already were.
+    var containerTop = msgs.getBoundingClientRect().top;
+    var elTop = el.getBoundingClientRect().top;
+    var delta = elTop - containerTop - (msgs.clientHeight / 2 - el.offsetHeight / 2);
+    var nextTop = Math.max(0, msgs.scrollTop + delta);
+    if (typeof msgs.scrollTo === 'function') {
+        msgs.scrollTo({ top: nextTop, behavior: 'smooth' });
+    } else {
+        msgs.scrollTop = nextTop;
+    }
+}
+
+function focusMessageById(messageId, query) {
+    var el = findMessageElement(messageId);
+    if (!el) return Promise.resolve(null);
+    scrollMessageIntoView(el);
+    flashMessageElement(el, query);
+    return Promise.resolve(el);
+}
+
+// Shared jump used by Find (Ctrl/Cmd+F) and sidebar search hits.
+// If the match is older than the page we have loaded, keep pulling older
+// pages until it shows up (or we run out of history).
+function navigateToSearchMessage(messageId, query) {
+    if (!messageId) return Promise.resolve(null);
+    return ensureMessageVisible(messageId, query || '');
+}
+
+function ensureMessageVisible(messageId, query) {
+    var existing = findMessageElement(messageId);
+    if (existing) {
+        return focusMessageById(messageId, query);
+    }
+
+    function pullOlder() {
+        if (!hasMore) {
+            return Promise.resolve(null);
+        }
+        return loadOlderMessages().then(function (loaded) {
+            if (findMessageElement(messageId)) {
+                return focusMessageById(messageId, query);
+            }
+            if (!loaded) {
+                return null;
+            }
+            return pullOlder();
+        });
+    }
+
+    return pullOlder();
+}
+
 // ===== conversations.js =====
 // Part of the Syllentras chat widget.
 // Included inside the shared IIFE from before_footer.php — do not load standalone.
 
-function setActiveConversation(conversation) {
+function setActiveConversation(conversation, options) {
+    options = options || {};
     activeConversation = conversation;
     if (activeConversation && Array.isArray(conversation.topicSuggestions)) {
         activeConversation.topicSuggestions = conversation.topicSuggestions;
@@ -1475,14 +1834,18 @@ function setActiveConversation(conversation) {
     conversationId = conversation.id;
     activeTitle.textContent = displayConversationTitle(conversation);
     activeTag.textContent = displayConversationTag(conversation);
+    if (typeof closeMessageSearch === 'function') {
+        closeMessageSearch();
+    }
     clearMessages();
     hasMore = false;
     loadingHistory = false;
     updateActiveConversationButtons();
-    return loadCurrentHistory();
+    return loadCurrentHistory(options);
 }
 
-function loadCurrentHistory() {
+function loadCurrentHistory(options) {
+    options = options || {};
     if (!conversationId || loadingHistory) return Promise.resolve();
     loadingHistory = true;
 
@@ -1493,7 +1856,10 @@ function loadCurrentHistory() {
         if (page.messages && page.messages.length) {
             renderMessageBatch(page.messages, false);
             hasMore = !!page.hasMore;
-            scrollToBottom();
+            // Skip jumping to the bottom when a search hit is about to scroll us elsewhere.
+            if (!options.deferScroll) {
+                scrollToBottom();
+            }
         }
         return loadPendingActionForConversation().then(loadReviewOfferForConversation);
     })
@@ -1505,17 +1871,27 @@ function loadCurrentHistory() {
     });
 }
 
+var loadOlderMessagesInFlight = null;
+
 function loadOlderMessages() {
-    if (loadingOlder || !hasMore || !conversationId) return;
+    // Reuse the same request if scroll-up and find-in-chat both ask at once.
+    if (loadOlderMessagesInFlight) {
+        return loadOlderMessagesInFlight;
+    }
+    if (!hasMore || !conversationId) {
+        return Promise.resolve(false);
+    }
 
     var before = getOldestMessageCreatedAt();
-    if (!before) return;
+    if (!before) {
+        return Promise.resolve(false);
+    }
 
     loadingOlder = true;
     loadMore.hidden = false;
 
     var prevScrollHeight = msgs.scrollHeight;
-    fetchJson('/conversations/' + encodeURIComponent(conversationId)
+    loadOlderMessagesInFlight = fetchJson('/conversations/' + encodeURIComponent(conversationId)
         + '/messages?moodleUserId=' + encodeURIComponent(moodleUserId)
         + '&limit=' + PAGE_SIZE
         + '&before=' + encodeURIComponent(before))
@@ -1524,17 +1900,22 @@ function loadOlderMessages() {
             renderMessageBatch(page.messages, true);
             hasMore = !!page.hasMore;
             msgs.scrollTop = msgs.scrollHeight - prevScrollHeight;
-        } else {
-            hasMore = false;
+            return true;
         }
+        hasMore = false;
+        return false;
     })
     .catch(function () {
         hasMore = false;
+        return false;
     })
     .finally(function () {
         loadingOlder = false;
         loadMore.hidden = true;
+        loadOlderMessagesInFlight = null;
     });
+
+    return loadOlderMessagesInFlight;
 }
 
 function openConversation(options) {
@@ -1559,14 +1940,28 @@ function openConversation(options) {
     });
 }
 
-function openConversationById(id) {
+function openConversationById(id, options) {
+    options = options || {};
+    var focusMessageId = options.messageId || null;
+    var focusQuery = options.query || '';
     showPanel();
+
+    // Already on this chat? Just reuse the Find jump helper.
+    if (conversationId === id && focusMessageId) {
+        return navigateToSearchMessage(focusMessageId, focusQuery);
+    }
+
     return fetchJson('/conversations/' + encodeURIComponent(id)
         + '?moodleUserId=' + encodeURIComponent(moodleUserId))
     .then(function (conversation) {
-        return setActiveConversation(conversation);
+        return setActiveConversation(conversation, {
+            deferScroll: !!focusMessageId
+        });
     })
     .then(function () {
+        if (focusMessageId) {
+            return navigateToSearchMessage(focusMessageId, focusQuery);
+        }
         input.focus();
     });
 }
@@ -1620,12 +2015,12 @@ function renderConversationItem(conversation, matchedMessage) {
         item.appendChild(match);
     }
     item.addEventListener('click', function () {
-        openConversationById(conversation.id);
+        openConversationFromSearch(conversation, matchedMessage);
     });
     item.addEventListener('keydown', function (e) {
         if (e.key === 'Enter' || e.key === ' ') {
             e.preventDefault();
-            openConversationById(conversation.id);
+            openConversationFromSearch(conversation, matchedMessage);
         }
     });
     item.querySelector('.syllentras-conversation-menu-btn').addEventListener('click', function (e) {
@@ -1711,6 +2106,18 @@ function confirmNewConversation() {
         });
 }
 
+function openConversationFromSearch(conversation, matchedMessage) {
+    var query = (searchInput && searchInput.value ? searchInput.value : '').trim();
+    if (matchedMessage && matchedMessage.id) {
+        // Same navigateToSearchMessage path as the Find panel / Ctrl+F.
+        return openConversationById(conversation.id, {
+            messageId: matchedMessage.id,
+            query: query
+        });
+    }
+    return openConversationById(conversation.id);
+}
+
 function searchConversations(query) {
     if (!query.trim()) {
         loadConversations();
@@ -1761,6 +2168,8 @@ function sendMessage() {
     setGeneratingState(true);
     appendMessage('user', text);
     var loadingEl = appendMessage('assistant', '...');
+    var pendingAssistantId = loadingEl.dataset.messageId || nextLocalMessageId();
+    loadingEl.dataset.messageId = pendingAssistantId;
 
     var body = {
         courseId: courseId,
@@ -1789,6 +2198,15 @@ function sendMessage() {
         renderAssistantContent(loadingEl, data.response);
         applyModeChip(loadingEl, data.mode || body.mode);
         loadingEl.dataset.createdAt = new Date().toISOString();
+        upsertMessageSearchEntry({
+            id: pendingAssistantId,
+            role: 'assistant',
+            content: data.response,
+            createdAt: loadingEl.dataset.createdAt
+        });
+        if (messageSearchOpen && msgSearchInput && msgSearchInput.value.trim()) {
+            runMessageSearch(msgSearchInput.value);
+        }
         conversationId = data.conversationId || conversationId;
         if (Array.isArray(data.topicSuggestions)) {
             if (!activeConversation) activeConversation = { id: conversationId };
@@ -1826,6 +2244,213 @@ function updateConversation(id, changes) {
     });
 }
 
+
+// ===== message-search-ui.js =====
+// Part of the Syllentras chat widget.
+// Included inside the shared IIFE from before_footer.php — do not load standalone.
+//
+// Find-in-chat UI: the little search bar above the messages, result list, and
+// keyboard bits. Talks to message-search.js for matches and messages.js to jump.
+
+function isMessageSearchUiReady() {
+    return !!(msgSearchPanel && msgSearchInput && msgSearchResults);
+}
+
+function openMessageSearch() {
+    if (!isMessageSearchUiReady()) return;
+    messageSearchOpen = true;
+    msgSearchPanel.hidden = false;
+    if (msgSearchToggle) {
+        msgSearchToggle.setAttribute('aria-expanded', 'true');
+    }
+    msgSearchInput.focus();
+    msgSearchInput.select();
+    if (msgSearchInput.value.trim()) {
+        runMessageSearch(msgSearchInput.value);
+    } else {
+        renderMessageSearchResults([]);
+        updateMessageSearchCount();
+    }
+}
+
+function closeMessageSearch() {
+    if (!isMessageSearchUiReady()) return;
+    messageSearchOpen = false;
+    clearMessageSearchSchedule();
+    msgSearchPanel.hidden = true;
+    if (msgSearchToggle) {
+        msgSearchToggle.setAttribute('aria-expanded', 'false');
+    }
+    setMessageSearchResults([], '');
+    renderMessageSearchResults([]);
+    updateMessageSearchCount();
+    clearMessageTextHighlights();
+}
+
+function toggleMessageSearch() {
+    if (messageSearchOpen) {
+        closeMessageSearch();
+    } else {
+        openMessageSearch();
+    }
+}
+
+function updateMessageSearchCount() {
+    if (!msgSearchCount) return;
+    var total = messageSearchResults.length;
+    if (!messageSearchQuery) {
+        msgSearchCount.textContent = '';
+        return;
+    }
+    if (!total) {
+        msgSearchCount.textContent = '0 matches';
+        return;
+    }
+    msgSearchCount.textContent = (messageSearchActiveIndex + 1) + ' / ' + total;
+}
+
+function renderMessageSearchResults(results) {
+    if (!msgSearchResults) return;
+    msgSearchResults.innerHTML = '';
+    if (!results.length) {
+        if (messageSearchQuery) {
+            var empty = document.createElement('div');
+            empty.className = 'syllentras-msg-search-empty';
+            empty.textContent = 'No matches in this conversation';
+            msgSearchResults.appendChild(empty);
+        }
+        return;
+    }
+
+    results.forEach(function (result, index) {
+        var btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'syllentras-msg-search-result';
+        btn.setAttribute('role', 'option');
+        btn.setAttribute('aria-selected', index === messageSearchActiveIndex ? 'true' : 'false');
+        btn.dataset.resultIndex = String(index);
+        if (index === messageSearchActiveIndex) {
+            btn.classList.add('is-active');
+        }
+
+        var meta = document.createElement('span');
+        meta.className = 'syllentras-msg-search-result-meta';
+        meta.textContent = (result.role === 'assistant' ? 'Assistant' : 'You')
+            + (result.matchCount > 1 ? ' · ' + result.matchCount + ' matches' : '');
+
+        var preview = document.createElement('span');
+        preview.className = 'syllentras-msg-search-result-preview';
+        preview.innerHTML = result.previewHtml;
+
+        btn.appendChild(meta);
+        btn.appendChild(preview);
+        btn.addEventListener('click', function () {
+            messageSearchActiveIndex = index;
+            renderMessageSearchResults(messageSearchResults);
+            updateMessageSearchCount();
+            openMessageSearchResult(result);
+        });
+        msgSearchResults.appendChild(btn);
+    });
+
+    var active = msgSearchResults.querySelector('.syllentras-msg-search-result.is-active');
+    if (active && typeof active.scrollIntoView === 'function') {
+        active.scrollIntoView({ block: 'nearest' });
+    }
+}
+
+function runMessageSearch(rawQuery) {
+    scheduleMessageSearch(rawQuery, function (results) {
+        renderMessageSearchResults(results);
+        updateMessageSearchCount();
+    });
+}
+
+function openMessageSearchResult(result) {
+    if (!result) return Promise.resolve(null);
+    // Same jump path as sidebar search hits / keyboard Enter.
+    return navigateToSearchMessage(result.id, messageSearchQuery);
+}
+
+function openActiveMessageSearchResult() {
+    return openMessageSearchResult(getActiveMessageSearchResult());
+}
+
+function stepMessageSearch(delta) {
+    var result = moveMessageSearchSelection(delta);
+    renderMessageSearchResults(messageSearchResults);
+    updateMessageSearchCount();
+    if (result) {
+        openMessageSearchResult(result);
+    }
+}
+
+function onMessageSearchInput() {
+    runMessageSearch(msgSearchInput.value);
+}
+
+function onMessageSearchKeydown(e) {
+    if (!messageSearchOpen) return;
+
+    if (e.key === 'Escape') {
+        e.preventDefault();
+        closeMessageSearch();
+        if (input) input.focus();
+        return;
+    }
+    if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        stepMessageSearch(1);
+        return;
+    }
+    if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        stepMessageSearch(-1);
+        return;
+    }
+    if (e.key === 'Enter') {
+        e.preventDefault();
+        openActiveMessageSearchResult();
+    }
+}
+
+function bindMessageSearchUi() {
+    if (!isMessageSearchUiReady()) return;
+
+    if (msgSearchToggle) {
+        msgSearchToggle.addEventListener('click', function () {
+            toggleMessageSearch();
+        });
+    }
+    if (msgSearchClose) {
+        msgSearchClose.addEventListener('click', function () {
+            closeMessageSearch();
+            if (input) input.focus();
+        });
+    }
+    if (msgSearchPrev) {
+        msgSearchPrev.addEventListener('click', function () {
+            stepMessageSearch(-1);
+        });
+    }
+    if (msgSearchNext) {
+        msgSearchNext.addEventListener('click', function () {
+            stepMessageSearch(1);
+        });
+    }
+    msgSearchInput.addEventListener('input', onMessageSearchInput);
+    msgSearchInput.addEventListener('keydown', onMessageSearchKeydown);
+
+    // Ctrl/Cmd+F while the chat panel is open jumps to find-in-conversation.
+    document.addEventListener('keydown', function (e) {
+        if (!panel || panel.hidden) return;
+        var key = (e.key || '').toLowerCase();
+        if (key === 'f' && (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey) {
+            e.preventDefault();
+            openMessageSearch();
+        }
+    });
+}
 
 // ===== modals.js =====
 // Part of the Syllentras chat widget.
@@ -3550,6 +4175,7 @@ applyStoredSidebarWidth();
 applyStoredInputHeight();
 initToolsMenu();
 initModeSelector();
+bindMessageSearchUi();
 loadProviders();
 loadConversations();
 installSectionButtons();

@@ -239,6 +239,7 @@ applyStoredSidebarWidth();
 applyStoredInputHeight();
 initToolsMenu();
 initModeSelector();
+bindMessageSearchUi();
 loadProviders();
 loadConversations();
 installSectionButtons();
