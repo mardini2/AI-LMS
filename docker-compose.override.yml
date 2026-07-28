@@ -79,7 +79,7 @@ services:
       MISTRAL_MODEL: ${MISTRAL_MODEL:-}
       CORS_ORIGIN: ${CORS_ORIGIN}
       # Temporary: log second-turn chat pipeline as [GREETING_DEBUG]
-      CHAT_GREETING_DEBUG: "1"
+      CHAT_GREETING_DEBUG: "0"
     ports:
       - "${API_PORT:-3000}:3000"
       # Node.js inspector port — VS Code "Attach: NestJS API" connects here.
