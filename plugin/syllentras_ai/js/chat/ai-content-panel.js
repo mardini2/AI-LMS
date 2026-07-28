@@ -15,6 +15,7 @@ var aiContentItems = [];
 var aiContentSortKey = 'course';
 var aiContentSortDir = 'asc';
 var aiContentFilterKinds = {};
+var aiContentSearchQuery = '';
 var aiContentBulkMode = false;
 var aiContentSelected = {};
 var aiContentToolbarBound = false;
@@ -119,9 +120,16 @@ function selectedCmCount() {
 }
 
 function getVisibleAiContentItems() {
+    var needle = (aiContentSearchQuery || '').trim().toLowerCase();
     var filtered = aiContentItems.filter(function (item) {
-        if (selectedKindCount() === 0) return true;
-        return !!aiContentFilterKinds[item.kind];
+        if (selectedKindCount() > 0 && !aiContentFilterKinds[item.kind]) {
+            return false;
+        }
+        if (needle) {
+            var name = String(item.name || '').toLowerCase();
+            if (name.indexOf(needle) === -1) return false;
+        }
+        return true;
     });
 
     var dir = aiContentSortDir === 'desc' ? -1 : 1;
@@ -235,7 +243,13 @@ function renderAiContentList() {
 
     if (!visible.length) {
         aiContentEmptyEl.hidden = false;
-        aiContentEmptyEl.textContent = 'No items match the selected type filter.';
+        if ((aiContentSearchQuery || '').trim()) {
+            aiContentEmptyEl.textContent = 'No items match your search.';
+        } else if (selectedKindCount() > 0) {
+            aiContentEmptyEl.textContent = 'No items match the selected type filter.';
+        } else {
+            aiContentEmptyEl.textContent = 'No items match.';
+        }
         updateAiContentToolbarChrome();
         return;
     }
@@ -593,14 +607,39 @@ function deleteSelectedAiContentItems() {
     );
 }
 
+function resetAiContentListControls() {
+    aiContentSearchQuery = '';
+    aiContentSortKey = 'course';
+    aiContentSortDir = 'asc';
+    aiContentFilterKinds = {};
+    aiContentBulkMode = false;
+    aiContentSelected = {};
+    closeAiContentDropdowns();
+    closeAiContentMenu();
+
+    if (aiContentToolbar) {
+        var searchInput = aiContentToolbar.querySelector('#syllentras-ai-content-search');
+        if (searchInput) searchInput.value = '';
+        Array.from(aiContentToolbar.querySelectorAll('#syllentras-ai-filter-panel input[type="checkbox"]')).forEach(
+            function (box) {
+                box.checked = false;
+            }
+        );
+    }
+
+    renderAiContentList();
+}
+
 function bindAiContentToolbar() {
     if (!aiContentToolbar) return;
 
+    var searchInput = aiContentToolbar.querySelector('#syllentras-ai-content-search');
     var sortBtn = aiContentToolbar.querySelector('#syllentras-ai-sort-btn');
     var sortPanel = aiContentToolbar.querySelector('#syllentras-ai-sort-panel');
     var filterBtn = aiContentToolbar.querySelector('#syllentras-ai-filter-btn');
     var filterPanel = aiContentToolbar.querySelector('#syllentras-ai-filter-panel');
     var bulkToggle = aiContentToolbar.querySelector('#syllentras-ai-bulk-toggle');
+    var resetBtn = aiContentToolbar.querySelector('#syllentras-ai-content-reset');
     var selectAllBtn = aiContentToolbar.querySelector('#syllentras-ai-select-all');
     var deselectAllBtn = aiContentToolbar.querySelector('#syllentras-ai-deselect-all');
     var bulkDeleteBtn = aiContentToolbar.querySelector('#syllentras-ai-bulk-delete');
@@ -613,6 +652,27 @@ function bindAiContentToolbar() {
             panel.hidden = false;
             btn.setAttribute('aria-expanded', 'true');
         }
+    }
+
+    if (searchInput) {
+        searchInput.value = aiContentSearchQuery || '';
+        searchInput.addEventListener('input', function () {
+            aiContentSearchQuery = searchInput.value || '';
+            renderAiContentList();
+        });
+        searchInput.addEventListener('click', function (e) {
+            e.stopPropagation();
+        });
+        searchInput.addEventListener('keydown', function (e) {
+            e.stopPropagation();
+        });
+    }
+
+    if (resetBtn) {
+        resetBtn.addEventListener('click', function (e) {
+            e.stopPropagation();
+            resetAiContentListControls();
+        });
     }
 
     if (sortBtn && sortPanel) {

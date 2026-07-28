@@ -205,6 +205,14 @@ defined('MOODLE_INTERNAL') || die();
                 </div>
                 <div class="syllentras-ai-content-toolbar" id="syllentras-ai-content-toolbar" hidden>
                     <div class="syllentras-ai-content-toolbar-row">
+                        <input
+                            type="search"
+                            id="syllentras-ai-content-search"
+                            class="syllentras-ai-content-search"
+                            placeholder="Search titles…"
+                            aria-label="Search AI Content by title"
+                            autocomplete="off"
+                        />
                         <div class="syllentras-ai-content-dd" data-dd="sort">
                             <button type="button" class="syllentras-ai-content-dd-btn" id="syllentras-ai-sort-btn" aria-haspopup="listbox" aria-expanded="false">
                                 Sort: Course order <span class="syllentras-ai-content-sort-arrow" aria-hidden="true">↑</span>
@@ -232,6 +240,7 @@ defined('MOODLE_INTERNAL') || die();
                             </div>
                         </div>
                         <button type="button" class="syllentras-ai-content-bulk-toggle" id="syllentras-ai-bulk-toggle">Select</button>
+                        <button type="button" class="syllentras-ai-content-reset" id="syllentras-ai-content-reset" title="Reset search, sort, filters, and selection">Reset</button>
                     </div>
                     <div class="syllentras-ai-content-bulk-row" id="syllentras-ai-bulk-row" hidden>
                         <button type="button" class="syllentras-ai-content-bulk-btn" id="syllentras-ai-select-all">Select all</button>
