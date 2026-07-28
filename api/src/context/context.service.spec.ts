@@ -1881,30 +1881,6 @@ describe('ContextService sub-fetchers', () => {
     });
 
     it('returns posts tagged with discussionId on successful post fetches', async () => {
-      callMoodleApi.mockImplementation(async (wsfunction: string) => {
-        if (wsfunction === 'mod_forum_get_forum_discussions') {
-          return {
-            discussions: [
-              { id: 1, discussion: 100 },
-              { id: 2, discussion: 200 },
-            ],
-          };
-        }
-        if (wsfunction === 'mod_forum_get_discussion_posts') {
-          const discussionId = (
-            callMoodleApi.mock.calls.find(
-              (c) =>
-                c[0] === 'mod_forum_get_discussion_posts' &&
-                (c[1] as { discussionid: number }).discussionid !== undefined,
-            ) || []
-          );
-          // Use the params from the current call — mockImplementation receives them
-          return { posts: [] };
-        }
-        throw new Error(wsfunction);
-      });
-
-      // Clearer: branch on discussionid from args
       callMoodleApi.mockImplementation(
         async (wsfunction: string, params: Record<string, unknown>) => {
           if (wsfunction === 'mod_forum_get_forum_discussions') {
