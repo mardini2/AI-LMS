@@ -1,3 +1,9 @@
+jest.mock('node:http');
+jest.mock('node:https');
+
+import { EventEmitter } from 'node:events';
+import { request as httpRequest } from 'node:http';
+import { request as httpsRequest } from 'node:https';
 import { Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Cache } from 'cache-manager';
@@ -16,6 +22,83 @@ import {
   stripHtml,
 } from './context.service';
 
+const mockedHttpRequest = httpRequest as unknown as jest.Mock;
+const mockedHttpsRequest = httpsRequest as unknown as jest.Mock;
+
+type MockRequestOptions = {
+  hostname?: string;
+  port?: string | number;
+  path?: string;
+  method?: string;
+  headers?: Record<string, string>;
+};
+
+/**
+ * Simulates Node's http(s).request: calling .end() delivers a response
+ * (or emits 'error' on the request) on nextTick.
+ */
+function mockNodeRequestResponse(options: {
+  statusCode: number;
+  body: string | Buffer;
+  /** Split the body across multiple 'data' events to exercise chunk reassembly. */
+  chunked?: boolean;
+  /** Emit an error on the ClientRequest instead of delivering a response. */
+  requestError?: Error;
+  protocol?: 'http' | 'https';
+}): jest.Mock {
+  const requestFn =
+    options.protocol === 'https' ? mockedHttpsRequest : mockedHttpRequest;
+
+  requestFn.mockImplementation(
+    (
+      _opts: MockRequestOptions,
+      callback?: (res: EventEmitter & { statusCode: number }) => void,
+    ) => {
+      const req = new EventEmitter() as EventEmitter & {
+        end: () => void;
+      };
+
+      req.end = jest.fn(() => {
+        process.nextTick(() => {
+          if (options.requestError) {
+            req.emit('error', options.requestError);
+            return;
+          }
+
+          const res = new EventEmitter() as EventEmitter & {
+            statusCode: number;
+          };
+          res.statusCode = options.statusCode;
+          callback?.(res);
+
+          const buffer = Buffer.isBuffer(options.body)
+            ? options.body
+            : Buffer.from(options.body);
+
+          if (options.chunked && buffer.length > 1) {
+            const mid = Math.ceil(buffer.length / 2);
+            res.emit('data', buffer.subarray(0, mid));
+            res.emit('data', buffer.subarray(mid));
+          } else {
+            res.emit('data', buffer);
+          }
+          res.emit('end');
+        });
+      });
+
+      return req;
+    },
+  );
+
+  return requestFn;
+}
+
+function lastHttpRequestOptions(): MockRequestOptions {
+  const calls = mockedHttpRequest.mock.calls;
+  expect(calls.length).toBeGreaterThan(0);
+  return calls[calls.length - 1][0] as MockRequestOptions;
+}
+
 describe('ContextService', () => {
   let service: ContextService;
   let cache: { get: jest.Mock; set: jest.Mock };
@@ -24,6 +107,9 @@ describe('ContextService', () => {
   let getCourseDocuments: jest.SpyInstance;
 
   beforeEach(() => {
+    mockedHttpRequest.mockReset();
+    mockedHttpsRequest.mockReset();
+
     cache = {
       get: jest.fn(),
       set: jest.fn(),
@@ -556,5 +642,288 @@ describe('formatDocumentsForPrompt', () => {
 
     expect(blocks).toHaveLength(80);
     expect(result).not.toContain('type=doc_80');
+  });
+});
+
+describe('ContextService HTTP transport', () => {
+  let service: ContextService;
+  let cache: { get: jest.Mock; set: jest.Mock };
+  let config: { get: jest.Mock };
+
+  type TransportService = {
+    callMoodleApi: <T>(
+      wsfunction: string,
+      params: Record<string, unknown>,
+    ) => Promise<T>;
+    downloadMoodleFile: (url: string) => Promise<Buffer>;
+    normalizeMoodleFileUrl: (url: string) => URL;
+  };
+
+  function createService(
+    env: Record<string, string> = {
+      MOODLE_INTERNAL_URL: 'http://webserver',
+      MOODLE_TOKEN: 'test-token',
+      MOODLE_INTERNAL_HOST: 'localhost:8000',
+    },
+  ): ContextService {
+    cache = { get: jest.fn(), set: jest.fn() };
+    config = {
+      get: jest.fn((key: string) => env[key]),
+    };
+    return new ContextService(
+      config as unknown as ConfigService,
+      cache as unknown as Cache,
+    );
+  }
+
+  function transport(svc: ContextService = service): TransportService {
+    return svc as unknown as TransportService;
+  }
+
+  beforeEach(() => {
+    mockedHttpRequest.mockReset();
+    mockedHttpsRequest.mockReset();
+    service = createService();
+  });
+
+  describe('callMoodleApi (via resolveCourseName / private call)', () => {
+    it('throws on non-2xx status mentioning the status code', async () => {
+      mockNodeRequestResponse({ statusCode: 500, body: 'Internal Server Error' });
+      // Let the real callMoodleApi run so the HTTP layer is exercised.
+      cache.get.mockResolvedValue(undefined);
+
+      await expect(
+        transport().callMoodleApi('core_course_get_courses', {
+          options: { ids: [12] },
+        }),
+      ).rejects.toThrow(/Moodle API error: 500/);
+
+      // Public path catches and warns with that message
+      const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation();
+      mockNodeRequestResponse({ statusCode: 500, body: 'Internal Server Error' });
+      await expect(service.resolveCourseName(12)).resolves.toBeUndefined();
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining('Moodle API error: 500'),
+      );
+      warnSpy.mockRestore();
+    });
+
+    it('throws when the response body is not valid JSON', async () => {
+      mockNodeRequestResponse({ statusCode: 200, body: 'not-json{' });
+
+      await expect(
+        transport().callMoodleApi('core_course_get_courses', {
+          options: { ids: [12] },
+        }),
+      ).rejects.toThrow(/Moodle API returned non-JSON/);
+    });
+
+    it("throws using 'message' when JSON contains an exception field", async () => {
+      mockNodeRequestResponse({
+        statusCode: 200,
+        body: JSON.stringify({
+          exception: 'dml_exception',
+          message: 'Invalid course id',
+        }),
+      });
+
+      await expect(
+        transport().callMoodleApi('core_course_get_courses', {
+          options: { ids: [12] },
+        }),
+      ).rejects.toThrow(/Moodle API exception: Invalid course id/);
+    });
+
+    it("throws using 'exception' when message is absent", async () => {
+      mockNodeRequestResponse({
+        statusCode: 200,
+        body: JSON.stringify({ exception: 'access_exception' }),
+      });
+
+      await expect(
+        transport().callMoodleApi('core_course_get_courses', {
+          options: { ids: [12] },
+        }),
+      ).rejects.toThrow(/Moodle API exception: access_exception/);
+    });
+
+    it('serializes array parameters as key[0], key[1], etc.', async () => {
+      mockNodeRequestResponse({
+        statusCode: 200,
+        body: JSON.stringify([{ id: 1, fullname: 'A' }]),
+      });
+
+      await transport().callMoodleApi('core_enrol_get_users_courses', {
+        courseids: [10, 20],
+      });
+
+      const path = lastHttpRequestOptions().path ?? '';
+      expect(path).toContain('courseids%5B0%5D=10');
+      expect(path).toContain('courseids%5B1%5D=20');
+    });
+
+    it('serializes nested object parameters as key[nestedKey] recursively', async () => {
+      mockNodeRequestResponse({
+        statusCode: 200,
+        body: JSON.stringify([{ id: 12, fullname: 'Chem' }]),
+      });
+
+      // Same shape resolveCourseName uses
+      cache.get.mockResolvedValue(undefined);
+      await service.resolveCourseName(12);
+
+      // resolveCourseName spies are not active in this describe — real HTTP ran
+      const path = lastHttpRequestOptions().path ?? '';
+      expect(path).toContain('options%5Bids%5D%5B0%5D=12');
+      expect(path).toContain('wsfunction=core_course_get_courses');
+      expect(path).toContain('wstoken=test-token');
+    });
+
+    it("sends Host header matching MOODLE_INTERNAL_HOST when hostname is 'webserver'", async () => {
+      mockNodeRequestResponse({
+        statusCode: 200,
+        body: JSON.stringify([{ id: 12, fullname: 'Chem' }]),
+      });
+
+      await transport().callMoodleApi('core_course_get_courses', {
+        options: { ids: [12] },
+      });
+
+      expect(lastHttpRequestOptions().headers).toEqual({
+        Host: 'localhost:8000',
+      });
+      expect(lastHttpRequestOptions().hostname).toBe('webserver');
+    });
+
+    it('does not send a Host header override for non-webserver hostnames', async () => {
+      service = createService({
+        MOODLE_INTERNAL_URL: 'http://moodle.example.edu',
+        MOODLE_TOKEN: 'test-token',
+        MOODLE_INTERNAL_HOST: 'localhost:8000',
+      });
+
+      mockNodeRequestResponse({
+        statusCode: 200,
+        body: JSON.stringify([{ id: 12, fullname: 'Chem' }]),
+      });
+
+      await transport().callMoodleApi('core_course_get_courses', {
+        options: { ids: [12] },
+      });
+
+      expect(lastHttpRequestOptions().hostname).toBe('moodle.example.edu');
+      expect(lastHttpRequestOptions().headers).toBeUndefined();
+    });
+  });
+
+  describe('normalizeMoodleFileUrl', () => {
+    it("rewrites hostnames matching MOODLE_INTERNAL_HOST's host to MOODLE_INTERNAL_URL", () => {
+      const url = transport().normalizeMoodleFileUrl(
+        'http://localhost:8000/pluginfile.php/1/file.pdf',
+      );
+
+      expect(url.protocol).toBe('http:');
+      expect(url.hostname).toBe('webserver');
+      expect(url.port).toBe('');
+      expect(url.pathname).toBe('/pluginfile.php/1/file.pdf');
+    });
+
+    it("rewrites hostname 'localhost' to the internal Moodle URL", () => {
+      // Different port so we aren't also matching via MOODLE_INTERNAL_HOST
+      const url = transport().normalizeMoodleFileUrl(
+        'http://localhost:9/pluginfile.php/x',
+      );
+      expect(url.hostname).toBe('webserver');
+    });
+
+    it("rewrites hostname '127.0.0.1' to the internal Moodle URL", () => {
+      const url = transport().normalizeMoodleFileUrl(
+        'http://127.0.0.1:8000/pluginfile.php/x',
+      );
+      expect(url.hostname).toBe('webserver');
+    });
+
+    it('leaves an unrelated hostname unchanged', () => {
+      const url = transport().normalizeMoodleFileUrl(
+        'https://cdn.example.com/files/doc.pdf?forcedownload=1',
+      );
+      expect(url.hostname).toBe('cdn.example.com');
+      expect(url.protocol).toBe('https:');
+    });
+
+    it('appends token when missing', () => {
+      const url = transport().normalizeMoodleFileUrl(
+        'https://cdn.example.com/files/doc.pdf',
+      );
+      expect(url.searchParams.get('token')).toBe('test-token');
+    });
+
+    it('does not overwrite an existing token query param', () => {
+      const url = transport().normalizeMoodleFileUrl(
+        'https://cdn.example.com/files/doc.pdf?token=already-set',
+      );
+      expect(url.searchParams.get('token')).toBe('already-set');
+    });
+  });
+
+  describe('downloadMoodleFile', () => {
+    it("throws on non-2xx mentioning 'Moodle file download failed'", async () => {
+      mockNodeRequestResponse({ statusCode: 403, body: 'Forbidden' });
+
+      await expect(
+        transport().downloadMoodleFile(
+          'http://webserver/pluginfile.php/1/file.pdf',
+        ),
+      ).rejects.toThrow(/Moodle file download failed: 403/);
+    });
+
+    it("throws on JSON Moodle error mentioning 'Moodle file access error'", async () => {
+      mockNodeRequestResponse({
+        statusCode: 200,
+        body: JSON.stringify({ error: 'No permission to access file' }),
+      });
+
+      await expect(
+        transport().downloadMoodleFile(
+          'http://webserver/pluginfile.php/1/file.pdf',
+        ),
+      ).rejects.toThrow(
+        /Moodle file access error: No permission to access file/,
+      );
+    });
+
+    it('returns the raw Buffer for a successful binary (non-JSON) response', async () => {
+      const pdfBytes = Buffer.from('%PDF-1.7 binary-content-here');
+      mockNodeRequestResponse({
+        statusCode: 200,
+        body: pdfBytes,
+        chunked: true,
+      });
+
+      const result = await transport().downloadMoodleFile(
+        'http://webserver/pluginfile.php/1/lecture.pdf',
+      );
+
+      expect(Buffer.isBuffer(result)).toBe(true);
+      expect(result.equals(pdfBytes)).toBe(true);
+      // Rewritten to webserver → Host header applied
+      expect(lastHttpRequestOptions().headers).toEqual({
+        Host: 'localhost:8000',
+      });
+    });
+
+    it('propagates request-level network errors', async () => {
+      mockNodeRequestResponse({
+        statusCode: 200,
+        body: '',
+        requestError: new Error('ECONNREFUSED'),
+      });
+
+      await expect(
+        transport().downloadMoodleFile(
+          'http://webserver/pluginfile.php/1/file.pdf',
+        ),
+      ).rejects.toThrow('ECONNREFUSED');
+    });
   });
 });
