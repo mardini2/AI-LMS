@@ -1,9 +1,13 @@
 jest.mock('node:http');
 jest.mock('node:https');
+jest.mock('pdf-parse', () => ({
+  PDFParse: jest.fn(),
+}));
 
 import { EventEmitter } from 'node:events';
 import { request as httpRequest } from 'node:http';
 import { request as httpsRequest } from 'node:https';
+import { PDFParse } from 'pdf-parse';
 import { Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Cache } from 'cache-manager';
@@ -21,6 +25,8 @@ import {
   relevanceScore,
   stripHtml,
 } from './context.service';
+
+const MockedPDFParse = PDFParse as unknown as jest.Mock;
 
 const mockedHttpRequest = httpRequest as unknown as jest.Mock;
 const mockedHttpsRequest = httpsRequest as unknown as jest.Mock;
@@ -924,6 +930,1093 @@ describe('ContextService HTTP transport', () => {
           'http://webserver/pluginfile.php/1/file.pdf',
         ),
       ).rejects.toThrow('ECONNREFUSED');
+    });
+  });
+});
+
+describe('ContextService.fetchFileDocument', () => {
+  let service: ContextService;
+  let downloadMoodleFile: jest.SpyInstance;
+
+  const moduleBase = {
+    courseId: 12,
+    courseName: 'Chemistry',
+    sectionName: 'Week 1',
+    sectionNumber: 1,
+    moduleId: 5,
+    moduleName: 'Lecture Slides',
+    source: 'http://webserver/mod/resource/view.php?id=5',
+    lastUpdated: 1_700_000_000,
+  };
+
+  type FetchFileDocumentFn = (
+    moduleBase: Omit<CourseContextDocument, 'contentType' | 'text'>,
+    content: {
+      type: string;
+      filename?: string;
+      mimetype?: string;
+      fileurl?: string;
+      timemodified?: number;
+    },
+    modname: string,
+  ) => Promise<CourseContextDocument | null>;
+
+  function fetchFileDocument(
+    ...args: Parameters<FetchFileDocumentFn>
+  ): ReturnType<FetchFileDocumentFn> {
+    return (
+      service as unknown as { fetchFileDocument: FetchFileDocumentFn }
+    ).fetchFileDocument(...args);
+  }
+
+  beforeEach(() => {
+    MockedPDFParse.mockReset();
+
+    const cache = { get: jest.fn(), set: jest.fn() };
+    const config = {
+      get: jest.fn((key: string) => {
+        const values: Record<string, string> = {
+          MOODLE_INTERNAL_URL: 'http://webserver',
+          MOODLE_TOKEN: 'test-token',
+          MOODLE_INTERNAL_HOST: 'localhost:8000',
+        };
+        return values[key];
+      }),
+    };
+
+    service = new ContextService(
+      config as unknown as ConfigService,
+      cache as unknown as Cache,
+    );
+
+    downloadMoodleFile = jest.spyOn(
+      service as unknown as {
+        downloadMoodleFile: (url: string) => Promise<Buffer>;
+      },
+      'downloadMoodleFile',
+    );
+
+    jest.spyOn(Logger.prototype, 'warn').mockImplementation();
+  });
+
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  it('returns a resource_pdf document when PDF download and parse succeed', async () => {
+    downloadMoodleFile.mockResolvedValue(Buffer.from('%PDF-1.7 fake'));
+    const getText = jest.fn().mockResolvedValue({ text: 'Extracted PDF content' });
+    const destroy = jest.fn();
+    MockedPDFParse.mockImplementation(() => ({ getText, destroy }));
+
+    const doc = await fetchFileDocument(
+      moduleBase,
+      {
+        type: 'file',
+        filename: 'notes.pdf',
+        mimetype: 'application/pdf',
+        fileurl: 'http://webserver/pluginfile.php/1/notes.pdf',
+        timemodified: 1_700_001_000,
+      },
+      'resource',
+    );
+
+    expect(downloadMoodleFile).toHaveBeenCalledWith(
+      'http://webserver/pluginfile.php/1/notes.pdf',
+    );
+    expect(MockedPDFParse).toHaveBeenCalledWith({
+      data: Buffer.from('%PDF-1.7 fake'),
+    });
+    expect(getText).toHaveBeenCalled();
+    expect(destroy).toHaveBeenCalled();
+    expect(doc).toEqual(
+      expect.objectContaining({
+        courseId: 12,
+        courseName: 'Chemistry',
+        sectionName: 'Week 1',
+        moduleName: 'Lecture Slides',
+        fileName: 'notes.pdf',
+        source: 'http://webserver/pluginfile.php/1/notes.pdf',
+        contentType: 'resource_pdf',
+        text: 'Extracted PDF content',
+        lastUpdated: 1_700_001_000,
+      }),
+    );
+    expect(doc?.lastUpdated).not.toBe(moduleBase.lastUpdated);
+  });
+
+  it('returns null when a claimed PDF buffer fails looksLikePdf', async () => {
+    downloadMoodleFile.mockResolvedValue(Buffer.from('{"error":"not a pdf"}'));
+
+    const doc = await fetchFileDocument(
+      moduleBase,
+      {
+        type: 'file',
+        filename: 'notes.pdf',
+        mimetype: 'application/pdf',
+        fileurl: 'http://webserver/pluginfile.php/1/notes.pdf',
+      },
+      'resource',
+    );
+
+    expect(doc).toBeNull();
+    expect(MockedPDFParse).not.toHaveBeenCalled();
+  });
+
+  it('returns null when PDFParse extracts empty/whitespace-only text', async () => {
+    downloadMoodleFile.mockResolvedValue(Buffer.from('%PDF-1.7 empty'));
+    MockedPDFParse.mockImplementation(() => ({
+      getText: jest.fn().mockResolvedValue({ text: '   \n\t  ' }),
+      destroy: jest.fn(),
+    }));
+
+    const doc = await fetchFileDocument(
+      moduleBase,
+      {
+        type: 'file',
+        filename: 'notes.pdf',
+        mimetype: 'application/pdf',
+        fileurl: 'http://webserver/pluginfile.php/1/notes.pdf',
+      },
+      'resource',
+    );
+
+    expect(doc).toBeNull();
+  });
+
+  it('returns null when downloadMoodleFile throws for a PDF', async () => {
+    downloadMoodleFile.mockRejectedValue(new Error('ECONNREFUSED'));
+
+    const doc = await fetchFileDocument(
+      moduleBase,
+      {
+        type: 'file',
+        filename: 'notes.pdf',
+        mimetype: 'application/pdf',
+        fileurl: 'http://webserver/pluginfile.php/1/notes.pdf',
+      },
+      'resource',
+    );
+
+    expect(doc).toBeNull();
+  });
+
+  it('returns a resource_file document for text/plain content', async () => {
+    downloadMoodleFile.mockResolvedValue(
+      Buffer.from('Hello from the readme', 'utf8'),
+    );
+
+    const doc = await fetchFileDocument(
+      moduleBase,
+      {
+        type: 'file',
+        filename: 'readme.txt',
+        mimetype: 'text/plain',
+        fileurl: 'http://webserver/pluginfile.php/1/readme.txt',
+        timemodified: 1_700_002_000,
+      },
+      'resource',
+    );
+
+    expect(downloadMoodleFile).toHaveBeenCalledWith(
+      'http://webserver/pluginfile.php/1/readme.txt',
+    );
+    expect(doc).toEqual(
+      expect.objectContaining({
+        contentType: 'resource_file',
+        text: 'Hello from the readme',
+        fileName: 'readme.txt',
+        lastUpdated: 1_700_002_000,
+      }),
+    );
+  });
+
+  it('treats application/json the same as text (resource_file)', async () => {
+    downloadMoodleFile.mockResolvedValue(
+      Buffer.from('{"topic":"bonding"}', 'utf8'),
+    );
+
+    const doc = await fetchFileDocument(
+      moduleBase,
+      {
+        type: 'file',
+        filename: 'data.json',
+        mimetype: 'application/json',
+        fileurl: 'http://webserver/pluginfile.php/1/data.json',
+      },
+      'resource',
+    );
+
+    expect(downloadMoodleFile).toHaveBeenCalled();
+    expect(doc).toEqual(
+      expect.objectContaining({
+        contentType: 'resource_file',
+        text: '{"topic":"bonding"}',
+        fileName: 'data.json',
+      }),
+    );
+  });
+
+  it('returns file_metadata for unrecognized binary without downloading', async () => {
+    const doc = await fetchFileDocument(
+      moduleBase,
+      {
+        type: 'file',
+        filename: 'diagram.png',
+        mimetype: 'image/png',
+        fileurl: 'http://webserver/pluginfile.php/1/diagram.png',
+      },
+      'resource',
+    );
+
+    expect(downloadMoodleFile).not.toHaveBeenCalled();
+    expect(doc).toEqual(
+      expect.objectContaining({
+        contentType: 'resource_file_metadata',
+        text: 'diagram.png image/png',
+        fileName: 'diagram.png',
+        source: 'http://webserver/pluginfile.php/1/diagram.png',
+      }),
+    );
+  });
+
+  it('falls back to file_metadata (not null) when a non-PDF download throws', async () => {
+    downloadMoodleFile.mockRejectedValue(new Error('network down'));
+
+    const doc = await fetchFileDocument(
+      moduleBase,
+      {
+        type: 'file',
+        filename: 'readme.txt',
+        mimetype: 'text/plain',
+        fileurl: 'http://webserver/pluginfile.php/1/readme.txt',
+      },
+      'resource',
+    );
+
+    expect(doc).toEqual(
+      expect.objectContaining({
+        contentType: 'resource_file_metadata',
+        text: 'readme.txt text/plain',
+        fileName: 'readme.txt',
+      }),
+    );
+    expect(doc).not.toBeNull();
+  });
+});
+
+describe('ContextService.fetchCourseDocuments', () => {
+  let service: ContextService;
+  let callMoodleApi: jest.SpyInstance;
+  let fetchPages: jest.SpyInstance;
+  let fetchAssignments: jest.SpyInstance;
+  let fetchForums: jest.SpyInstance;
+  let fetchFileDocument: jest.SpyInstance;
+  let fetchForumPosts: jest.SpyInstance;
+
+  const COURSE_ID = 12;
+
+  type FetchCourseDocumentsFn = (
+    courseId: number,
+  ) => Promise<CourseContextDocument[]>;
+
+  function fetchCourseDocuments(
+    courseId = COURSE_ID,
+  ): Promise<CourseContextDocument[]> {
+    return (
+      service as unknown as { fetchCourseDocuments: FetchCourseDocumentsFn }
+    ).fetchCourseDocuments(courseId);
+  }
+
+  function mockCourseAndSections(options: {
+    course?: {
+      id: number;
+      fullname: string;
+      summary?: string;
+      timemodified?: number;
+    } | null;
+    sections?: unknown[];
+  }) {
+    callMoodleApi.mockImplementation(async (wsfunction: string) => {
+      if (wsfunction === 'core_course_get_courses') {
+        return options.course ? [options.course] : [];
+      }
+      if (wsfunction === 'core_course_get_contents') {
+        return options.sections ?? [];
+      }
+      throw new Error(`Unexpected callMoodleApi wsfunction: ${wsfunction}`);
+    });
+  }
+
+  beforeEach(() => {
+    const cache = { get: jest.fn(), set: jest.fn() };
+    const config = {
+      get: jest.fn((key: string) => {
+        const values: Record<string, string> = {
+          MOODLE_INTERNAL_URL: 'http://webserver',
+          MOODLE_TOKEN: 'test-token',
+          MOODLE_INTERNAL_HOST: 'localhost:8000',
+        };
+        return values[key];
+      }),
+    };
+
+    service = new ContextService(
+      config as unknown as ConfigService,
+      cache as unknown as Cache,
+    );
+
+    callMoodleApi = jest.spyOn(
+      service as unknown as {
+        callMoodleApi: (...args: unknown[]) => Promise<unknown>;
+      },
+      'callMoodleApi',
+    );
+    fetchPages = jest
+      .spyOn(
+        service as unknown as { fetchPages: (id: number) => Promise<unknown[]> },
+        'fetchPages',
+      )
+      .mockResolvedValue([]);
+    fetchAssignments = jest
+      .spyOn(
+        service as unknown as {
+          fetchAssignments: (id: number) => Promise<unknown[]>;
+        },
+        'fetchAssignments',
+      )
+      .mockResolvedValue([]);
+    fetchForums = jest
+      .spyOn(
+        service as unknown as {
+          fetchForums: (id: number) => Promise<unknown[]>;
+        },
+        'fetchForums',
+      )
+      .mockResolvedValue([]);
+    fetchFileDocument = jest.spyOn(
+      service as unknown as {
+        fetchFileDocument: (...args: unknown[]) => Promise<unknown>;
+      },
+      'fetchFileDocument',
+    );
+    fetchForumPosts = jest
+      .spyOn(
+        service as unknown as {
+          fetchForumPosts: (forum: unknown) => Promise<unknown[]>;
+        },
+        'fetchForumPosts',
+      )
+      .mockResolvedValue([]);
+
+    jest.spyOn(Logger.prototype, 'warn').mockImplementation();
+  });
+
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  it('includes a course_summary document when the course has a summary', async () => {
+    mockCourseAndSections({
+      course: {
+        id: COURSE_ID,
+        fullname: 'Organic Chemistry',
+        summary: '<p>Welcome to <b>chem</b></p>',
+        timemodified: 1_700_000_000,
+      },
+      sections: [],
+    });
+
+    const docs = await fetchCourseDocuments();
+
+    expect(docs).toContainEqual(
+      expect.objectContaining({
+        courseId: COURSE_ID,
+        courseName: 'Organic Chemistry',
+        contentType: 'course_summary',
+        source: `course:${COURSE_ID}`,
+        lastUpdated: 1_700_000_000,
+        text: 'Welcome to chem',
+      }),
+    );
+  });
+
+  it('omits course_summary when summary is absent or empty', async () => {
+    mockCourseAndSections({
+      course: {
+        id: COURSE_ID,
+        fullname: 'Organic Chemistry',
+        summary: '',
+      },
+      sections: [],
+    });
+    expect(
+      (await fetchCourseDocuments()).find((d) => d.contentType === 'course_summary'),
+    ).toBeUndefined();
+
+    mockCourseAndSections({
+      course: { id: COURSE_ID, fullname: 'Organic Chemistry' },
+      sections: [],
+    });
+    expect(
+      (await fetchCourseDocuments()).find((d) => d.contentType === 'course_summary'),
+    ).toBeUndefined();
+  });
+
+  it('includes section_summary only when the section has a non-empty summary', async () => {
+    mockCourseAndSections({
+      course: { id: COURSE_ID, fullname: 'Chem' },
+      sections: [
+        {
+          id: 100,
+          section: 1,
+          name: 'Week 1',
+          summary: '<p>Week overview</p>',
+          timemodified: 1_700_000_100,
+          modules: [],
+        },
+        {
+          id: 101,
+          section: 2,
+          name: 'Week 2',
+          summary: '   ',
+          modules: [],
+        },
+      ],
+    });
+
+    const docs = await fetchCourseDocuments();
+    const sectionSummaries = docs.filter((d) => d.contentType === 'section_summary');
+
+    expect(sectionSummaries).toHaveLength(1);
+    expect(sectionSummaries[0]).toEqual(
+      expect.objectContaining({
+        contentType: 'section_summary',
+        sectionId: 100,
+        sectionNumber: 1,
+        sectionName: 'Week 1',
+        text: 'Week overview',
+        source: 'section:100',
+        lastUpdated: 1_700_000_100,
+      }),
+    );
+  });
+
+  it("produces a '{modname}_description' document from module.description", async () => {
+    mockCourseAndSections({
+      course: { id: COURSE_ID, fullname: 'Chem' },
+      sections: [
+        {
+          id: 100,
+          section: 1,
+          name: 'Week 1',
+          modules: [
+            {
+              id: 50,
+              name: 'Lab Guide',
+              modname: 'resource',
+              url: 'http://webserver/mod/resource/view.php?id=50',
+              description: '<p>Read before lab</p>',
+            },
+          ],
+        },
+      ],
+    });
+
+    const docs = await fetchCourseDocuments();
+    expect(docs).toContainEqual(
+      expect.objectContaining({
+        contentType: 'resource_description',
+        moduleId: 50,
+        moduleName: 'Lab Guide',
+        text: 'Read before lab',
+      }),
+    );
+  });
+
+  it("produces a '{modname}_inline_content' document for type 'content' items", async () => {
+    mockCourseAndSections({
+      course: { id: COURSE_ID, fullname: 'Chem' },
+      sections: [
+        {
+          id: 100,
+          section: 1,
+          name: 'Week 1',
+          modules: [
+            {
+              id: 51,
+              name: 'Label',
+              modname: 'label',
+              contents: [
+                {
+                  type: 'content',
+                  content: '<p>Inline label text</p>',
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+
+    const docs = await fetchCourseDocuments();
+    expect(docs).toContainEqual(
+      expect.objectContaining({
+        contentType: 'label_inline_content',
+        text: 'Inline label text',
+      }),
+    );
+  });
+
+  it('includes fetchFileDocument results for file contents and skips nulls', async () => {
+    const fileDoc: CourseContextDocument = {
+      courseId: COURSE_ID,
+      contentType: 'resource_pdf',
+      fileName: 'notes.pdf',
+      text: 'PDF text',
+    };
+    fetchFileDocument
+      .mockResolvedValueOnce(fileDoc)
+      .mockResolvedValueOnce(null);
+
+    mockCourseAndSections({
+      course: { id: COURSE_ID, fullname: 'Chem' },
+      sections: [
+        {
+          id: 100,
+          section: 1,
+          name: 'Week 1',
+          modules: [
+            {
+              id: 52,
+              name: 'Slides',
+              modname: 'resource',
+              contents: [
+                {
+                  type: 'file',
+                  filename: 'notes.pdf',
+                  fileurl: 'http://webserver/pluginfile.php/1/notes.pdf',
+                  mimetype: 'application/pdf',
+                },
+                {
+                  type: 'file',
+                  filename: 'broken.pdf',
+                  fileurl: 'http://webserver/pluginfile.php/1/broken.pdf',
+                  mimetype: 'application/pdf',
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+
+    const docs = await fetchCourseDocuments();
+
+    expect(fetchFileDocument).toHaveBeenCalledTimes(2);
+    expect(docs).toContainEqual(fileDoc);
+    expect(docs.filter((d) => d.fileName === 'broken.pdf')).toHaveLength(0);
+  });
+
+  it("cross-references pages by coursemodule for modname 'page'", async () => {
+    fetchPages.mockResolvedValue([
+      {
+        coursemodule: 60,
+        content: '<p>Page body</p>',
+        timemodified: 1_700_000_200,
+      },
+      {
+        coursemodule: 999,
+        content: '<p>Other page</p>',
+        timemodified: 1_700_000_201,
+      },
+    ]);
+
+    mockCourseAndSections({
+      course: { id: COURSE_ID, fullname: 'Chem' },
+      sections: [
+        {
+          id: 100,
+          section: 1,
+          name: 'Week 1',
+          modules: [
+            { id: 60, name: 'Syllabus', modname: 'page' },
+            { id: 61, name: 'No match', modname: 'page' },
+          ],
+        },
+      ],
+    });
+
+    const docs = await fetchCourseDocuments();
+    const pageDocs = docs.filter((d) => d.contentType === 'page');
+
+    expect(pageDocs).toHaveLength(1);
+    expect(pageDocs[0]).toEqual(
+      expect.objectContaining({
+        contentType: 'page',
+        moduleId: 60,
+        moduleName: 'Syllabus',
+        text: 'Page body',
+        lastUpdated: 1_700_000_200,
+      }),
+    );
+  });
+
+  it("cross-references assignments by cmid for modname 'assign'", async () => {
+    fetchAssignments.mockResolvedValue([
+      {
+        cmid: 70,
+        name: 'Homework 1',
+        intro: '<p>Submit by Friday</p>',
+        timemodified: 1_700_000_300,
+      },
+    ]);
+
+    mockCourseAndSections({
+      course: { id: COURSE_ID, fullname: 'Chem' },
+      sections: [
+        {
+          id: 100,
+          section: 1,
+          name: 'Week 1',
+          modules: [
+            { id: 70, name: 'Homework 1', modname: 'assign' },
+            { id: 71, name: 'No intro match', modname: 'assign' },
+          ],
+        },
+      ],
+    });
+
+    const docs = await fetchCourseDocuments();
+    const assignDocs = docs.filter((d) => d.contentType === 'assignment');
+
+    expect(assignDocs).toHaveLength(1);
+    expect(assignDocs[0]).toEqual(
+      expect.objectContaining({
+        contentType: 'assignment',
+        moduleId: 70,
+        text: 'Submit by Friday',
+        lastUpdated: 1_700_000_300,
+      }),
+    );
+  });
+
+  it("produces forum/announcement docs and posts from forums + fetchForumPosts", async () => {
+    fetchForums.mockResolvedValue([
+      {
+        id: 8,
+        cmid: 80,
+        name: 'Course forum',
+        type: 'general',
+        intro: '<p>Ask questions</p>',
+        timemodified: 1_700_000_400,
+      },
+      {
+        id: 9,
+        cmid: 81,
+        name: 'Announcements',
+        type: 'news',
+        intro: '<p>News only</p>',
+        timemodified: 1_700_000_401,
+      },
+    ]);
+    fetchForumPosts
+      .mockResolvedValueOnce([
+        {
+          id: 501,
+          discussionId: 401,
+          subject: 'Help',
+          message: '<p>How do I submit?</p>',
+          modified: 1_700_000_450,
+        },
+      ])
+      .mockResolvedValueOnce([
+        {
+          id: 502,
+          discussionId: 402,
+          subject: 'Welcome',
+          message: '<p>Hello class</p>',
+          created: 1_700_000_460,
+        },
+      ]);
+
+    mockCourseAndSections({
+      course: { id: COURSE_ID, fullname: 'Chem' },
+      sections: [
+        {
+          id: 100,
+          section: 1,
+          name: 'Week 1',
+          modules: [
+            { id: 80, name: 'Course forum', modname: 'forum' },
+            { id: 81, name: 'Announcements', modname: 'forum' },
+          ],
+        },
+      ],
+    });
+
+    const docs = await fetchCourseDocuments();
+
+    expect(docs).toContainEqual(
+      expect.objectContaining({
+        contentType: 'forum',
+        text: 'Ask questions',
+        moduleId: 80,
+      }),
+    );
+    expect(docs).toContainEqual(
+      expect.objectContaining({
+        contentType: 'announcement_forum',
+        text: 'News only',
+        moduleId: 81,
+      }),
+    );
+    expect(docs).toContainEqual(
+      expect.objectContaining({
+        contentType: 'forum_post',
+        source: 'forum:8:discussion:401:post:501',
+        text: expect.stringContaining('How do I submit?'),
+      }),
+    );
+    expect(docs).toContainEqual(
+      expect.objectContaining({
+        contentType: 'announcement_post',
+        source: 'forum:9:discussion:402:post:502',
+        text: expect.stringContaining('Hello class'),
+      }),
+    );
+    expect(fetchForumPosts).toHaveBeenCalledTimes(2);
+  });
+
+  it('filters out documents whose text is only whitespace', async () => {
+    mockCourseAndSections({
+      course: {
+        id: COURSE_ID,
+        fullname: 'Chem',
+        summary: '   \n\t  ',
+        timemodified: 1_700_000_000,
+      },
+      sections: [],
+    });
+
+    const docs = await fetchCourseDocuments();
+    expect(docs.find((d) => d.contentType === 'course_summary')).toBeUndefined();
+    expect(docs.every((d) => d.text.trim().length > 0)).toBe(true);
+  });
+
+  it('runs course, sections, pages, assignments, and forums fetches via Promise.all', async () => {
+    mockCourseAndSections({
+      course: { id: COURSE_ID, fullname: 'Chem' },
+      sections: [],
+    });
+
+    await fetchCourseDocuments();
+
+    expect(callMoodleApi).toHaveBeenCalledWith('core_course_get_courses', {
+      options: { ids: [COURSE_ID] },
+    });
+    expect(callMoodleApi).toHaveBeenCalledWith('core_course_get_contents', {
+      courseid: COURSE_ID,
+    });
+    expect(fetchPages).toHaveBeenCalledWith(COURSE_ID);
+    expect(fetchAssignments).toHaveBeenCalledWith(COURSE_ID);
+    expect(fetchForums).toHaveBeenCalledWith(COURSE_ID);
+  });
+});
+
+describe('ContextService sub-fetchers', () => {
+  let service: ContextService;
+  let callMoodleApi: jest.SpyInstance;
+  let warnSpy: jest.SpyInstance;
+
+  beforeEach(() => {
+    const cache = { get: jest.fn(), set: jest.fn() };
+    const config = {
+      get: jest.fn((key: string) => {
+        const values: Record<string, string> = {
+          MOODLE_INTERNAL_URL: 'http://webserver',
+          MOODLE_TOKEN: 'test-token',
+          MOODLE_INTERNAL_HOST: 'localhost:8000',
+        };
+        return values[key];
+      }),
+    };
+
+    service = new ContextService(
+      config as unknown as ConfigService,
+      cache as unknown as Cache,
+    );
+
+    callMoodleApi = jest.spyOn(
+      service as unknown as {
+        callMoodleApi: (...args: unknown[]) => Promise<unknown>;
+      },
+      'callMoodleApi',
+    );
+    warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation();
+  });
+
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  describe('fetchPages', () => {
+    const fetchPages = (courseId: number) =>
+      (
+        service as unknown as {
+          fetchPages: (id: number) => Promise<unknown[]>;
+        }
+      ).fetchPages(courseId);
+
+    it("returns the 'pages' array from a successful response", async () => {
+      const pages = [
+        { coursemodule: 1, content: 'A' },
+        { coursemodule: 2, content: 'B' },
+      ];
+      callMoodleApi.mockResolvedValue({ pages });
+
+      await expect(fetchPages(12)).resolves.toEqual(pages);
+      expect(callMoodleApi).toHaveBeenCalledWith(
+        'mod_page_get_pages_by_courses',
+        { courseids: [12] },
+      );
+    });
+
+    it('returns [] and logs a warning on failure', async () => {
+      callMoodleApi.mockRejectedValue(new Error('pages down'));
+
+      await expect(fetchPages(12)).resolves.toEqual([]);
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining('Failed to fetch pages'),
+      );
+    });
+  });
+
+  describe('fetchAssignments', () => {
+    const fetchAssignments = (courseId: number) =>
+      (
+        service as unknown as {
+          fetchAssignments: (id: number) => Promise<unknown[]>;
+        }
+      ).fetchAssignments(courseId);
+
+    it("flatMaps 'assignments' across all courses in the response", async () => {
+      callMoodleApi.mockResolvedValue({
+        courses: [
+          {
+            assignments: [
+              { cmid: 1, name: 'A1', intro: 'one' },
+              { cmid: 2, name: 'A2', intro: 'two' },
+            ],
+          },
+          {
+            assignments: [{ cmid: 3, name: 'A3', intro: 'three' }],
+          },
+          {},
+        ],
+      });
+
+      await expect(fetchAssignments(12)).resolves.toEqual([
+        { cmid: 1, name: 'A1', intro: 'one' },
+        { cmid: 2, name: 'A2', intro: 'two' },
+        { cmid: 3, name: 'A3', intro: 'three' },
+      ]);
+    });
+
+    it('returns [] and logs a warning on failure', async () => {
+      callMoodleApi.mockRejectedValue(new Error('assign down'));
+
+      await expect(fetchAssignments(12)).resolves.toEqual([]);
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining('Failed to fetch assignments'),
+      );
+    });
+  });
+
+  describe('fetchForums', () => {
+    const fetchForums = (courseId: number) =>
+      (
+        service as unknown as {
+          fetchForums: (id: number) => Promise<unknown[]>;
+        }
+      ).fetchForums(courseId);
+
+    it('returns the forums array directly', async () => {
+      const forums = [
+        { id: 1, cmid: 10, name: 'General' },
+        { id: 2, cmid: 11, name: 'News', type: 'news' },
+      ];
+      callMoodleApi.mockResolvedValue(forums);
+
+      await expect(fetchForums(12)).resolves.toEqual(forums);
+      expect(callMoodleApi).toHaveBeenCalledWith(
+        'mod_forum_get_forums_by_courses',
+        { courseids: [12] },
+      );
+    });
+
+    it('returns [] and logs a warning on failure', async () => {
+      callMoodleApi.mockRejectedValue(new Error('forums down'));
+
+      await expect(fetchForums(12)).resolves.toEqual([]);
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining('Failed to fetch forums'),
+      );
+    });
+  });
+
+  describe('fetchForumPosts', () => {
+    const fetchForumPosts = (forum: unknown) =>
+      (
+        service as unknown as {
+          fetchForumPosts: (f: unknown) => Promise<unknown[]>;
+        }
+      ).fetchForumPosts(forum);
+
+    it('returns [] without calling callMoodleApi when forum has no id', async () => {
+      await expect(
+        fetchForumPosts({ cmid: 10, name: 'No id forum' }),
+      ).resolves.toEqual([]);
+      expect(callMoodleApi).not.toHaveBeenCalled();
+    });
+
+    it('returns posts tagged with discussionId on successful post fetches', async () => {
+      callMoodleApi.mockImplementation(async (wsfunction: string) => {
+        if (wsfunction === 'mod_forum_get_forum_discussions') {
+          return {
+            discussions: [
+              { id: 1, discussion: 100 },
+              { id: 2, discussion: 200 },
+            ],
+          };
+        }
+        if (wsfunction === 'mod_forum_get_discussion_posts') {
+          const discussionId = (
+            callMoodleApi.mock.calls.find(
+              (c) =>
+                c[0] === 'mod_forum_get_discussion_posts' &&
+                (c[1] as { discussionid: number }).discussionid !== undefined,
+            ) || []
+          );
+          // Use the params from the current call — mockImplementation receives them
+          return { posts: [] };
+        }
+        throw new Error(wsfunction);
+      });
+
+      // Clearer: branch on discussionid from args
+      callMoodleApi.mockImplementation(
+        async (wsfunction: string, params: Record<string, unknown>) => {
+          if (wsfunction === 'mod_forum_get_forum_discussions') {
+            return {
+              discussions: [
+                { id: 1, discussion: 100 },
+                { id: 2, discussion: 200 },
+              ],
+            };
+          }
+          if (wsfunction === 'mod_forum_get_discussion_posts') {
+            if (params.discussionid === 100) {
+              return {
+                posts: [
+                  { id: 10, subject: 'Q', message: 'Question body' },
+                ],
+              };
+            }
+            if (params.discussionid === 200) {
+              return {
+                posts: [
+                  { id: 20, subject: 'A', message: 'Answer body' },
+                ],
+              };
+            }
+          }
+          throw new Error(`unexpected ${wsfunction}`);
+        },
+      );
+
+      const posts = await fetchForumPosts({
+        id: 8,
+        cmid: 80,
+        name: 'Course forum',
+      });
+
+      expect(posts).toEqual([
+        {
+          id: 10,
+          subject: 'Q',
+          message: 'Question body',
+          discussionId: 100,
+        },
+        {
+          id: 20,
+          subject: 'A',
+          message: 'Answer body',
+          discussionId: 200,
+        },
+      ]);
+    });
+
+    it('falls back to the discussion message when post-fetch fails', async () => {
+      callMoodleApi.mockImplementation(
+        async (wsfunction: string, params: Record<string, unknown>) => {
+          if (wsfunction === 'mod_forum_get_forum_discussions') {
+            return {
+              discussions: [
+                {
+                  id: 55,
+                  discussion: 300,
+                  subject: 'Fallback subject',
+                  name: 'Fallback name',
+                  message: '<p>Embedded discussion message</p>',
+                  created: 100,
+                  timemodified: 200,
+                  userfullname: 'Alex',
+                },
+              ],
+            };
+          }
+          if (wsfunction === 'mod_forum_get_discussion_posts') {
+            throw new Error('posts unavailable');
+          }
+          throw new Error(`unexpected ${wsfunction} ${JSON.stringify(params)}`);
+        },
+      );
+
+      const posts = await fetchForumPosts({
+        id: 8,
+        cmid: 80,
+        name: 'Course forum',
+      });
+
+      expect(posts).toEqual([
+        {
+          id: 55,
+          discussionId: 300,
+          subject: 'Fallback subject',
+          message: '<p>Embedded discussion message</p>',
+          created: 100,
+          modified: 200,
+          userfullname: 'Alex',
+        },
+      ]);
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining('Failed to fetch posts for forum discussion 300'),
+      );
+    });
+
+    it('returns [] and logs a warning when the discussions call fails', async () => {
+      callMoodleApi.mockRejectedValue(new Error('discussions down'));
+
+      await expect(
+        fetchForumPosts({ id: 8, cmid: 80, name: 'Course forum' }),
+      ).resolves.toEqual([]);
+
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining(
+          'Failed to fetch forum discussions for Course forum',
+        ),
+      );
     });
   });
 });
