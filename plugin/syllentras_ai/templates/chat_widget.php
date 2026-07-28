@@ -18,6 +18,24 @@ defined('MOODLE_INTERNAL') || die();
                 <span id="syllentras-chat-course" class="syllentras-chat-subtitle"></span>
             </div>
             <div class="syllentras-chat-header-actions">
+                <div class="syllentras-display-wrap">
+                    <button
+                        type="button"
+                        id="syllentras-display-btn"
+                        aria-label="Display settings"
+                        title="Display settings"
+                        aria-haspopup="dialog"
+                        aria-expanded="false"
+                        aria-controls="syllentras-display-menu"
+                    >Aa</button>
+                    <div
+                        id="syllentras-display-menu"
+                        class="syllentras-display-menu"
+                        role="dialog"
+                        aria-label="Display settings"
+                        hidden
+                    ></div>
+                </div>
                 <button id="syllentras-chat-reset" aria-label="Reset layout" title="Reset layout">&#x21BA;</button>
                 <button id="syllentras-chat-expand" aria-label="Expand">&#x2922;</button>
                 <button id="syllentras-chat-close" aria-label="Close">&times;</button>
@@ -109,7 +127,7 @@ defined('MOODLE_INTERNAL') || die();
                                 aria-expanded="false"
                                 title="Study tools"
                             >
-                                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false">
+                                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" focusable="false">
                                     <path fill="currentColor" d="M19 11h-6V5a1 1 0 1 0-2 0v6H5a1 1 0 1 0 0 2h6v6a1 1 0 1 0 2 0v-6h6a1 1 0 1 0 0-2z"/>
                                 </svg>
                             </button>
@@ -130,7 +148,7 @@ defined('MOODLE_INTERNAL') || die();
                                 aria-haspopup="listbox"
                                 aria-expanded="false"
                             >
-                                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false">
+                                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" focusable="false">
                                     <path fill="currentColor" d="M12 2l1.4 4.2L18 7.6l-3.6 3.1L15.8 16 12 13.8 8.2 16l1.4-5.3L6 7.6l4.6-1.4L12 2zm0 14.5c2.5 0 4.5 1.3 4.5 2.8S14.5 22 12 22s-4.5-1.2-4.5-2.7 2-2.8 4.5-2.8z"/>
                                 </svg>
                             </button>

@@ -39,7 +39,7 @@ msgs.addEventListener('scroll', function () {
 });
 
 header.addEventListener('pointerdown', function (e) {
-    if (isMobileLayout() || e.button !== 0 || e.target.closest('button') || e.target.closest('.syllentras-panel-resize-handle')) return;
+    if (isMobileLayout() || e.button !== 0 || e.target.closest('button') || e.target.closest('.syllentras-display-wrap') || e.target.closest('.syllentras-panel-resize-handle')) return;
 
     var rect = panel.getBoundingClientRect();
     isDraggingPanel = true;
@@ -215,6 +215,7 @@ document.addEventListener('keydown', function (e) {
         closeConversationMenu();
         closeToolsMenu();
         if (typeof closeModeMenu === 'function') closeModeMenu();
+        if (typeof closeDisplayMenu === 'function') closeDisplayMenu();
         if (typeof closeAiContentMenu === 'function') closeAiContentMenu();
         if (!modal.hidden) closeModal();
     }
@@ -223,6 +224,7 @@ document.addEventListener('keydown', function (e) {
 window.addEventListener('resize', function () {
     closeToolsMenu();
     if (typeof closeModeMenu === 'function') closeModeMenu();
+    if (typeof closeDisplayMenu === 'function') closeDisplayMenu();
     clampCurrentPanelLayout();
 });
 

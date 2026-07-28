@@ -55,6 +55,9 @@ function openProviderMenu() {
     if (typeof closeModeMenu === 'function') {
         closeModeMenu();
     }
+    if (typeof closeDisplayMenu === 'function') {
+        closeDisplayMenu();
+    }
     renderProviderMenu();
     providerMenu.hidden = false;
     providerBtn.setAttribute('aria-expanded', 'true');

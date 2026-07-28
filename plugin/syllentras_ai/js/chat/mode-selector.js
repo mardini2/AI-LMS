@@ -317,6 +317,7 @@ function showModeMenu() {
     if (!modeBtn || modeBtn.disabled || !modeMenu) return;
     if (typeof closeToolsMenu === 'function') closeToolsMenu();
     if (typeof closeProviderMenu === 'function') closeProviderMenu();
+    if (typeof closeDisplayMenu === 'function') closeDisplayMenu();
 
     modeBtn.classList.add('open');
     modeBtn.setAttribute('aria-expanded', 'true');

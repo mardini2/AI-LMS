@@ -24,6 +24,7 @@ ORDER = [
     "tools-menu.js",
     "section-buttons.js",
     "ai-content-panel.js",
+    "display-settings.js",
     "wiring.js",
 ]
 

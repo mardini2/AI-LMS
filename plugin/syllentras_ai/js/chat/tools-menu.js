@@ -322,6 +322,7 @@ function showToolsMenu() {
     closeToolsMenu();
     if (typeof closeModeMenu === 'function') closeModeMenu();
     if (typeof closeProviderMenu === 'function') closeProviderMenu();
+    if (typeof closeDisplayMenu === 'function') closeDisplayMenu();
     if (!toolsBtn || toolsBtn.disabled || !toolsMenu) return;
 
     toolsBtn.classList.add('open');
