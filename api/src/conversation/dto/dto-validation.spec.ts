@@ -132,6 +132,16 @@ describe('UpdateConversationDto', () => {
     pinned: true,
   };
 
+  it('accepts a title exactly at the 120 character limit', async () => {
+    const errors = await validate(makeUpdate({ title: 'a'.repeat(120) }));
+    expect(errors).toHaveLength(0);
+  });
+
+  it('errors when title exceeds the 120 character limit', async () => {
+    const errors = await validate(makeUpdate({ title: 'a'.repeat(121) }));
+    expect(errorProperties(errors)).toContain('title');
+  });
+  
   it('accepts valid complete data', async () => {
     const errors = await validate(makeUpdate(valid));
     expect(errors).toHaveLength(0);

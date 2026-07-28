@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<coverage generated="1784605111684" clover="3.2.0">
-  <project timestamp="1784605111684" name="All files">
-    <metrics statements="610" coveredstatements="346" conditionals="355" coveredconditionals="155" methods="116" coveredmethods="54" elements="1081" coveredelements="555" complexity="0" loc="610" ncloc="610" packages="7" files="21" classes="21"/>
+<coverage generated="1784663317886" clover="3.2.0">
+  <project timestamp="1784663317886" name="All files">
+    <metrics statements="615" coveredstatements="371" conditionals="355" coveredconditionals="185" methods="116" coveredmethods="65" elements="1086" coveredelements="621" complexity="0" loc="615" ncloc="615" packages="7" files="21" classes="21"/>
     <package name="src">
       <metrics statements="24" coveredstatements="0" conditionals="4" coveredconditionals="0" methods="2" coveredmethods="0"/>
       <file name="app.module.ts" path="C:\Users\rykup\source\repos\AI-LMS-Tool\api\src\app.module.ts">
@@ -142,7 +142,7 @@
       </file>
     </package>
     <package name="src.context">
-      <metrics statements="253" coveredstatements="61" conditionals="205" coveredconditionals="37" methods="52" coveredmethods="12"/>
+      <metrics statements="258" coveredstatements="86" conditionals="205" coveredconditionals="67" methods="52" coveredmethods="23"/>
       <file name="context.module.ts" path="C:\Users\rykup\source\repos\AI-LMS-Tool\api\src\context\context.module.ts">
         <metrics statements="3" coveredstatements="0" conditionals="0" coveredconditionals="0" methods="0" coveredmethods="0"/>
         <line num="1" count="0" type="stmt"/>
@@ -150,7 +150,7 @@
         <line num="8" count="0" type="stmt"/>
       </file>
       <file name="context.service.ts" path="C:\Users\rykup\source\repos\AI-LMS-Tool\api\src\context\context.service.ts">
-        <metrics statements="250" coveredstatements="61" conditionals="205" coveredconditionals="37" methods="52" coveredmethods="12"/>
+        <metrics statements="255" coveredstatements="86" conditionals="205" coveredconditionals="67" methods="52" coveredmethods="23"/>
         <line num="1" count="2" type="stmt"/>
         <line num="2" count="2" type="stmt"/>
         <line num="4" count="2" type="stmt"/>
@@ -365,42 +365,47 @@
         <line num="614" count="0" type="stmt"/>
         <line num="615" count="0" type="stmt"/>
         <line num="617" count="0" type="stmt"/>
-        <line num="622" count="0" type="stmt"/>
-        <line num="626" count="0" type="stmt"/>
-        <line num="627" count="0" type="cond" truecount="0" falsecount="2"/>
-        <line num="628" count="0" type="stmt"/>
-        <line num="631" count="0" type="stmt"/>
-        <line num="632" count="0" type="stmt"/>
-        <line num="637" count="0" type="cond" truecount="0" falsecount="4"/>
-        <line num="639" count="0" type="stmt"/>
-        <line num="644" count="2" type="stmt"/>
-        <line num="650" count="5" type="stmt"/>
-        <line num="652" count="5" type="cond" truecount="4" falsecount="0"/>
-        <line num="658" count="5" type="stmt"/>
-        <line num="671" count="0" type="stmt"/>
-        <line num="672" count="0" type="stmt"/>
-        <line num="673" count="0" type="stmt"/>
-        <line num="676" count="0" type="stmt"/>
-        <line num="679" count="0" type="cond" truecount="0" falsecount="2"/>
-        <line num="681" count="0" type="stmt"/>
-        <line num="682" count="0" type="stmt"/>
-        <line num="684" count="0" type="stmt"/>
-        <line num="686" count="0" type="stmt"/>
-        <line num="694" count="2" type="stmt"/>
-        <line num="698" count="6" type="cond" truecount="4" falsecount="0"/>
-        <line num="699" count="1" type="stmt"/>
-        <line num="702" count="5" type="cond" truecount="2" falsecount="0"/>
-        <line num="706" count="1" type="stmt"/>
-        <line num="709" count="4" type="stmt"/>
-        <line num="716" count="2" type="stmt"/>
-        <line num="720" count="3" type="cond" truecount="3" falsecount="3"/>
-        <line num="721" count="3" type="stmt"/>
-        <line num="722" count="8" type="cond" truecount="2" falsecount="0"/>
-        <line num="728" count="0" type="stmt"/>
-        <line num="738" count="0" type="cond" truecount="0" falsecount="4"/>
-        <line num="742" count="0" type="stmt"/>
-        <line num="750" count="2" type="stmt"/>
-        <line num="751" count="5" type="stmt"/>
+        <line num="622" count="2" type="stmt"/>
+        <line num="623" count="4" type="stmt"/>
+        <line num="627" count="2" type="stmt"/>
+        <line num="628" count="7" type="stmt"/>
+        <line num="629" count="7" type="cond" truecount="2" falsecount="0"/>
+        <line num="630" count="2" type="stmt"/>
+        <line num="633" count="5" type="stmt"/>
+        <line num="634" count="5" type="stmt"/>
+        <line num="639" count="4" type="cond" truecount="4" falsecount="0"/>
+        <line num="641" count="1" type="stmt"/>
+        <line num="646" count="2" type="stmt"/>
+        <line num="652" count="5" type="stmt"/>
+        <line num="654" count="5" type="cond" truecount="4" falsecount="0"/>
+        <line num="660" count="5" type="stmt"/>
+        <line num="669" count="2" type="stmt"/>
+        <line num="674" count="92" type="stmt"/>
+        <line num="675" count="92" type="stmt"/>
+        <line num="676" count="3" type="stmt"/>
+        <line num="679" count="18" type="stmt"/>
+        <line num="682" count="3" type="cond" truecount="2" falsecount="0"/>
+        <line num="684" count="1" type="stmt"/>
+        <line num="685" count="1" type="stmt"/>
+        <line num="687" count="88" type="stmt"/>
+        <line num="689" count="3" type="stmt"/>
+        <line num="697" count="2" type="stmt"/>
+        <line num="701" count="190" type="cond" truecount="4" falsecount="0"/>
+        <line num="702" count="1" type="stmt"/>
+        <line num="705" count="189" type="cond" truecount="2" falsecount="0"/>
+        <line num="709" count="5" type="stmt"/>
+        <line num="712" count="184" type="stmt"/>
+        <line num="719" count="2" type="stmt"/>
+        <line num="723" count="183" type="cond" truecount="5" falsecount="1"/>
+        <line num="724" count="183" type="stmt"/>
+        <line num="725" count="568" type="cond" truecount="2" falsecount="0"/>
+        <line num="731" count="2" type="stmt"/>
+        <line num="732" count="89" type="stmt"/>
+        <line num="742" count="89" type="cond" truecount="4" falsecount="0"/>
+        <line num="746" count="2" type="stmt"/>
+        <line num="747" count="2" type="stmt"/>
+        <line num="755" count="2" type="stmt"/>
+        <line num="756" count="9" type="stmt"/>
       </file>
     </package>
     <package name="src.conversation">

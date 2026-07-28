@@ -106,6 +106,14 @@ case "$CMD" in
         $COMPOSE exec webserver php admin/cli/purge_caches.php
         echo "Done."
         ;;
+    behat-init)
+        echo "Initializing Behat testing environment..."
+        $COMPOSE exec webserver php public/admin/tool/behat/cli/init.php
+        ;;
+    behat-run)
+        echo "Running Behat acceptance tests..."
+        $COMPOSE exec webserver php public/admin/tool/behat/cli/run.php "${@:2}"
+        ;;
     *)
         echo "Usage: ./dev.sh {up|down|restart|logs|ps|install-api|moodle-install|moodle-upgrade|moodle-purge}"
         exit 1
