@@ -238,23 +238,34 @@ export class ConversationService {
       .addOrderBy('m.created_at', 'DESC')
       .getMany();
 
-    return conversations.map((conversation) => {
-      const matchedMessage = conversation.messages?.find((message) =>
-        message.content.toLowerCase().includes(rawQuery.trim().toLowerCase()),
+    const needle = rawQuery.trim().toLowerCase();
+    const results: ConversationSearchResult[] = [];
+
+    for (const conversation of conversations) {
+      const summary = toSummary(conversation);
+      const matchingMessages = (conversation.messages ?? []).filter((message) =>
+        message.content.toLowerCase().includes(needle),
       );
 
-      return {
-        conversation: toSummary(conversation),
-        matchedMessage: matchedMessage
-          ? {
-              id: matchedMessage.id,
-              role: matchedMessage.role,
-              content: matchedMessage.content,
-              createdAt: matchedMessage.createdAt,
-            }
-          : undefined,
-      };
-    });
+      if (matchingMessages.length) {
+        for (const message of matchingMessages) {
+          results.push({
+            conversation: summary,
+            matchedMessage: {
+              id: message.id,
+              role: message.role,
+              content: message.content,
+              createdAt: message.createdAt,
+            },
+          });
+        }
+      } else {
+        // Title/tag/section-only hit — open the chat without jumping to a message.
+        results.push({ conversation: summary });
+      }
+    }
+
+    return results;
   }
 
   async deleteConversation(

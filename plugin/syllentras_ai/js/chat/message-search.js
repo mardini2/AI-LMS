@@ -60,6 +60,22 @@ function escapeHtml(value) {
         .replace(/"/g, '&quot;');
 }
 
+function stripMarkdown(text) {
+    return String(text || '')
+        .replace(/```[\s\S]*?```/g, ' ')
+        .replace(/`([^`]+)`/g, '$1')
+        .replace(/!\[[^\]]*\]\([^)]+\)/g, ' ')
+        .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+        .replace(/^#{1,6}\s+/gm, '')
+        .replace(/(\*\*|__)(.*?)\1/g, '$2')
+        .replace(/(\*|_)(.*?)\1/g, '$2')
+        .replace(/^>\s?/gm, '')
+        .replace(/^[-*+]\s+/gm, '')
+        .replace(/^\d+\.\s+/gm, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
 function findMatchRanges(content, query) {
     var ranges = [];
     if (!content || !query) return ranges;
@@ -76,6 +92,7 @@ function findMatchRanges(content, query) {
 }
 
 function buildMatchPreview(content, query) {
+    content = stripMarkdown(content);
     var ranges = findMatchRanges(content, query);
     if (!ranges.length) {
         return escapeHtml(content).slice(0, MESSAGE_SEARCH_PREVIEW_RADIUS * 2);

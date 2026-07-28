@@ -170,7 +170,7 @@ function renderConversationGroup(label, conversations) {
     conversations.forEach(renderConversationItem);
 }
 
-function renderConversationItem(conversation, matchedMessage) {
+function renderConversationItem(conversation) {
     var item = document.createElement('div');
     item.tabIndex = 0;
     item.setAttribute('role', 'button');
@@ -184,12 +184,61 @@ function renderConversationItem(conversation, matchedMessage) {
     nameEl.textContent = displayConversationTitle(conversation);
     nameEl.classList.toggle('pinned', !!conversation.pinned);
     item.querySelector('.syllentras-conversation-tag').textContent = displayConversationTag(conversation);
-    if (matchedMessage && matchedMessage.content) {
-        var match = document.createElement('span');
-        match.className = 'syllentras-conversation-match';
-        match.textContent = matchedMessage.content.slice(0, 120);
-        item.appendChild(match);
+    item.addEventListener('click', function () {
+        openConversationById(conversation.id);
+    });
+    item.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            openConversationById(conversation.id);
+        }
+    });
+    item.querySelector('.syllentras-conversation-menu-btn').addEventListener('click', function (e) {
+        e.stopPropagation();
+        showConversationMenu(e.currentTarget, conversation);
+    });
+    conversationsEl.appendChild(item);
+}
+
+function renderSearchResultItem(conversation, matchedMessage) {
+    var item = document.createElement('div');
+    item.tabIndex = 0;
+    item.setAttribute('role', 'button');
+    item.className = 'syllentras-conversation-item is-search-result';
+    item.dataset.conversationId = conversation.id;
+    if (matchedMessage && matchedMessage.id) {
+        item.dataset.messageId = matchedMessage.id;
     }
+
+    var nameEl = document.createElement('span');
+    nameEl.className = 'syllentras-conversation-name';
+    nameEl.textContent = displayConversationTitle(conversation);
+    nameEl.classList.toggle('pinned', !!conversation.pinned);
+    item.appendChild(nameEl);
+
+    if (matchedMessage && matchedMessage.id) {
+        var meta = document.createElement('span');
+        meta.className = 'syllentras-conversation-search-meta';
+        var roleLabel = matchedMessage.role === 'assistant' ? 'Assistant' : 'You';
+        var when = matchedMessage.createdAt
+            ? new Date(matchedMessage.createdAt).toLocaleString()
+            : '';
+        meta.textContent = when ? roleLabel + ' · ' + when : roleLabel;
+        item.appendChild(meta);
+
+        if (matchedMessage.content) {
+            var match = document.createElement('span');
+            match.className = 'syllentras-conversation-match';
+            match.textContent = stripMarkdown(matchedMessage.content).slice(0, 120);
+            item.appendChild(match);
+        }
+    } else {
+        var tag = document.createElement('span');
+        tag.className = 'syllentras-conversation-tag';
+        tag.textContent = displayConversationTag(conversation);
+        item.appendChild(tag);
+    }
+
     item.addEventListener('click', function () {
         openConversationFromSearch(conversation, matchedMessage);
     });
@@ -198,10 +247,6 @@ function renderConversationItem(conversation, matchedMessage) {
             e.preventDefault();
             openConversationFromSearch(conversation, matchedMessage);
         }
-    });
-    item.querySelector('.syllentras-conversation-menu-btn').addEventListener('click', function (e) {
-        e.stopPropagation();
-        showConversationMenu(e.currentTarget, conversation);
     });
     conversationsEl.appendChild(item);
 }
@@ -310,7 +355,7 @@ function searchConversations(query) {
         heading.textContent = 'Search Results';
         conversationsEl.appendChild(heading);
         results.forEach(function (result) {
-            renderConversationItem(result.conversation, result.matchedMessage);
+            renderSearchResultItem(result.conversation, result.matchedMessage);
         });
         if (!results.length) {
             conversationsEl.appendChild(document.createTextNode('No results found.'));

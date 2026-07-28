@@ -521,6 +521,9 @@
     color: #222;
     margin-bottom: 4px;
 }
+.syllentras-conversation-item.is-search-result {
+    padding-right: 7px;
+}
 .syllentras-conversation-item.active {
     background: #e6f0fb;
     border-color: #b9d6f2;
@@ -541,6 +544,15 @@
     text-transform: uppercase;
 }
 .syllentras-conversation-tag {
+    display: block;
+    color: #666;
+    font-size: 11px;
+    margin-top: 2px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.syllentras-conversation-search-meta {
     display: block;
     color: #666;
     font-size: 11px;
