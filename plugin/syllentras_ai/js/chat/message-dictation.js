@@ -7,6 +7,8 @@
 var dictationRecognition = null;
 var dictationListening = false;
 var dictationBaseText = '';
+var dictationToastTimer = null;
+var dictationToastEl = null;
 var micBtn = document.getElementById('syllentras-chat-mic');
 
 function speechRecognitionSupported() {
@@ -20,6 +22,90 @@ function appendDictationChunk(base, chunk) {
     if (!right) return left;
     if (!left) return right;
     return left + ' ' + right;
+}
+
+function ensureDictationToast() {
+    if (dictationToastEl) return dictationToastEl;
+    var host = document.getElementById('syllentras-chat-main') || panel || root;
+    if (!host) return null;
+    dictationToastEl = document.createElement('div');
+    dictationToastEl.id = 'syllentras-dictation-toast';
+    dictationToastEl.className = 'syllentras-dictation-toast';
+    dictationToastEl.setAttribute('role', 'status');
+    dictationToastEl.setAttribute('aria-live', 'polite');
+    dictationToastEl.hidden = true;
+    host.appendChild(dictationToastEl);
+    return dictationToastEl;
+}
+
+function showDictationToast(message) {
+    var el = ensureDictationToast();
+    if (!el) return;
+    el.textContent = String(message || '');
+    el.hidden = false;
+    // Force reflow so the fade-in class actually animates when we re-show.
+    void el.offsetWidth;
+    el.classList.add('is-visible');
+    if (dictationToastTimer) {
+        clearTimeout(dictationToastTimer);
+    }
+    dictationToastTimer = setTimeout(function () {
+        el.classList.remove('is-visible');
+        dictationToastTimer = setTimeout(function () {
+            el.hidden = true;
+            dictationToastTimer = null;
+        }, 220);
+    }, 3000);
+}
+
+function dictationErrorMessage(code) {
+    if (code === 'not-allowed' || code === 'service-not-allowed') {
+        return 'Microphone access blocked. Allow it in your browser or system settings.';
+    }
+    if (code === 'audio-capture') {
+        return 'No microphone detected.';
+    }
+    return '';
+}
+
+function mediaErrorKind(err) {
+    var name = err && err.name ? String(err.name) : '';
+    if (
+        name === 'NotFoundError'
+        || name === 'DevicesNotFoundError'
+        || name === 'NotReadableError'
+        || name === 'OverconstrainedError'
+    ) {
+        return 'no-mic';
+    }
+    if (
+        name === 'NotAllowedError'
+        || name === 'PermissionDeniedError'
+        || name === 'SecurityError'
+    ) {
+        return 'blocked';
+    }
+    return 'unknown';
+}
+
+function probeMicrophone(done) {
+    if (
+        !navigator.mediaDevices
+        || typeof navigator.mediaDevices.getUserMedia !== 'function'
+    ) {
+        done(null);
+        return;
+    }
+    navigator.mediaDevices.getUserMedia({ audio: true }).then(function (stream) {
+        try {
+            stream.getTracks().forEach(function (track) {
+                track.stop();
+            });
+        } catch (e) { /* ignore */ }
+        done(null);
+    }).catch(function (err) {
+        done(mediaErrorKind(err));
+    });
 }
 
 function syncMicButtonUi() {
@@ -47,14 +133,7 @@ function stopDictation() {
     syncMicButtonUi();
 }
 
-function startDictation() {
-    if (!speechRecognitionSupported() || !input || !micBtn) return;
-
-    // Don't talk over yourself — pause read-aloud if it's going.
-    if (typeof stopMessageSpeech === 'function') {
-        stopMessageSpeech();
-    }
-
+function beginSpeechRecognition() {
     var Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     dictationRecognition = new Recognition();
     dictationRecognition.lang = 'en-US';
@@ -88,10 +167,12 @@ function startDictation() {
     };
 
     dictationRecognition.onerror = function (event) {
-        // no-speech / aborted are normal; permission errors just stop the mic.
+        // no-speech / aborted are normal — only nag on real mic problems.
         var code = event && event.error ? String(event.error) : '';
-        if (code === 'not-allowed' || code === 'service-not-allowed') {
-            micBtn.title = 'Microphone permission blocked';
+        var msg = dictationErrorMessage(code);
+        if (msg) {
+            showDictationToast(msg);
+            micBtn.title = msg;
         }
         dictationListening = false;
         syncMicButtonUi();
@@ -111,7 +192,33 @@ function startDictation() {
     } catch (e) {
         dictationListening = false;
         syncMicButtonUi();
+        showDictationToast('Could not start the microphone.');
     }
+}
+
+function startDictation() {
+    if (!speechRecognitionSupported() || !input || !micBtn) return;
+    if (dictationListening) return;
+
+    // Don't talk over yourself — pause read-aloud if it's going.
+    if (typeof stopMessageSpeech === 'function') {
+        stopMessageSpeech();
+    }
+
+    // Quick mic check so we can say "blocked" vs "not found" clearly.
+    probeMicrophone(function (kind) {
+        if (kind === 'blocked') {
+            showDictationToast(
+                'Microphone access blocked. Allow it in your browser or system settings.'
+            );
+            return;
+        }
+        if (kind === 'no-mic') {
+            showDictationToast('No microphone detected.');
+            return;
+        }
+        beginSpeechRecognition();
+    });
 }
 
 function toggleDictation() {
