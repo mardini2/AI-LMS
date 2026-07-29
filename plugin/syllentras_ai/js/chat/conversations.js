@@ -418,6 +418,9 @@ function sendMessage() {
     .then(function (data) {
         renderAssistantContent(loadingEl, data.response);
         applyModeChip(loadingEl, data.mode || body.mode);
+        if (typeof attachMessageSpeakButton === 'function') {
+            attachMessageSpeakButton(loadingEl);
+        }
         loadingEl.dataset.createdAt = new Date().toISOString();
         upsertMessageSearchEntry({
             id: pendingAssistantId,

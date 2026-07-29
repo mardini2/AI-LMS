@@ -826,15 +826,20 @@
     color: var(--syll-text);
 }
 .syllentras-conversation-menu {
-    background: var(--syll-panel-bg);
-    border: 1px solid var(--syll-border);
+    /* Solid fallbacks first — if a theme var ever fails, we still get an opaque menu. */
+    background: #fff;
+    background: var(--syll-panel-bg, #fff);
+    border: 1px solid #ccc;
+    border: 1px solid var(--syll-border, #ccc);
     border-radius: 8px;
-    box-shadow: 0 8px 24px rgba(0,0,0,0.16);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
     min-width: 116px;
     padding: 4px;
     position: fixed;
     z-index: 10001;
-    color: var(--syll-text);
+    color: #222;
+    color: var(--syll-text, #222);
+    opacity: 1;
 }
 .syllentras-conversation-menu[hidden] { display: none; }
 .syllentras-menu-action {
@@ -1179,6 +1184,60 @@
     line-height: 1.4;
     font-size: calc(14px * var(--syll-font-scale));
     word-break: break-word;
+    position: relative;
+}
+.syllentras-msg.user,
+.syllentras-msg.assistant {
+    padding-right: 30px;
+}
+/* Kill Moodle/browser default button chrome — just a bare icon. */
+#syllentras-chat-root button.syllentras-msg-speak {
+    position: absolute;
+    top: 2px;
+    right: 2px;
+    width: auto;
+    height: auto;
+    min-width: 0;
+    min-height: 0;
+    margin: 0;
+    padding: 2px;
+    border: 0 !important;
+    border-radius: 0;
+    background: transparent !important;
+    background-image: none !important;
+    box-shadow: none !important;
+    -webkit-appearance: none;
+    appearance: none;
+    color: inherit;
+    opacity: 0.4;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    line-height: 0;
+    transition: opacity 0.15s ease, color 0.15s ease;
+}
+#syllentras-chat-root button.syllentras-msg-speak:hover,
+#syllentras-chat-root button.syllentras-msg-speak:focus-visible {
+    opacity: 0.95;
+    background: transparent !important;
+    box-shadow: none !important;
+    outline: none;
+}
+#syllentras-chat-root .syllentras-msg.is-speaking button.syllentras-msg-speak {
+    opacity: 1;
+    background: transparent !important;
+    color: var(--syll-accent);
+}
+#syllentras-chat-root .syllentras-msg.user.is-speaking button.syllentras-msg-speak {
+    color: inherit;
+    opacity: 1;
+}
+#syllentras-chat-root button.syllentras-msg-speak svg {
+    display: block;
+    width: 20px;
+    height: 20px;
+    pointer-events: none;
 }
 .syllentras-msg.user {
     align-self: flex-end;

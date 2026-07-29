@@ -41,6 +41,7 @@ function attachReviewCollapseControls(el) {
 
 function renderAssistantContent(el, text) {
     var modeChip = el.querySelector('.syllentras-msg-mode');
+    var speakBtn = el.querySelector('.syllentras-msg-speak');
     el.classList.add('syllentras-markdown');
     var raw = marked.parse(text, { breaks: true });
     el.innerHTML = DOMPurify.sanitize(raw);
@@ -56,4 +57,11 @@ function renderAssistantContent(el, text) {
         }
     });
     attachReviewCollapseControls(el);
+    // Markdown replace wipes the bubble; put the speaker back if we had one,
+    // otherwise add it now that there is real text to read.
+    if (speakBtn) {
+        el.appendChild(speakBtn);
+    } else if (typeof attachMessageSpeakButton === 'function') {
+        attachMessageSpeakButton(el);
+    }
 }

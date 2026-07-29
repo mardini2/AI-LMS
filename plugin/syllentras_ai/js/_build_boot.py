@@ -17,6 +17,7 @@ ORDER = [
     "pending-actions.js",
     "review-offer.js",
     "message-search.js",
+    "message-speech.js",
     "messages.js",
     "conversations.js",
     "message-search-ui.js",

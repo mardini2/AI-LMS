@@ -53,6 +53,9 @@ function createMessageElement(role, text, options) {
             content: text,
             createdAt: options.createdAt || null
         });
+        if (typeof attachMessageSpeakButton === 'function') {
+            attachMessageSpeakButton(div);
+        }
     }
     return div;
 }
@@ -77,6 +80,9 @@ function prependMessage(role, text, options) {
 }
 
 function clearMessages() {
+    if (typeof stopMessageSpeech === 'function') {
+        stopMessageSpeech();
+    }
     Array.from(msgs.querySelectorAll('.syllentras-msg')).forEach(function (node) {
         node.remove();
     });

@@ -27,6 +27,8 @@ var selectedFontStep = 1;
 var displayMenuBuilt = false;
 var displayFontValueEl = null;
 var displayFontSlider = null;
+var displaySpeechRateValueEl = null;
+var displaySpeechRateSlider = null;
 
 function normalizeDisplayTheme(raw) {
     for (var i = 0; i < DISPLAY_THEMES.length; i++) {
@@ -92,6 +94,9 @@ function setFontStep(step) {
 function resetDisplaySettings() {
     selectedDisplayTheme = 'default';
     selectedFontStep = 1;
+    if (typeof resetSpeechSettings === 'function') {
+        resetSpeechSettings();
+    }
     applyDisplaySettings();
     saveDisplaySettings();
     syncDisplayMenuUi();
@@ -106,8 +111,27 @@ function syncDisplayMenuUi() {
     if (displayFontSlider) {
         displayFontSlider.value = String(info.step);
     }
+
+    if (typeof speechRateInfo === 'function' && typeof selectedSpeechRateStep !== 'undefined') {
+        var rateInfo = speechRateInfo(selectedSpeechRateStep);
+        if (displaySpeechRateValueEl) {
+            displaySpeechRateValueEl.textContent = rateInfo.label;
+        }
+        if (displaySpeechRateSlider) {
+            displaySpeechRateSlider.value = String(rateInfo.step);
+            displaySpeechRateSlider.setAttribute('aria-valuetext', rateInfo.label);
+        }
+    }
+
     Array.from(displayMenu.querySelectorAll('.syllentras-display-theme-btn')).forEach(function (btn) {
         var active = btn.dataset.themeId === selectedDisplayTheme;
+        btn.classList.toggle('selected', active);
+        btn.setAttribute('aria-pressed', active ? 'true' : 'false');
+    });
+
+    Array.from(displayMenu.querySelectorAll('.syllentras-display-voice-btn')).forEach(function (btn) {
+        var active = typeof selectedSpeechVoice !== 'undefined'
+            && btn.dataset.voiceId === selectedSpeechVoice;
         btn.classList.toggle('selected', active);
         btn.setAttribute('aria-pressed', active ? 'true' : 'false');
     });
@@ -147,6 +171,78 @@ function buildDisplayMenu() {
     });
     fontSection.appendChild(displayFontSlider);
     displayMenu.appendChild(fontSection);
+
+    // Voice + speed only show up when the browser can actually talk.
+    if (typeof speechSupported === 'function' && speechSupported()
+        && typeof SPEECH_VOICES !== 'undefined'
+        && typeof SPEECH_RATE_STEPS !== 'undefined') {
+        var voiceSection = document.createElement('div');
+        voiceSection.className = 'syllentras-display-section';
+
+        var voiceLabel = document.createElement('div');
+        voiceLabel.className = 'syllentras-display-label';
+        voiceLabel.textContent = 'Voice';
+        voiceSection.appendChild(voiceLabel);
+
+        var voiceList = document.createElement('div');
+        voiceList.className = 'syllentras-display-theme-list';
+        voiceList.setAttribute('role', 'group');
+        voiceList.setAttribute('aria-label', 'Read aloud voice');
+
+        SPEECH_VOICES.forEach(function (voice) {
+            var btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'syllentras-display-theme-btn syllentras-display-voice-btn';
+            btn.dataset.voiceId = voice.id;
+            btn.textContent = voice.label;
+            btn.addEventListener('click', function (e) {
+                e.stopPropagation();
+                setSpeechVoicePreference(voice.id);
+                syncDisplayMenuUi();
+            });
+            voiceList.appendChild(btn);
+        });
+        voiceSection.appendChild(voiceList);
+        displayMenu.appendChild(voiceSection);
+
+        var rateSection = document.createElement('div');
+        rateSection.className = 'syllentras-display-section';
+
+        var rateLabel = document.createElement('div');
+        rateLabel.className = 'syllentras-display-label';
+        rateLabel.textContent = 'Speech speed';
+        rateSection.appendChild(rateLabel);
+
+        displaySpeechRateValueEl = document.createElement('div');
+        displaySpeechRateValueEl.className = 'syllentras-display-value';
+        displaySpeechRateValueEl.id = 'syllentras-display-speech-rate-value';
+        rateSection.appendChild(displaySpeechRateValueEl);
+
+        displaySpeechRateSlider = document.createElement('input');
+        displaySpeechRateSlider.type = 'range';
+        displaySpeechRateSlider.className = 'syllentras-display-slider';
+        displaySpeechRateSlider.min = '1';
+        displaySpeechRateSlider.max = String(SPEECH_RATE_STEPS.length);
+        displaySpeechRateSlider.step = '1';
+        displaySpeechRateSlider.setAttribute('aria-label', 'Speech speed');
+        displaySpeechRateSlider.setAttribute(
+            'aria-valuetext',
+            speechRateInfo(selectedSpeechRateStep).label
+        );
+        displaySpeechRateSlider.addEventListener('input', function () {
+            setSpeechRateStep(displaySpeechRateSlider.value);
+            displaySpeechRateSlider.setAttribute(
+                'aria-valuetext',
+                speechRateInfo(selectedSpeechRateStep).label
+            );
+            syncDisplayMenuUi();
+        });
+        displaySpeechRateSlider.addEventListener('click', function (e) {
+            e.stopPropagation();
+        });
+        rateSection.appendChild(displaySpeechRateSlider);
+        displayMenu.appendChild(rateSection);
+    }
 
     var themeSection = document.createElement('div');
     themeSection.className = 'syllentras-display-section';

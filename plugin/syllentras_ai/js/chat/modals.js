@@ -23,7 +23,9 @@ function showConversationMenu(anchor, conversation) {
     addMenuAction(menu, conversation.pinned ? 'Unpin' : 'Pin', function () { togglePinConversation(conversation); }, conversation.type === 'general');
     addMenuAction(menu, 'Export', function () { showExportModal(conversation); });
     addMenuAction(menu, 'Delete', function () { deleteConversation(conversation); }, false, true);
-    document.body.appendChild(menu);
+    // Keep it under #syllentras-chat-root so theme colors (panel bg, text, etc.) actually apply.
+    // Dropping it on document.body made background: var(--syll-panel-bg) resolve to nothing.
+    (root || document.body).appendChild(menu);
 
     var rect = anchor.getBoundingClientRect();
     menu.style.left = Math.max(8, rect.right - 124) + 'px';
