@@ -4887,7 +4887,7 @@ function buildDisplayMenu() {
     var resetBtn = document.createElement('button');
     resetBtn.type = 'button';
     resetBtn.className = 'syllentras-display-reset';
-    resetBtn.textContent = 'Reset display';
+    resetBtn.textContent = 'Reset';
     resetBtn.addEventListener('click', function (e) {
         e.stopPropagation();
         resetDisplaySettings();
