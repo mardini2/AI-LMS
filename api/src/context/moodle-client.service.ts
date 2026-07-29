@@ -10,18 +10,41 @@ export class MoodleClient {
   private readonly moodleToken: string;
   /** Host header sent to moodle-docker's webserver (avoids Behat mode on http://webserver). */
   private readonly moodleHost: string;
+  /** Optional browser-facing Moodle origin (e.g. Cloudflare tunnel). */
+  private readonly moodlePublicUrl: string | undefined;
 
   constructor(private readonly config: ConfigService) {
     this.moodleUrl = this.config.get<string>('MOODLE_INTERNAL_URL')!;
     this.moodleToken = this.config.get<string>('MOODLE_TOKEN')!;
     this.moodleHost =
       this.config.get<string>('MOODLE_INTERNAL_HOST') ?? 'localhost:8000';
+    const publicUrl = (this.config.get<string>('MOODLE_PUBLIC_URL') ?? '').trim();
+    this.moodlePublicUrl = publicUrl || undefined;
   }
 
   /** Rewrite docker-internal Moodle hosts so browser links work. */
   toPublicMoodleUrl(rawUrl: string): string {
     try {
       const parsed = new URL(rawUrl);
+      const internalHost = this.moodleHost.split(':')[0] || 'localhost';
+      const shouldRewrite =
+        parsed.hostname === 'webserver' ||
+        parsed.hostname === internalHost ||
+        parsed.hostname === 'localhost' ||
+        parsed.hostname === '127.0.0.1';
+
+      if (!shouldRewrite) {
+        return parsed.toString();
+      }
+
+      if (this.moodlePublicUrl) {
+        const publicOrigin = new URL(this.moodlePublicUrl);
+        parsed.protocol = publicOrigin.protocol;
+        parsed.hostname = publicOrigin.hostname;
+        parsed.port = publicOrigin.port;
+        return parsed.toString();
+      }
+
       if (parsed.hostname === 'webserver') {
         const [host, port] = this.moodleHost.split(':');
         parsed.hostname = host || 'localhost';
@@ -166,6 +189,20 @@ export class MoodleClient {
     searchParams.set(key, String(value));
   }
 
+  /** Optional Host header for moodle-docker (avoids Behat mode / matches wwwroot). */
+  private moodleRequestHeaders(hostHeader?: string): Record<string, string> | undefined {
+    const headers: Record<string, string> = {};
+    if (hostHeader) {
+      headers.Host = hostHeader;
+    }
+    // When Moodle wwwroot is HTTPS behind sslproxy (e.g. Cloudflare tunnel),
+    // internal http://webserver calls need to look like HTTPS to avoid 303s.
+    if (this.moodlePublicUrl?.startsWith('https:')) {
+      headers['X-Forwarded-Proto'] = 'https';
+    }
+    return Object.keys(headers).length > 0 ? headers : undefined;
+  }
+
   private httpPostForm(
     url: URL,
     form: URLSearchParams,
@@ -173,6 +210,11 @@ export class MoodleClient {
   ): Promise<{ status: number; body: string }> {
     const requestFn = url.protocol === 'https:' ? httpsRequest : httpRequest;
     const payload = form.toString();
+    const headers = {
+      'Content-Type': 'application/x-www-form-urlencoded',
+      'Content-Length': Buffer.byteLength(payload),
+      ...(this.moodleRequestHeaders(hostHeader) ?? {}),
+    };
 
     return new Promise((resolve, reject) => {
       const req = requestFn(
@@ -181,11 +223,7 @@ export class MoodleClient {
           port: url.port || (url.protocol === 'https:' ? 443 : 80),
           path: url.pathname,
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/x-www-form-urlencoded',
-            'Content-Length': Buffer.byteLength(payload),
-            ...(hostHeader ? { Host: hostHeader } : {}),
-          },
+          headers,
         },
         (res) => {
           const chunks: Buffer[] = [];
@@ -221,6 +259,7 @@ export class MoodleClient {
     hostHeader?: string,
   ): Promise<{ status: number; body: Buffer }> {
     const requestFn = url.protocol === 'https:' ? httpsRequest : httpRequest;
+    const headers = this.moodleRequestHeaders(hostHeader);
 
     return new Promise((resolve, reject) => {
       const req = requestFn(
@@ -229,7 +268,7 @@ export class MoodleClient {
           port: url.port || (url.protocol === 'https:' ? 443 : 80),
           path: `${url.pathname}${url.search}`,
           method: 'GET',
-          headers: hostHeader ? { Host: hostHeader } : undefined,
+          headers,
         },
         (res) => {
           const chunks: Buffer[] = [];

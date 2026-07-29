@@ -23,6 +23,7 @@ import { PendingAction } from './chat/entities/pending-action.entity';
         PORT: Joi.number().default(3000),
         DATABASE_URL: Joi.string().required(),
         MOODLE_INTERNAL_URL: Joi.string().uri().required(),
+        MOODLE_PUBLIC_URL: Joi.string().uri().allow('').optional(),
         MOODLE_TOKEN: Joi.string().required(),
         // Provider keys are optional — availability is checked at request time.
         GEMINI_API_KEY: Joi.string().allow('').optional(),

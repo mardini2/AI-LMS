@@ -249,7 +249,19 @@ Sections and groups are created automatically by the web service - no need to cr
 .\dev.ps1 ps        # Check service status
 .\dev.ps1 install-api # Reinstall API dependencies after package.json changes
 .\dev.ps1 rebuild-chat-js # Rebuild chat boot.js, upgrade plugin if needed, purge caches
+.\dev.ps1 tunnel      # Temporary public URLs via Cloudflare quick tunnel
+.\dev.ps1 tunnel-stop # Stop tunnels and restore local localhost config
 ```
+
+### Temporary public access (Cloudflare tunnel)
+
+`up` / `down` stay local-only. To share Moodle + the API over the internet for a demo:
+
+```powershell
+.\dev.ps1 tunnel
+```
+
+That starts Cloudflare quick tunnels, rewires Moodle `$CFG->wwwroot`, plugin `api_url`, `CORS_ORIGIN`, `MOODLE_PUBLIC_URL`, and `MOODLE_INTERNAL_HOST`, then prints public HTTPS URLs and returns to the shell. Stop with `.\dev.ps1 tunnel-stop` (or `.\dev.ps1 down`). Quick-tunnel hostnames change every run; the script handles rewiring automatically. `down` restores if a tunnel session was left active; `up` restores stale tunnel state if cloudflared was stopped outside the script (for example via Docker Desktop).
 
 
 | What changed                              | What to do                                |
@@ -460,6 +472,7 @@ See `.env.example` for the full list with descriptions. Key variables:
 | `DATABASE_URL`          | PostgreSQL connection string for the API                               |
 | `MOODLE_INTERNAL_URL`   | Docker-internal URL to Moodle (`http://webserver` in dev)              |
 | `MOODLE_INTERNAL_HOST`  | Host header for internal Moodle requests (`localhost:8000` in dev). Required with moodle-docker - requests to `http://webserver` otherwise trigger Behat mode and return HTML instead of JSON. |
+| `MOODLE_PUBLIC_URL`     | Browser-facing Moodle origin for citation/view links. Leave empty for local; set automatically by `.\dev.ps1 tunnel`. |
 | `NODE_ENV`              | `development` locally, `production` in deployment                      |
 
 At least one provider API key is required for chat to work. Keys are read only by the NestJS API container and are never exposed to Moodle, the browser, logs, or API responses.

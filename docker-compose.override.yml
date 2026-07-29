@@ -66,6 +66,8 @@ services:
       DATABASE_URL: ${DATABASE_URL}
       MOODLE_INTERNAL_URL: ${MOODLE_INTERNAL_URL:-http://webserver}
       MOODLE_INTERNAL_HOST: ${MOODLE_INTERNAL_HOST:-localhost:8000}
+      # Browser-facing Moodle origin (set by `dev tunnel`; leave empty for local).
+      MOODLE_PUBLIC_URL: ${MOODLE_PUBLIC_URL:-}
       MOODLE_TOKEN: ${MOODLE_TOKEN}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
