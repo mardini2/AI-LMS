@@ -15,7 +15,7 @@ var DISPLAY_FONT_STEPS = [
     { step: 1, scale: 1, label: 'Default' },
     { step: 2, scale: 1.125, label: 'Large' },
     { step: 3, scale: 1.25, label: 'Extra large' },
-    { step: 4, scale: 1.4, label: 'Biggest' }
+    { step: 4, scale: 1.4, label: 'Largest' }
 ];
 
 var displayBtn = document.getElementById('syllentras-display-btn');

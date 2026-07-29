@@ -1554,6 +1554,34 @@
     gap: 10px;
     width: 100%;
 }
+.syllentras-provider-option-main {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    min-width: 0;
+    flex: 1 1 auto;
+}
+.syllentras-provider-option-icon {
+    display: inline-flex;
+    flex: 0 0 20px;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    color: var(--syll-text);
+}
+.syllentras-provider-option-icon svg {
+    display: block;
+    width: 18px;
+    height: 18px;
+}
+.syllentras-provider-option.active .syllentras-provider-option-icon {
+    color: var(--syll-accent);
+}
+.syllentras-provider-option.disabled .syllentras-provider-option-icon {
+    color: var(--syll-text-muted);
+    opacity: 0.7;
+}
 .syllentras-provider-option-name {
     min-width: 0;
     overflow: hidden;
