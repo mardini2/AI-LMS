@@ -250,7 +250,7 @@ function renderModeSettings(settingsCol, modeId) {
 
     var note = document.createElement('p');
     note.className = 'syllentras-mode-settings-note';
-    note.textContent = 'No extra settings — answers directly from your course.';
+    note.textContent = 'No extra settings - answers directly from your course.';
     settingsCol.appendChild(note);
 }
 

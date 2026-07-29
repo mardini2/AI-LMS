@@ -186,6 +186,20 @@ defined('MOODLE_INTERNAL') || die();
                             rows="2"
                             aria-label="Your message"
                         ></textarea>
+                        <button
+                            type="button"
+                            id="syllentras-chat-mic"
+                            class="syllentras-chat-icon-btn"
+                            aria-label="Dictate message"
+                            aria-pressed="false"
+                            title="Dictate message"
+                        >
+                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="22" height="22" fill="none" aria-hidden="true" focusable="false">
+                                <rect x="9" y="3" width="6" height="11" rx="3" stroke="currentColor" stroke-width="1.8"/>
+                                <path d="M7 11a5 5 0 0 0 10 0" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+                                <path d="M12 16v4M9 20h6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+                            </svg>
+                        </button>
                         <button id="syllentras-chat-send" aria-label="Send">Send</button>
                     </div>
                 </main>

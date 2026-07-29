@@ -1134,6 +1134,7 @@
     line-height: 1.35;
     display: -webkit-box;
     -webkit-line-clamp: 2;
+    line-clamp: 2;
     -webkit-box-orient: vertical;
     overflow: hidden;
 }
@@ -1497,7 +1498,8 @@
 }
 .syllentras-chat-icon-btn,
 #syllentras-chat-tools-btn,
-#syllentras-provider-btn {
+#syllentras-provider-btn,
+#syllentras-chat-mic {
     flex: 0 0 44px;
     display: inline-flex;
     align-items: center;
@@ -1518,7 +1520,8 @@
 }
 .syllentras-chat-icon-btn svg,
 #syllentras-chat-tools-btn svg,
-#syllentras-provider-btn svg {
+#syllentras-provider-btn svg,
+#syllentras-chat-mic svg {
     display: block;
     flex-shrink: 0;
     width: 22px;
@@ -1529,14 +1532,21 @@
 #syllentras-chat-tools-btn:hover,
 #syllentras-chat-tools-btn.open,
 #syllentras-provider-btn:hover:not(:disabled),
-#syllentras-provider-btn.open {
+#syllentras-provider-btn.open,
+#syllentras-chat-mic:hover,
+#syllentras-chat-mic.is-listening {
     background: var(--syll-surface-hover);
     border-color: var(--syll-surface-active-border);
     color: var(--syll-accent);
 }
+#syllentras-chat-mic.is-listening {
+    background: var(--syll-surface-active);
+    box-shadow: 0 0 0 2px var(--syll-surface-active-border);
+}
 .syllentras-chat-icon-btn:disabled,
 #syllentras-chat-tools-btn:disabled,
-#syllentras-provider-btn:disabled {
+#syllentras-provider-btn:disabled,
+#syllentras-chat-mic:disabled {
     opacity: 0.45;
     cursor: not-allowed;
 }
@@ -2096,7 +2106,8 @@
         flex-wrap: wrap;
     }
     #syllentras-chat-tools-btn,
-    #syllentras-provider-btn {
+    #syllentras-provider-btn,
+    #syllentras-chat-mic {
         order: 0;
     }
     .syllentras-provider-wrap {
@@ -2111,8 +2122,11 @@
         flex: 1 1 calc(100% - 104px);
         min-width: 0;
     }
-    #syllentras-chat-send {
+    #syllentras-chat-mic {
         order: 2;
+    }
+    #syllentras-chat-send {
+        order: 3;
         flex: 1 1 100%;
         align-self: stretch;
     }

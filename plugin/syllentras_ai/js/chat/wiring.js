@@ -17,6 +17,9 @@ btn.addEventListener('click', function () {
 close.addEventListener('click', function () {
     panel.hidden = true;
     btn.hidden = false;
+    if (typeof stopDictation === 'function') {
+        stopDictation();
+    }
 });
 
 input.addEventListener('keydown', function (e) {

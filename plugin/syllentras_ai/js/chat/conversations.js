@@ -384,6 +384,10 @@ function sendMessage() {
     var text = input.value.trim();
     if (!text || !conversationId) return;
 
+    if (typeof stopDictation === 'function') {
+        stopDictation();
+    }
+
     input.value = '';
     send.disabled = true;
     setGeneratingState(true);
