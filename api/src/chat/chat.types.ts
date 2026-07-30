@@ -51,4 +51,6 @@ export interface ChatResponse {
   flashcardsUrl?: string;
   reviewOffer?: ReviewOfferDto;
   review?: ReviewBlockDto[];
+  /** Non-fatal per-file upload/parse issues (unsupported, empty, etc.). */
+  attachmentWarnings?: string[];
 }

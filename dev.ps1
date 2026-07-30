@@ -8,20 +8,21 @@
 .PARAMETER Command
     One of: up, down, restart, logs, ps, install-api,
     moodle-install, moodle-upgrade, moodle-purge, rebuild-chat-js,
-    tunnel, tunnel-stop
+    clear-attachments, tunnel, tunnel-stop
 .EXAMPLE
     .\dev.ps1 up
     .\dev.ps1 down
     .\dev.ps1 logs
     .\dev.ps1 install-api
     .\dev.ps1 rebuild-chat-js
+    .\dev.ps1 clear-attachments
     .\dev.ps1 tunnel
     .\dev.ps1 tunnel-stop
 #>
 
 param(
     [Parameter(Position = 0)]
-    [ValidateSet("up", "down", "restart", "logs", "ps", "install-api", "moodle-install", "moodle-upgrade", "moodle-purge", "rebuild-chat-js", "tunnel", "tunnel-stop")]
+    [ValidateSet("up", "down", "restart", "logs", "ps", "install-api", "moodle-install", "moodle-upgrade", "moodle-purge", "rebuild-chat-js", "clear-attachments", "tunnel", "tunnel-stop")]
     [string]$Command = "up"
 )
 
@@ -143,5 +144,14 @@ switch ($Command) {
         Write-Host "Purging all Moodle caches..." -ForegroundColor Cyan
         Invoke-Expression "$compose exec webserver php admin/cli/purge_caches.php"
         Write-Host "Done. Hard-refresh the Moodle page if it still looks stale." -ForegroundColor Green
+    }
+    "clear-attachments" {
+        # When WSL delegation is active, this branch is never reached — WSL gets
+        # clear-attachments via dev.sh. This path is for pure Windows setups.
+        Write-Host "Clearing all chat attachments (all users)..." -ForegroundColor Cyan
+        & "$PSScriptRoot\clear-attachments.ps1" -Force
+        if ($LASTEXITCODE -ne 0) {
+            throw "clear-attachments failed (exit $LASTEXITCODE)."
+        }
     }
 }

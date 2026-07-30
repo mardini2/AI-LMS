@@ -116,6 +116,21 @@ defined('MOODLE_INTERNAL') || die();
                         <div id="syllentras-chat-load-more" hidden>Loading...</div>
                     </div>
                     <div id="syllentras-chat-input-resizer" role="separator" aria-label="Resize message input" aria-orientation="horizontal"></div>
+                    <div id="syllentras-chat-attachments" class="syllentras-chat-attachments" hidden>
+                        <div class="syllentras-chat-attachments-meta">
+                            <span id="syllentras-chat-attachment-count">0 / 10 files</span>
+                        </div>
+                        <div id="syllentras-chat-attachment-list" class="syllentras-chat-attachment-list"></div>
+                        <div id="syllentras-chat-attachment-error" class="syllentras-chat-attachment-error" role="alert" hidden></div>
+                    </div>
+                    <input
+                        type="file"
+                        id="syllentras-chat-file-input"
+                        multiple
+                        hidden
+                        tabindex="-1"
+                        aria-hidden="true"
+                    />
                     <div id="syllentras-chat-input-row">
                         <div class="syllentras-tools-wrap">
                             <button

@@ -382,16 +382,51 @@ function createManualConversation(title) {
 
 function sendMessage() {
     var text = input.value.trim();
-    if (!text || !conversationId) return;
+    var attachmentsPayload = typeof getPendingAttachmentsForSend === 'function'
+        ? getPendingAttachmentsForSend()
+        : [];
+    var hasAttachments = attachmentsPayload.length > 0;
+    if ((!text && !hasAttachments) || !conversationId) return;
+
+    if (typeof hasPendingAttachmentUploads === 'function' && hasPendingAttachmentUploads()) {
+        if (typeof setAttachmentError === 'function') {
+            setAttachmentError('Wait for uploads to finish before sending.');
+        }
+        return;
+    }
+
+    var failed = attachmentsPayload.filter(function (item) {
+        return item.status === 'failed';
+    });
+    if (failed.length) {
+        if (typeof setAttachmentError === 'function') {
+            setAttachmentError('Remove failed attachments before sending.');
+        }
+        return;
+    }
 
     if (typeof stopDictation === 'function') {
         stopDictation();
     }
 
+    var attachmentNames = attachmentsPayload.map(function (item) {
+        return item.filename;
+    });
+    var attachmentIds = attachmentsPayload.map(function (item) {
+        return item.id;
+    }).filter(Boolean);
     input.value = '';
+    if (typeof clearPendingAttachments === 'function') {
+        clearPendingAttachments();
+    }
     send.disabled = true;
     setGeneratingState(true);
-    appendMessage('user', text);
+
+    var displayText = text || (hasAttachments ? 'Please review the attached file(s).' : '');
+    appendMessage('user', displayText, {
+        attachmentNames: attachmentNames
+    });
+
     var loadingEl = appendMessage('assistant', '...');
     var pendingAssistantId = loadingEl.dataset.messageId || nextLocalMessageId();
     loadingEl.dataset.messageId = pendingAssistantId;
@@ -404,6 +439,9 @@ function sendMessage() {
         message: text,
         conversationId: conversationId
     };
+    if (attachmentIds.length) {
+        body.attachmentIds = attachmentIds;
+    }
     // Selected provider rides along so mid-chat switches apply to the next turn.
     var providerId = typeof getSelectedProviderId === 'function' ? getSelectedProviderId() : null;
     if (providerId) {
@@ -442,6 +480,11 @@ function sendMessage() {
         }
         if (data.pendingAction) {
             attachPendingAction(loadingEl, data.pendingAction);
+        }
+        if (Array.isArray(data.attachmentWarnings) && data.attachmentWarnings.length) {
+            if (typeof appendSystemNotice === 'function') {
+                appendSystemNotice(data.attachmentWarnings.join(' '));
+            }
         }
         return loadConversations();
     })

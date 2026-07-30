@@ -24,6 +24,7 @@ desktop.ini
 
 # ── Docker volumes (if accidentally created locally) ──────────────────────────
 pgdata/
+api/uploads/
 
 # ── Logs ──────────────────────────────────────────────────────────────────────
 *.log

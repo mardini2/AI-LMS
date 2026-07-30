@@ -21,11 +21,13 @@ import {
   AnthropicProvider,
   GeminiProvider,
 } from './providers';
+import { AttachmentModule } from './attachments/attachment.module';
 
 @Module({
   imports: [
     ContextModule,
     ConversationModule,
+    AttachmentModule,
     TypeOrmModule.forFeature([PendingAction]),
   ],
   controllers: [ChatController, FlashcardsController, AiContentController],

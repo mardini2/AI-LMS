@@ -242,6 +242,7 @@ if (window.ResizeObserver) {
 applyExpandedState();
 applyStoredSidebarWidth();
 applyStoredInputHeight();
+initAttachments();
 initToolsMenu();
 initModeSelector();
 bindMessageSearchUi();
