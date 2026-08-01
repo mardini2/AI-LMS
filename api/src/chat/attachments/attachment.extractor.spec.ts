@@ -112,8 +112,7 @@ describe('chat attachment helpers', () => {
     );
   });
 
-  it('marks images as binary-only metadata notes', async () => {
-    // Minimal valid-looking PNG header bytes (not a full image).
+  it('rejects images and media until OCR is available', async () => {
     const png = Buffer.from([
       0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d,
     ]);
@@ -124,8 +123,8 @@ describe('chat attachment helpers', () => {
         dataBase64: png.toString('base64'),
       },
     ]);
-    expect(processed.results[0].status).toBe('binary_only');
-    expect(processed.promptBlock).toMatch(/OCR is not available yet/i);
+    expect(processed.results[0].status).toBe('unsupported');
+    expect(processed.errors[0]).toMatch(/OCR not available/i);
   });
 
   it('extracts CSV content', async () => {

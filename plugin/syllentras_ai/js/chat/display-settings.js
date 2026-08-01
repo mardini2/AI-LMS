@@ -172,7 +172,7 @@ function buildDisplayMenu() {
     fontSection.appendChild(displayFontSlider);
     displayMenu.appendChild(fontSection);
 
-    // Voice + speed only show up when the browser can actually talk.
+    // Voice + speed when read-aloud works (Azure cloud and/or browser TTS).
     if (typeof speechSupported === 'function' && speechSupported()
         && typeof SPEECH_VOICES !== 'undefined'
         && typeof SPEECH_RATE_STEPS !== 'undefined') {

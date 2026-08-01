@@ -5,14 +5,17 @@ const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 
 const CHAT_ATTACHMENT_MAX_FILES = 10;
-const CHAT_ATTACHMENT_MAX_BYTES = 15 * 1024 * 1024;
-const CHAT_ATTACHMENT_MAX_TOTAL_BYTES = 100 * 1024 * 1024;
-const CHAT_ATTACHMENT_USER_QUOTA_MB = 1024;
+const CHAT_ATTACHMENT_MAX_BYTES = 50 * 1024 * 1024;
+const CHAT_ATTACHMENT_MAX_TOTAL_BYTES = 300 * 1024 * 1024;
+const CHAT_ATTACHMENT_USER_QUOTA_MB = 2048;
 const CHAT_ATTACHMENT_ALLOWED_EXTENSIONS = [
-    'pdf', 'docx', 'pptx', 'txt', 'md', 'png', 'jpg', 'jpeg',
+    'pdf', 'docx', 'pptx', 'txt', 'md',
     'py', 'java', 'js', 'ts', 'cpp', 'c', 'cs', 'php',
     'xlsx', 'csv', 'zip', 'json', 'xml', 'sql', 'odt', 'ods', 'odp',
-    'mp3', 'wav', 'm4a', 'mp4', 'mov', 'avi', 'epub', 'tex'
+    'epub', 'tex'
+];
+const CHAT_ATTACHMENT_OCR_BLOCKED_EXTENSIONS = [
+    'png', 'jpg', 'jpeg', 'mp3', 'wav', 'm4a', 'mp4', 'mov', 'avi'
 ];
 
 function attachmentExtension(filename) {
@@ -27,12 +30,18 @@ function isAllowedAttachmentFilename(filename) {
     return !!ext && CHAT_ATTACHMENT_ALLOWED_EXTENSIONS.indexOf(ext) !== -1;
 }
 
+function isOcrBlockedAttachmentFilename(filename) {
+    const ext = attachmentExtension(filename);
+    return !!ext && CHAT_ATTACHMENT_OCR_BLOCKED_EXTENSIONS.indexOf(ext) !== -1;
+}
+
 function attachmentLimitMessages() {
     return {
         tooManyFiles: 'You can attach up to 10 files per message.',
-        tooLargeFile: 'This file is too large. Maximum size is 15 MB per file.',
-        tooLargeTotal: 'Upload limit exceeded. Maximum total upload size is 100 MB.',
-        quotaFull: 'Your attachment storage is full. Maximum storage is 1 GB.',
+        tooLargeFile: 'This file is too large. Maximum size is 50 MB per file.',
+        tooLargeTotal: 'Upload limit exceeded. Maximum total upload size is 300 MB.',
+        quotaFull: 'Your attachment storage is full. Maximum storage is 2 GB.',
+        ocrBlocked: "Images and media files aren't allowed yet (OCR not available).",
         unsupportedType: 'This file type is not supported.'
     };
 }
@@ -42,6 +51,9 @@ function friendlyAttachmentError(raw) {
     const limits = attachmentLimitMessages();
     if (!text) return 'Upload failed. Please try again.';
     const lower = text.toLowerCase();
+    if (lower.includes('ocr') || lower.includes('images and media')) {
+        return limits.ocrBlocked;
+    }
     if (lower.includes('not supported')
         || lower.includes('unsupported')
         || lower.includes('not a supported')
@@ -97,6 +109,10 @@ function validateSelection(existingCount, existingBytes, incomingFiles) {
 
     let batchBytes = 0;
     files.forEach((file) => {
+        if (isOcrBlockedAttachmentFilename(file.name)) {
+            errors.push(limits.ocrBlocked);
+            return;
+        }
         if (!isAllowedAttachmentFilename(file.name)) {
             errors.push(limits.unsupportedType);
             return;
@@ -141,7 +157,7 @@ describe('chat attachment UI validation', () => {
         assert.equal(under.errors[0], 'You can attach up to 10 files per message.');
     });
 
-    it('enforces 15 MB per-file and 100 MB total upload limits', () => {
+    it('enforces 50 MB per-file and 300 MB total upload limits', () => {
         const result = validateSelection(0, 0, [
             { name: 'virus.exe', size: 100 },
             { name: 'huge.pdf', size: CHAT_ATTACHMENT_MAX_BYTES + 1 },
@@ -149,28 +165,28 @@ describe('chat attachment UI validation', () => {
         ]);
         assert.deepEqual(result.accepted, ['ok.py']);
         assert.equal(result.errors[0], 'This file type is not supported.');
-        assert.equal(result.errors[1], 'This file is too large. Maximum size is 15 MB per file.');
+        assert.equal(result.errors[1], 'This file is too large. Maximum size is 50 MB per file.');
 
-        const almostFull = validateSelection(0, 95 * 1024 * 1024, [
+        const almostFull = validateSelection(0, 295 * 1024 * 1024, [
             { name: 'a.pdf', size: 10 * 1024 * 1024 },
         ]);
         assert.equal(almostFull.accepted.length, 0);
         assert.equal(
             almostFull.errors[0],
-            'Upload limit exceeded. Maximum total upload size is 100 MB.'
+            'Upload limit exceeded. Maximum total upload size is 300 MB.'
         );
     });
 
     it('maps server/quota errors to friendly temporary toast copy', () => {
         assert.equal(
-            friendlyAttachmentError('Storage quota exceeded (1 GB).'),
-            'Your attachment storage is full. Maximum storage is 1 GB.'
+            friendlyAttachmentError('Storage quota exceeded (2 GB).'),
+            'Your attachment storage is full. Maximum storage is 2 GB.'
         );
         assert.equal(
             friendlyAttachmentError('C:\\uploads\\secret\\file.pdf exploded'),
             'Upload failed. Please try again.'
         );
-        assert.equal(CHAT_ATTACHMENT_USER_QUOTA_MB, 1024);
+        assert.equal(CHAT_ATTACHMENT_USER_QUOTA_MB, 2048);
     });
 
     it('parses stored attachment markers for chat history display', () => {
@@ -185,11 +201,30 @@ describe('chat attachment UI validation', () => {
         );
     });
 
-    it('recognizes phase 1–3 extensions', () => {
+    it('recognizes allowed extensions and blocks OCR media', () => {
         assert.equal(isAllowedAttachmentFilename('Lecture.pptx'), true);
         assert.equal(isAllowedAttachmentFilename('data.xlsx'), true);
-        assert.equal(isAllowedAttachmentFilename('clip.mp4'), true);
+        assert.equal(isAllowedAttachmentFilename('clip.mp4'), false);
+        assert.equal(isOcrBlockedAttachmentFilename('clip.mp4'), true);
+        assert.equal(isOcrBlockedAttachmentFilename('photo.JPG'), true);
         assert.equal(isAllowedAttachmentFilename('notes'), false);
+    });
+
+    it('toasts OCR-blocked images and media with a simple reason', () => {
+        const result = validateSelection(0, 0, [
+            { name: 'slide.png', size: 100 },
+            { name: 'clip.mp4', size: 100 },
+            { name: 'ok.txt', size: 20 },
+        ]);
+        assert.deepEqual(result.accepted, ['ok.txt']);
+        assert.equal(
+            result.errors[0],
+            "Images and media files aren't allowed yet (OCR not available)."
+        );
+        assert.equal(
+            friendlyAttachmentError("Images and media files aren't allowed yet (OCR not available)."),
+            "Images and media files aren't allowed yet (OCR not available)."
+        );
     });
 
     it('treats ready attachments as sendable IDs (not base64 payloads)', () => {

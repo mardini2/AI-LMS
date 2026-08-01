@@ -18,6 +18,7 @@ import {
   CHAT_ATTACHMENT_MAX_FILES,
   CHAT_ATTACHMENT_MAX_TOTAL_BYTES,
   CHAT_ATTACHMENT_MIME_BY_EXT,
+  CHAT_ATTACHMENT_OCR_BLOCKED_MESSAGE,
   type AttachmentClientDto,
 } from './attachment.constants';
 import {
@@ -34,6 +35,7 @@ import {
   extensionOf,
   extractBufferContent,
   isAllowedAttachmentExtension,
+  isOcrBlockedAttachmentExtension,
 } from './attachment.extractor';
 import { StorageService } from './storage/storage.service';
 
@@ -124,6 +126,9 @@ export class AttachmentService {
 
     const filename = this.sanitizeFilename(file.originalname || 'file');
     const ext = extensionOf(filename);
+    if (ext && isOcrBlockedAttachmentExtension(ext)) {
+      throw new BadRequestException(CHAT_ATTACHMENT_OCR_BLOCKED_MESSAGE);
+    }
     if (!ext || !isAllowedAttachmentExtension(ext)) {
       throw new BadRequestException('This file type is not supported.');
     }

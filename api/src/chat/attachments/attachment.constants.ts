@@ -1,11 +1,11 @@
 /** Maximum number of files a student may attach to one chat message. */
 export const CHAT_ATTACHMENT_MAX_FILES = 10;
 
-/** Per-file size limit (15 MiB). */
-export const CHAT_ATTACHMENT_MAX_BYTES = 15 * 1024 * 1024;
+/** Per-file size limit (50 MiB). */
+export const CHAT_ATTACHMENT_MAX_BYTES = 50 * 1024 * 1024;
 
 /** Combined size limit across all files in one multipart upload request. */
-export const CHAT_ATTACHMENT_MAX_TOTAL_BYTES = 100 * 1024 * 1024;
+export const CHAT_ATTACHMENT_MAX_TOTAL_BYTES = 300 * 1024 * 1024;
 
 /** Truncate extracted text per file before chunking. */
 export const CHAT_ATTACHMENT_MAX_CHARS_PER_FILE = 50_000;
@@ -16,8 +16,8 @@ export const CHAT_ATTACHMENT_MAX_CHARS_TOTAL = 120_000;
 /** Max entries to inspect inside a ZIP archive. */
 export const CHAT_ATTACHMENT_ZIP_MAX_ENTRIES = 40;
 
-/** Default per-user storage quota (1 GiB). Overridable via env. */
-export const CHAT_ATTACHMENT_DEFAULT_USER_QUOTA_BYTES = 1024 * 1024 * 1024;
+/** Default per-user storage quota (2 GiB). Overridable via env. */
+export const CHAT_ATTACHMENT_DEFAULT_USER_QUOTA_BYTES = 2 * 1024 * 1024 * 1024;
 
 /** Default: delete abandoned uploads after 24 hours. */
 export const CHAT_ATTACHMENT_DEFAULT_ABANDONED_HOURS = 24;
@@ -45,9 +45,6 @@ export const CHAT_ATTACHMENT_EXTENSIONS = {
     'pptx',
     'txt',
     'md',
-    'png',
-    'jpg',
-    'jpeg',
     'py',
     'java',
     'js',
@@ -58,7 +55,7 @@ export const CHAT_ATTACHMENT_EXTENSIONS = {
     'php',
   ],
   phase2: ['xlsx', 'csv', 'zip', 'json', 'xml', 'sql', 'odt', 'ods', 'odp'],
-  phase3: ['mp3', 'wav', 'm4a', 'mp4', 'mov', 'avi', 'epub', 'tex'],
+  phase3: ['epub', 'tex'],
 } as const;
 
 /** Text-extractable types (full extraction supported now). */
@@ -90,10 +87,10 @@ export const CHAT_ATTACHMENT_TEXT_EXTENSIONS = new Set([
 ]);
 
 /**
- * Media types accepted for upload but OCR/transcription is pending.
- * Stored with a metadata note chunk so the pipeline can plug in later.
+ * Images / audio / video — blocked until we have OCR / transcription.
+ * Keep this list so uploads get a clear "OCR" toast instead of a vague reject.
  */
-export const CHAT_ATTACHMENT_PENDING_MEDIA_EXTENSIONS = new Set([
+export const CHAT_ATTACHMENT_OCR_BLOCKED_EXTENSIONS = new Set([
   'png',
   'jpg',
   'jpeg',
@@ -104,6 +101,10 @@ export const CHAT_ATTACHMENT_PENDING_MEDIA_EXTENSIONS = new Set([
   'mov',
   'avi',
 ]);
+
+/** Shown in API errors and the chat toast. Keep it short. */
+export const CHAT_ATTACHMENT_OCR_BLOCKED_MESSAGE =
+  "Images and media files aren't allowed yet (OCR not available).";
 
 export const CHAT_ATTACHMENT_ALLOWED_EXTENSIONS: readonly string[] = [
   ...CHAT_ATTACHMENT_EXTENSIONS.phase1,

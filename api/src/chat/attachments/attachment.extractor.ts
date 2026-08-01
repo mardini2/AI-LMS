@@ -13,6 +13,8 @@ import {
   CHAT_ATTACHMENT_MAX_FILES,
   CHAT_ATTACHMENT_MAX_TOTAL_BYTES,
   CHAT_ATTACHMENT_MIME_BY_EXT,
+  CHAT_ATTACHMENT_OCR_BLOCKED_EXTENSIONS,
+  CHAT_ATTACHMENT_OCR_BLOCKED_MESSAGE,
   CHAT_ATTACHMENT_ZIP_MAX_ENTRIES,
   type ChatAttachmentInput,
   type ChatAttachmentResult,
@@ -35,6 +37,10 @@ export function extensionOf(filename: string): string {
 
 export function isAllowedAttachmentExtension(ext: string): boolean {
   return CHAT_ATTACHMENT_ALLOWED_EXTENSION_SET.has(ext.toLowerCase());
+}
+
+export function isOcrBlockedAttachmentExtension(ext: string): boolean {
+  return CHAT_ATTACHMENT_OCR_BLOCKED_EXTENSIONS.has(ext.toLowerCase());
 }
 
 export function decodeBase64Payload(dataBase64: string): Buffer {
@@ -459,6 +465,21 @@ export async function processChatAttachments(
       (input.mimeType && String(input.mimeType).trim()) ||
       CHAT_ATTACHMENT_MIME_BY_EXT[ext] ||
       'application/octet-stream';
+
+    if (ext && isOcrBlockedAttachmentExtension(ext)) {
+      const result: ChatAttachmentResult = {
+        filename,
+        extension: ext,
+        mimeType,
+        byteLength: 0,
+        status: 'unsupported',
+        text: '',
+        error: CHAT_ATTACHMENT_OCR_BLOCKED_MESSAGE,
+      };
+      results.push(result);
+      errors.push(result.error!);
+      continue;
+    }
 
     if (!ext || !isAllowedAttachmentExtension(ext)) {
       const result: ChatAttachmentResult = {

@@ -247,6 +247,7 @@ initToolsMenu();
 initModeSelector();
 bindMessageSearchUi();
 loadProviders();
+loadAzureSpeechConfig();
 loadConversations();
 installSectionButtons();
 if (document.readyState === 'loading') {

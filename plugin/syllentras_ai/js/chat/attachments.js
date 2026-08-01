@@ -4,15 +4,19 @@
 // Chat file attachments: Tools → Attach files, or drag-and-drop onto the chat.
 
 var CHAT_ATTACHMENT_MAX_FILES = 10;
-var CHAT_ATTACHMENT_MAX_BYTES = 15 * 1024 * 1024;
-var CHAT_ATTACHMENT_MAX_TOTAL_BYTES = 100 * 1024 * 1024;
-var CHAT_ATTACHMENT_USER_QUOTA_MB = 1024;
+var CHAT_ATTACHMENT_MAX_BYTES = 50 * 1024 * 1024;
+var CHAT_ATTACHMENT_MAX_TOTAL_BYTES = 300 * 1024 * 1024;
+var CHAT_ATTACHMENT_USER_QUOTA_MB = 2048;
 var CHAT_ATTACHMENT_TOAST_MS = 3200;
 var CHAT_ATTACHMENT_ALLOWED_EXTENSIONS = [
-    'pdf', 'docx', 'pptx', 'txt', 'md', 'png', 'jpg', 'jpeg',
+    'pdf', 'docx', 'pptx', 'txt', 'md',
     'py', 'java', 'js', 'ts', 'cpp', 'c', 'cs', 'php',
     'xlsx', 'csv', 'zip', 'json', 'xml', 'sql', 'odt', 'ods', 'odp',
-    'mp3', 'wav', 'm4a', 'mp4', 'mov', 'avi', 'epub', 'tex'
+    'epub', 'tex'
+];
+// Blocked until OCR / transcription exists — toast explains why.
+var CHAT_ATTACHMENT_OCR_BLOCKED_EXTENSIONS = [
+    'png', 'jpg', 'jpeg', 'mp3', 'wav', 'm4a', 'mp4', 'mov', 'avi'
 ];
 
 var pendingAttachments = [];
@@ -38,6 +42,11 @@ function isAllowedAttachmentFilename(filename) {
     return !!ext && CHAT_ATTACHMENT_ALLOWED_EXTENSIONS.indexOf(ext) !== -1;
 }
 
+function isOcrBlockedAttachmentFilename(filename) {
+    var ext = attachmentExtension(filename);
+    return !!ext && CHAT_ATTACHMENT_OCR_BLOCKED_EXTENSIONS.indexOf(ext) !== -1;
+}
+
 function buildAcceptAttribute() {
     return CHAT_ATTACHMENT_ALLOWED_EXTENSIONS.map(function (ext) {
         return '.' + ext;
@@ -47,9 +56,10 @@ function buildAcceptAttribute() {
 function attachmentLimitMessages() {
     return {
         tooManyFiles: 'You can attach up to 10 files per message.',
-        tooLargeFile: 'This file is too large. Maximum size is 15 MB per file.',
-        tooLargeTotal: 'Upload limit exceeded. Maximum total upload size is 100 MB.',
-        quotaFull: 'Your attachment storage is full. Maximum storage is 1 GB.',
+        tooLargeFile: 'This file is too large. Maximum size is 50 MB per file.',
+        tooLargeTotal: 'Upload limit exceeded. Maximum total upload size is 300 MB.',
+        quotaFull: 'Your attachment storage is full. Maximum storage is 2 GB.',
+        ocrBlocked: "Images and media files aren't allowed yet (OCR not available).",
         unsupportedType: 'This file type is not supported.'
     };
 }
@@ -59,6 +69,10 @@ function friendlyAttachmentError(raw) {
     var limits = attachmentLimitMessages();
     if (!text) return 'Upload failed. Please try again.';
     var lower = text.toLowerCase();
+    if (lower.indexOf('ocr') !== -1
+        || lower.indexOf('images and media') !== -1) {
+        return limits.ocrBlocked;
+    }
     if (lower.indexOf('not supported') !== -1
         || lower.indexOf('unsupported') !== -1
         || lower.indexOf('not a supported') !== -1
@@ -331,6 +345,10 @@ function addAttachmentFiles(fileList) {
 
     files.forEach(function (file) {
         if (!file) return;
+        if (isOcrBlockedAttachmentFilename(file.name)) {
+            errors.push(limits.ocrBlocked);
+            return;
+        }
         if (!isAllowedAttachmentFilename(file.name)) {
             errors.push(limits.unsupportedType);
             return;
