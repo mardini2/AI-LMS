@@ -368,11 +368,55 @@ function showToolsMenu() {
             Array.from(toolsCol.querySelectorAll('.syllentras-tools-menu-item')).forEach(function (el) {
                 el.classList.toggle('selected', el === button);
             });
+            topicsCol.hidden = false;
             selectFirstTopicIfNeeded(topicsCol);
             updateContinueState(topicsCol);
         });
         toolsCol.appendChild(button);
     });
+
+    var attachBtn = document.createElement('button');
+    attachBtn.type = 'button';
+    attachBtn.className = 'syllentras-tools-menu-item syllentras-tools-attach-item';
+    attachBtn.setAttribute('role', 'menuitem');
+    attachBtn.dataset.toolKey = 'attach_files';
+
+    var attachRow = document.createElement('span');
+    attachRow.className = 'syllentras-tools-attach-row';
+
+    var attachIcon = document.createElement('span');
+    attachIcon.className = 'syllentras-tools-attach-icon';
+    attachIcon.setAttribute('aria-hidden', 'true');
+    attachIcon.innerHTML =
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18" fill="none" focusable="false">' +
+        '<path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" ' +
+        'stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round"/>' +
+        '</svg>';
+
+    var attachText = document.createElement('span');
+    attachText.className = 'syllentras-tools-attach-text';
+
+    var attachLabel = document.createElement('span');
+    attachLabel.className = 'syllentras-tools-menu-item-label';
+    attachLabel.textContent = 'Attach files';
+
+    var attachDesc = document.createElement('span');
+    attachDesc.className = 'syllentras-tools-menu-item-desc';
+    attachDesc.textContent = 'Drop files here or browse';
+
+    attachText.appendChild(attachLabel);
+    attachText.appendChild(attachDesc);
+    attachRow.appendChild(attachIcon);
+    attachRow.appendChild(attachText);
+    attachBtn.appendChild(attachRow);
+    attachBtn.addEventListener('click', function (e) {
+        e.stopPropagation();
+        closeToolsMenu();
+        if (typeof openAttachmentPicker === 'function') {
+            openAttachmentPicker();
+        }
+    });
+    toolsCol.appendChild(attachBtn);
 
     toolsMenu.appendChild(toolsCol);
     toolsMenu.appendChild(topicsCol);

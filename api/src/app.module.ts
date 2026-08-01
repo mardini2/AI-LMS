@@ -2,18 +2,22 @@ import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { CacheModule } from '@nestjs/cache-manager';
+import { ScheduleModule } from '@nestjs/schedule';
 import * as Joi from 'joi';
 
 import { ChatModule } from './chat/chat.module';
 import { ConversationModule } from './conversation/conversation.module';
 import { ContextModule } from './context/context.module';
+import { AttachmentModule } from './chat/attachments/attachment.module';
+import { SpeechModule } from './speech/speech.module';
 import { Conversation } from './conversation/entities/conversation.entity';
 import { Message } from './conversation/entities/message.entity';
 import { PendingAction } from './chat/entities/pending-action.entity';
+import { Attachment } from './chat/attachments/attachment.entity';
+import { AttachmentChunk } from './chat/attachments/attachment-chunk.entity';
 
 @Module({
   imports: [
-    // ── Config — validates required env vars at startup ─────────────────────
     ConfigModule.forRoot({
       isGlobal: true,
       validationSchema: Joi.object({
@@ -25,7 +29,6 @@ import { PendingAction } from './chat/entities/pending-action.entity';
         MOODLE_INTERNAL_URL: Joi.string().uri().required(),
         MOODLE_PUBLIC_URL: Joi.string().uri().allow('').optional(),
         MOODLE_TOKEN: Joi.string().required(),
-        // Provider keys are optional — availability is checked at request time.
         GEMINI_API_KEY: Joi.string().allow('').optional(),
         OPENAI_API_KEY: Joi.string().allow('').optional(),
         ANTHROPIC_API_KEY: Joi.string().allow('').optional(),
@@ -37,16 +40,29 @@ import { PendingAction } from './chat/entities/pending-action.entity';
         XAI_MODEL: Joi.string().allow('').optional(),
         MISTRAL_MODEL: Joi.string().allow('').optional(),
         CORS_ORIGIN: Joi.string().required(),
+        ATTACHMENT_STORAGE_PATH: Joi.string().default('/app/uploads'),
+        ATTACHMENT_USER_QUOTA_BYTES: Joi.number().default(2147483648),
+        ATTACHMENT_ABANDONED_HOURS: Joi.number().default(24),
+        ATTACHMENT_RETENTION_DAYS: Joi.number().default(30),
+        // Cloud TTS — leave enabled=false to stick with browser speechSynthesis.
+        AZURE_TTS_ENABLED: Joi.boolean().truthy('true').falsy('false').default(false),
+        AZURE_SPEECH_KEY: Joi.string().allow('').optional(),
+        AZURE_SPEECH_REGION: Joi.string().allow('').optional(),
       }),
     }),
 
-    // ── Database ─────────────────────────────────────────────────────────────
     TypeOrmModule.forRootAsync({
       imports: [ConfigModule],
       useFactory: (config: ConfigService) => ({
         type: 'postgres',
         url: config.get<string>('DATABASE_URL'),
-        entities: [Conversation, Message, PendingAction],
+        entities: [
+          Conversation,
+          Message,
+          PendingAction,
+          Attachment,
+          AttachmentChunk,
+        ],
         synchronize: config.get('NODE_ENV') !== 'production',
         ssl: config.get('NODE_ENV') === 'production'
           ? { rejectUnauthorized: false }
@@ -55,16 +71,18 @@ import { PendingAction } from './chat/entities/pending-action.entity';
       inject: [ConfigService],
     }),
 
-    // ── In-memory cache for Moodle course content ─────────────────────────
     CacheModule.register({
       isGlobal: true,
-      ttl: 15 * 60 * 1000, // 15 minutes (cache-manager v6 uses ms)
+      ttl: 15 * 60 * 1000,
     }),
 
-    // ── Feature modules ───────────────────────────────────────────────────
+    ScheduleModule.forRoot(),
+
     ContextModule,
     ConversationModule,
+    AttachmentModule,
     ChatModule,
+    SpeechModule,
   ],
 })
 export class AppModule {}

@@ -59,6 +59,7 @@ import {
   logGreetingDebug,
   shouldLogGreetingDebug,
 } from './greeting-debug';
+import { ChatAttachmentsService } from './attachments/chat-attachments.service';
 
 export type {
   ChatResponse,
@@ -163,6 +164,7 @@ export class ChatService {
     private readonly studyGuideGeneration: StudyGuideGenerationService,
     private readonly flashcardsGeneration: FlashcardsGenerationService,
     private readonly topicSuggestions: TopicSuggestionsService,
+    private readonly chatAttachments: ChatAttachmentsService,
   ) {}
 
   listProviders() {
@@ -178,10 +180,10 @@ export class ChatService {
       courseName,
       moodleUserId,
       userFirstName,
-      message,
       conversationId: incomingConvId,
       provider: requestedProvider,
     } = dto;
+    const rawMessage = typeof dto.message === 'string' ? dto.message : '';
     const mode = dto.mode === 'coach' ? 'coach' : 'direct';
     const guidance =
       mode === 'coach'
@@ -220,6 +222,55 @@ export class ChatService {
 
     const conversation =
       await this.conversationService.findById(conversationId);
+
+    const attachmentIds = dto.attachmentIds || [];
+    if (attachmentIds.length && !moodleUserId) {
+      throw new BadRequestException(
+        'Signing in is required to use file attachments.',
+      );
+    }
+
+    const processedAttachments = moodleUserId
+      ? await this.chatAttachments.resolveByIds({
+          attachmentIds,
+          moodleUserId,
+          conversationId,
+          query: rawMessage,
+        })
+      : {
+          promptBlock: '',
+          storagePrefix: '',
+          usableFilenames: [] as string[],
+          errors: [] as string[],
+          attachmentIds: [] as string[],
+        };
+
+    if (
+      !rawMessage.trim() &&
+      !processedAttachments.promptBlock &&
+      attachmentIds.length > 0
+    ) {
+      throw new BadRequestException(
+        processedAttachments.errors[0] ||
+          'None of the attached files could be read. Please try different files.',
+      );
+    }
+    if (!rawMessage.trim() && !processedAttachments.promptBlock) {
+      throw new BadRequestException('Message cannot be empty.');
+    }
+
+    const messageForLlm = this.chatAttachments.buildLlmMessage(
+      rawMessage,
+      processedAttachments.promptBlock,
+    );
+    const messageForStorage = this.chatAttachments.buildStorageMessage(
+      rawMessage,
+      processedAttachments.storagePrefix,
+    );
+    // Keep retrieval / topic scoring keyed off the student text (+ filenames).
+    const message = rawMessage.trim()
+      ? rawMessage.trim()
+      : processedAttachments.usableFilenames.join(', ') || messageForStorage;
 
     const [
       courseMaterial,
@@ -285,7 +336,7 @@ export class ChatService {
           formatHistoryForLog(providerHistory),
           '',
           '----- USER MESSAGE -----',
-          message,
+          messageForLlm,
         ].join('\n'),
       );
     }
@@ -296,7 +347,7 @@ export class ChatService {
     const result = await llm.chat({
       systemInstruction,
       history: providerHistory,
-      message,
+      message: messageForLlm,
       tools: canProposeContent ? STUDY_PROPOSAL_TOOLS : undefined,
     });
 
@@ -499,15 +550,37 @@ export class ChatService {
       }
     }
 
-    await this.conversationService.appendMessages(conversationId, [
-      { role: 'user', content: message, mode, guidance: guidance ?? null },
-      {
-        role: 'assistant',
-        content: responseText,
-        mode,
-        guidance: guidance ?? null,
-      },
-    ]);
+    const savedMessages = await this.conversationService.appendMessages(
+      conversationId,
+      [
+        {
+          role: 'user',
+          content: messageForStorage,
+          mode,
+          guidance: guidance ?? null,
+        },
+        {
+          role: 'assistant',
+          content: responseText,
+          mode,
+          guidance: guidance ?? null,
+        },
+      ],
+    );
+
+    const userMessage = savedMessages.find((m) => m.role === 'user');
+    if (
+      userMessage &&
+      moodleUserId &&
+      processedAttachments.attachmentIds.length
+    ) {
+      await this.chatAttachments.linkToMessage(
+        processedAttachments.attachmentIds,
+        userMessage.id,
+        conversationId,
+        moodleUserId,
+      );
+    }
 
     let topicSuggestions = normalizeReturnedTopics(conversation.topicSuggestions);
 
@@ -542,6 +615,9 @@ export class ChatService {
       provider: llm.id,
       mode,
       guidance,
+      attachmentWarnings: processedAttachments.errors.length
+        ? processedAttachments.errors
+        : undefined,
     };
   }
 

@@ -1,8 +1,12 @@
 // Part of the Syllentras chat widget.
 // Included inside the shared IIFE from before_footer.php — do not load standalone.
 //
-// Read-aloud for chat bubbles. Picks the nicest system voice we can find for
-// Grace (female) / Ben (male), and respects the speed slider from display settings.
+// Read-aloud for chat bubbles.
+// Chrome / Edge / Safari: use their built-in voices first (they usually sound
+// good), and only hit Azure if that path fails.
+// Firefox / Brave / everything else: try Azure first, then fall back to the
+// browser voice if Azure is off, out of credit, or just errors out.
+// Goal is no dead speaker button — always try whatever still works.
 
 var SPEECH_VOICE_KEY = 'syllentras_speech_voice';
 var SPEECH_RATE_KEY = 'syllentras_speech_rate_step';
@@ -28,10 +32,72 @@ var cachedSpeechVoices = [];
 // True while we cancel + re-speak after a speed/voice tweak.
 var speechRestartPending = false;
 
-function speechSupported() {
+// From GET /speech/config. null until the first probe finishes.
+var azureSpeechConfig = null;
+var azureSpeechConfigPromise = null;
+// Bumped whenever we stop / start so late Azure responses get ignored.
+var speechPlayGeneration = 0;
+var azureAudioEl = null;
+var azureObjectUrl = null;
+
+function browserSpeechSupported() {
     return typeof window !== 'undefined'
         && 'speechSynthesis' in window
         && typeof SpeechSynthesisUtterance !== 'undefined';
+}
+
+function azureTtsIsAvailable() {
+    return !!(azureSpeechConfig && azureSpeechConfig.azureTtsAvailable);
+}
+
+/** After a hard Azure failure (quota, bad key, etc.) stop asking this session. */
+function markAzureSpeechUnavailableTemporarily() {
+    if (!azureSpeechConfig) {
+        azureSpeechConfig = {
+            azureTtsEnabled: false,
+            azureTtsAvailable: false,
+            maxChars: 5000
+        };
+        return;
+    }
+    azureSpeechConfig.azureTtsAvailable = false;
+}
+
+/**
+ * Browsers that usually ship decent neural / system voices.
+ * Brave is Chromium-based but its voices are often weak, so it is NOT here.
+ */
+function prefersNativeBrowserTts() {
+    if (typeof navigator === 'undefined') return false;
+    var ua = navigator.userAgent || '';
+
+    // Brave — prefer Azure even though the UA looks like Chrome.
+    if (typeof navigator.brave !== 'undefined') return false;
+    if (/Brave/i.test(ua)) return false;
+    if (navigator.userAgentData && Array.isArray(navigator.userAgentData.brands)) {
+        for (var i = 0; i < navigator.userAgentData.brands.length; i++) {
+            var brand = String(navigator.userAgentData.brands[i].brand || '');
+            if (/brave/i.test(brand)) return false;
+        }
+    }
+
+    // Edge (Edg/) before Chrome — Edge UA also contains Chrome/.
+    if (/Edg\//.test(ua)) return true;
+
+    // Chrome / Chromium, but not Opera.
+    if (/Chrome\//.test(ua) && !/OPR\//.test(ua) && !/Edg\//.test(ua)) return true;
+
+    // Safari on macOS / iOS (their UA has Safari but not Chrome).
+    if (/Safari\//.test(ua) && !/Chrome\//.test(ua) && !/Chromium\//.test(ua)) return true;
+
+    return false;
+}
+
+function speechSupported() {
+    // Cloud path only needs Audio + fetch; browser path needs speechSynthesis.
+    if (azureTtsIsAvailable()) return true;
+    if (browserSpeechSupported()) return true;
+    return typeof Audio !== 'undefined' && typeof fetch === 'function';
 }
 
 function normalizeSpeechVoice(raw) {
@@ -52,7 +118,7 @@ function speechRateInfo(step) {
 }
 
 function refreshSpeechVoiceCache() {
-    if (!speechSupported()) {
+    if (!browserSpeechSupported()) {
         cachedSpeechVoices = [];
         return cachedSpeechVoices;
     }
@@ -160,7 +226,57 @@ function resetSpeechSettings() {
     restartMessageSpeechIfPlaying();
 }
 
+/** Ask Nest whether Azure TTS is on. Safe to call more than once. */
+function loadAzureSpeechConfig() {
+    if (azureSpeechConfigPromise) return azureSpeechConfigPromise;
+    if (typeof fetchJson !== 'function' || !API_URL) {
+        azureSpeechConfig = { azureTtsEnabled: false, azureTtsAvailable: false };
+        azureSpeechConfigPromise = Promise.resolve(azureSpeechConfig);
+        return azureSpeechConfigPromise;
+    }
+    azureSpeechConfigPromise = fetchJson('/speech/config')
+        .then(function (data) {
+            azureSpeechConfig = {
+                azureTtsEnabled: !!(data && data.azureTtsEnabled),
+                azureTtsAvailable: !!(data && data.azureTtsAvailable),
+                maxChars: (data && data.maxChars) || 5000,
+                contentType: (data && data.contentType) || 'audio/mpeg'
+            };
+            return azureSpeechConfig;
+        })
+        .catch(function () {
+            // API down / old deploy — just use the browser voice.
+            azureSpeechConfig = { azureTtsEnabled: false, azureTtsAvailable: false, maxChars: 5000 };
+            return azureSpeechConfig;
+        });
+    return azureSpeechConfigPromise;
+}
+
+function stopAzureAudio() {
+    if (azureAudioEl) {
+        azureAudioEl.onended = null;
+        azureAudioEl.onerror = null;
+        try {
+            azureAudioEl.pause();
+        } catch (e) { /* ignore */ }
+        try {
+            azureAudioEl.removeAttribute('src');
+            azureAudioEl.load();
+        } catch (e2) { /* ignore */ }
+        azureAudioEl = null;
+    }
+    if (azureObjectUrl) {
+        try {
+            URL.revokeObjectURL(azureObjectUrl);
+        } catch (e3) { /* ignore */ }
+        azureObjectUrl = null;
+    }
+}
+
 function stopMessageSpeech() {
+    speechPlayGeneration += 1;
+    speechRestartPending = false;
+    stopAzureAudio();
     if (typeof window !== 'undefined' && window.speechSynthesis) {
         window.speechSynthesis.cancel();
     }
@@ -196,16 +312,25 @@ function setSpeakButtonPlaying(el, playing) {
     btn.setAttribute('aria-label', playing ? 'Stop reading' : 'Read aloud');
 }
 
-function startMessageSpeech(el) {
-    if (!speechSupported() || !el) return;
-
-    var text = getMessageSpeakText(el);
-    if (!text || text === '...') return;
-
-    // Drop whatever was mid-sentence before starting fresh.
-    if (typeof window !== 'undefined' && window.speechSynthesis) {
-        window.speechSynthesis.cancel();
+function clearSpeakingUi(el) {
+    if (speechRestartPending) return;
+    if (speakingMessageEl === el) {
+        setSpeakButtonPlaying(el, false);
+        speakingMessageEl = null;
     }
+}
+
+function startBrowserMessageSpeech(el, text, generation, onFail) {
+    if (!browserSpeechSupported()) {
+        if (typeof onFail === 'function') {
+            onFail();
+        } else {
+            clearSpeakingUi(el);
+        }
+        return;
+    }
+    if (generation !== speechPlayGeneration || speakingMessageEl !== el) return;
+
     refreshSpeechVoiceCache();
 
     var utterance = new SpeechSynthesisUtterance(text);
@@ -221,24 +346,158 @@ function startMessageSpeech(el) {
     utterance.volume = 1;
 
     utterance.onend = function () {
-        if (speechRestartPending) return;
-        if (speakingMessageEl === el) {
-            setSpeakButtonPlaying(el, false);
-            speakingMessageEl = null;
-        }
+        if (generation !== speechPlayGeneration) return;
+        clearSpeakingUi(el);
     };
-    utterance.onerror = function () {
-        // cancel() fires an error — ignore that when we're about to restart.
-        if (speechRestartPending) return;
-        if (speakingMessageEl === el) {
-            setSpeakButtonPlaying(el, false);
-            speakingMessageEl = null;
+    utterance.onerror = function (ev) {
+        // cancel() / restart fires canceled|interrupted — don't treat as failure.
+        if (generation !== speechPlayGeneration) return;
+        var err = ev && ev.error;
+        if (err === 'canceled' || err === 'interrupted') return;
+        if (typeof onFail === 'function') {
+            onFail();
+            return;
         }
+        clearSpeakingUi(el);
     };
+
+    try {
+        window.speechSynthesis.speak(utterance);
+    } catch (e) {
+        if (typeof onFail === 'function') {
+            onFail();
+        } else {
+            clearSpeakingUi(el);
+        }
+    }
+}
+
+/**
+ * @param {boolean} [allowBrowserFallback=true] — set false when browser already
+ *   failed and Azure is the last resort (avoids a pointless second browser try).
+ */
+function startAzureMessageSpeech(el, text, generation, allowBrowserFallback) {
+    var canFallback = allowBrowserFallback !== false;
+
+    function fallbackOrStop() {
+        markAzureSpeechUnavailableTemporarily();
+        if (generation !== speechPlayGeneration || speakingMessageEl !== el) return;
+        if (canFallback && browserSpeechSupported()) {
+            startBrowserMessageSpeech(el, text, generation);
+        } else {
+            clearSpeakingUi(el);
+        }
+    }
+
+    var maxChars = (azureSpeechConfig && azureSpeechConfig.maxChars) || 5000;
+    var clipped = text.length > maxChars ? text.slice(0, maxChars) : text;
+
+    return fetch(API_URL + '/speech/synthesize', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            text: clipped,
+            voice: selectedSpeechVoice
+        })
+    }).then(function (res) {
+        if (!res.ok) {
+            return res.text().then(function (body) {
+                var msg = 'Azure TTS request failed (' + res.status + ')';
+                try {
+                    var data = body ? JSON.parse(body) : null;
+                    if (data && typeof data.message === 'string') msg = data.message;
+                } catch (e) { /* keep default */ }
+                throw new Error(msg);
+            });
+        }
+        return res.blob();
+    }).then(function (blob) {
+        if (generation !== speechPlayGeneration || speakingMessageEl !== el) return;
+
+        stopAzureAudio();
+        azureObjectUrl = URL.createObjectURL(blob);
+        azureAudioEl = new Audio(azureObjectUrl);
+        // Speed slider still works — we just stretch/compress the mp3.
+        azureAudioEl.playbackRate = speechRateInfo(selectedSpeechRateStep).rate;
+
+        azureAudioEl.onended = function () {
+            if (generation !== speechPlayGeneration) return;
+            stopAzureAudio();
+            clearSpeakingUi(el);
+        };
+        azureAudioEl.onerror = function () {
+            if (generation !== speechPlayGeneration) return;
+            stopAzureAudio();
+            fallbackOrStop();
+        };
+
+        return azureAudioEl.play().catch(function () {
+            if (generation !== speechPlayGeneration) return;
+            stopAzureAudio();
+            fallbackOrStop();
+        });
+    }).catch(function () {
+        fallbackOrStop();
+    });
+}
+
+function startMessageSpeech(el) {
+    if (!el || !speechSupported()) return;
+
+    var text = getMessageSpeakText(el);
+    if (!text || text === '...') return;
+
+    // Drop whatever was mid-sentence before starting fresh.
+    speechPlayGeneration += 1;
+    var generation = speechPlayGeneration;
+    stopAzureAudio();
+    if (typeof window !== 'undefined' && window.speechSynthesis) {
+        window.speechSynthesis.cancel();
+    }
 
     speakingMessageEl = el;
     setSpeakButtonPlaying(el, true);
-    window.speechSynthesis.speak(utterance);
+
+    function begin() {
+        if (generation !== speechPlayGeneration || speakingMessageEl !== el) return;
+
+        var azureOk = azureTtsIsAvailable();
+        var nativeFirst = prefersNativeBrowserTts() && browserSpeechSupported();
+
+        // Chrome / Edge / Safari — their own voice first.
+        if (nativeFirst) {
+            startBrowserMessageSpeech(el, text, generation, function () {
+                if (generation !== speechPlayGeneration || speakingMessageEl !== el) return;
+                if (azureOk) {
+                    // Native choked; Azure is the backup. Don't bounce back to browser.
+                    startAzureMessageSpeech(el, text, generation, false);
+                } else {
+                    clearSpeakingUi(el);
+                }
+            });
+            return;
+        }
+
+        // Firefox / Brave / others — Azure when it's up, browser otherwise.
+        if (azureOk) {
+            startAzureMessageSpeech(el, text, generation, true);
+            return;
+        }
+
+        if (browserSpeechSupported()) {
+            startBrowserMessageSpeech(el, text, generation);
+            return;
+        }
+
+        clearSpeakingUi(el);
+    }
+
+    // First click may race the config probe — wait one tick if needed.
+    if (azureSpeechConfig === null) {
+        loadAzureSpeechConfig().then(begin);
+    } else {
+        begin();
+    }
 }
 
 // Browsers don't let you change rate mid-utterance, so we restart the same bubble.
@@ -247,6 +506,7 @@ function restartMessageSpeechIfPlaying() {
     if (!el || !speechSupported()) return;
 
     speechRestartPending = true;
+    stopAzureAudio();
     if (window.speechSynthesis) {
         window.speechSynthesis.cancel();
     }
@@ -266,7 +526,6 @@ function toggleMessageSpeech(el) {
 
     // Same bubble again = stop.
     if (speakingMessageEl === el) {
-        speechRestartPending = false;
         stopMessageSpeech();
         return;
     }
@@ -306,8 +565,9 @@ function attachMessageSpeakButton(el) {
 }
 
 loadSpeechSettings();
+loadAzureSpeechConfig();
 
-if (speechSupported()) {
+if (browserSpeechSupported()) {
     refreshSpeechVoiceCache();
     // Chrome loads voices late — refresh when they show up.
     if (typeof window.speechSynthesis.onvoiceschanged !== 'undefined') {

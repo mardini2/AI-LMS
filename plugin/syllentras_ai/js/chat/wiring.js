@@ -242,10 +242,12 @@ if (window.ResizeObserver) {
 applyExpandedState();
 applyStoredSidebarWidth();
 applyStoredInputHeight();
+initAttachments();
 initToolsMenu();
 initModeSelector();
 bindMessageSearchUi();
 loadProviders();
+loadAzureSpeechConfig();
 loadConversations();
 installSectionButtons();
 if (document.readyState === 'loading') {

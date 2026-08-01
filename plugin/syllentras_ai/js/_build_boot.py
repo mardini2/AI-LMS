@@ -19,6 +19,7 @@ ORDER = [
     "message-search.js",
     "message-speech.js",
     "message-dictation.js",
+    "attachments.js",
     "messages.js",
     "conversations.js",
     "message-search-ui.js",

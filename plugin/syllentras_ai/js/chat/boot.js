@@ -1632,8 +1632,12 @@ function clearMessageSearchSchedule() {
 // Part of the Syllentras chat widget.
 // Included inside the shared IIFE from before_footer.php — do not load standalone.
 //
-// Read-aloud for chat bubbles. Picks the nicest system voice we can find for
-// Grace (female) / Ben (male), and respects the speed slider from display settings.
+// Read-aloud for chat bubbles.
+// Chrome / Edge / Safari: use their built-in voices first (they usually sound
+// good), and only hit Azure if that path fails.
+// Firefox / Brave / everything else: try Azure first, then fall back to the
+// browser voice if Azure is off, out of credit, or just errors out.
+// Goal is no dead speaker button — always try whatever still works.
 
 var SPEECH_VOICE_KEY = 'syllentras_speech_voice';
 var SPEECH_RATE_KEY = 'syllentras_speech_rate_step';
@@ -1659,10 +1663,72 @@ var cachedSpeechVoices = [];
 // True while we cancel + re-speak after a speed/voice tweak.
 var speechRestartPending = false;
 
-function speechSupported() {
+// From GET /speech/config. null until the first probe finishes.
+var azureSpeechConfig = null;
+var azureSpeechConfigPromise = null;
+// Bumped whenever we stop / start so late Azure responses get ignored.
+var speechPlayGeneration = 0;
+var azureAudioEl = null;
+var azureObjectUrl = null;
+
+function browserSpeechSupported() {
     return typeof window !== 'undefined'
         && 'speechSynthesis' in window
         && typeof SpeechSynthesisUtterance !== 'undefined';
+}
+
+function azureTtsIsAvailable() {
+    return !!(azureSpeechConfig && azureSpeechConfig.azureTtsAvailable);
+}
+
+/** After a hard Azure failure (quota, bad key, etc.) stop asking this session. */
+function markAzureSpeechUnavailableTemporarily() {
+    if (!azureSpeechConfig) {
+        azureSpeechConfig = {
+            azureTtsEnabled: false,
+            azureTtsAvailable: false,
+            maxChars: 5000
+        };
+        return;
+    }
+    azureSpeechConfig.azureTtsAvailable = false;
+}
+
+/**
+ * Browsers that usually ship decent neural / system voices.
+ * Brave is Chromium-based but its voices are often weak, so it is NOT here.
+ */
+function prefersNativeBrowserTts() {
+    if (typeof navigator === 'undefined') return false;
+    var ua = navigator.userAgent || '';
+
+    // Brave — prefer Azure even though the UA looks like Chrome.
+    if (typeof navigator.brave !== 'undefined') return false;
+    if (/Brave/i.test(ua)) return false;
+    if (navigator.userAgentData && Array.isArray(navigator.userAgentData.brands)) {
+        for (var i = 0; i < navigator.userAgentData.brands.length; i++) {
+            var brand = String(navigator.userAgentData.brands[i].brand || '');
+            if (/brave/i.test(brand)) return false;
+        }
+    }
+
+    // Edge (Edg/) before Chrome — Edge UA also contains Chrome/.
+    if (/Edg\//.test(ua)) return true;
+
+    // Chrome / Chromium, but not Opera.
+    if (/Chrome\//.test(ua) && !/OPR\//.test(ua) && !/Edg\//.test(ua)) return true;
+
+    // Safari on macOS / iOS (their UA has Safari but not Chrome).
+    if (/Safari\//.test(ua) && !/Chrome\//.test(ua) && !/Chromium\//.test(ua)) return true;
+
+    return false;
+}
+
+function speechSupported() {
+    // Cloud path only needs Audio + fetch; browser path needs speechSynthesis.
+    if (azureTtsIsAvailable()) return true;
+    if (browserSpeechSupported()) return true;
+    return typeof Audio !== 'undefined' && typeof fetch === 'function';
 }
 
 function normalizeSpeechVoice(raw) {
@@ -1683,7 +1749,7 @@ function speechRateInfo(step) {
 }
 
 function refreshSpeechVoiceCache() {
-    if (!speechSupported()) {
+    if (!browserSpeechSupported()) {
         cachedSpeechVoices = [];
         return cachedSpeechVoices;
     }
@@ -1791,7 +1857,57 @@ function resetSpeechSettings() {
     restartMessageSpeechIfPlaying();
 }
 
+/** Ask Nest whether Azure TTS is on. Safe to call more than once. */
+function loadAzureSpeechConfig() {
+    if (azureSpeechConfigPromise) return azureSpeechConfigPromise;
+    if (typeof fetchJson !== 'function' || !API_URL) {
+        azureSpeechConfig = { azureTtsEnabled: false, azureTtsAvailable: false };
+        azureSpeechConfigPromise = Promise.resolve(azureSpeechConfig);
+        return azureSpeechConfigPromise;
+    }
+    azureSpeechConfigPromise = fetchJson('/speech/config')
+        .then(function (data) {
+            azureSpeechConfig = {
+                azureTtsEnabled: !!(data && data.azureTtsEnabled),
+                azureTtsAvailable: !!(data && data.azureTtsAvailable),
+                maxChars: (data && data.maxChars) || 5000,
+                contentType: (data && data.contentType) || 'audio/mpeg'
+            };
+            return azureSpeechConfig;
+        })
+        .catch(function () {
+            // API down / old deploy — just use the browser voice.
+            azureSpeechConfig = { azureTtsEnabled: false, azureTtsAvailable: false, maxChars: 5000 };
+            return azureSpeechConfig;
+        });
+    return azureSpeechConfigPromise;
+}
+
+function stopAzureAudio() {
+    if (azureAudioEl) {
+        azureAudioEl.onended = null;
+        azureAudioEl.onerror = null;
+        try {
+            azureAudioEl.pause();
+        } catch (e) { /* ignore */ }
+        try {
+            azureAudioEl.removeAttribute('src');
+            azureAudioEl.load();
+        } catch (e2) { /* ignore */ }
+        azureAudioEl = null;
+    }
+    if (azureObjectUrl) {
+        try {
+            URL.revokeObjectURL(azureObjectUrl);
+        } catch (e3) { /* ignore */ }
+        azureObjectUrl = null;
+    }
+}
+
 function stopMessageSpeech() {
+    speechPlayGeneration += 1;
+    speechRestartPending = false;
+    stopAzureAudio();
     if (typeof window !== 'undefined' && window.speechSynthesis) {
         window.speechSynthesis.cancel();
     }
@@ -1827,16 +1943,25 @@ function setSpeakButtonPlaying(el, playing) {
     btn.setAttribute('aria-label', playing ? 'Stop reading' : 'Read aloud');
 }
 
-function startMessageSpeech(el) {
-    if (!speechSupported() || !el) return;
-
-    var text = getMessageSpeakText(el);
-    if (!text || text === '...') return;
-
-    // Drop whatever was mid-sentence before starting fresh.
-    if (typeof window !== 'undefined' && window.speechSynthesis) {
-        window.speechSynthesis.cancel();
+function clearSpeakingUi(el) {
+    if (speechRestartPending) return;
+    if (speakingMessageEl === el) {
+        setSpeakButtonPlaying(el, false);
+        speakingMessageEl = null;
     }
+}
+
+function startBrowserMessageSpeech(el, text, generation, onFail) {
+    if (!browserSpeechSupported()) {
+        if (typeof onFail === 'function') {
+            onFail();
+        } else {
+            clearSpeakingUi(el);
+        }
+        return;
+    }
+    if (generation !== speechPlayGeneration || speakingMessageEl !== el) return;
+
     refreshSpeechVoiceCache();
 
     var utterance = new SpeechSynthesisUtterance(text);
@@ -1852,24 +1977,158 @@ function startMessageSpeech(el) {
     utterance.volume = 1;
 
     utterance.onend = function () {
-        if (speechRestartPending) return;
-        if (speakingMessageEl === el) {
-            setSpeakButtonPlaying(el, false);
-            speakingMessageEl = null;
-        }
+        if (generation !== speechPlayGeneration) return;
+        clearSpeakingUi(el);
     };
-    utterance.onerror = function () {
-        // cancel() fires an error — ignore that when we're about to restart.
-        if (speechRestartPending) return;
-        if (speakingMessageEl === el) {
-            setSpeakButtonPlaying(el, false);
-            speakingMessageEl = null;
+    utterance.onerror = function (ev) {
+        // cancel() / restart fires canceled|interrupted — don't treat as failure.
+        if (generation !== speechPlayGeneration) return;
+        var err = ev && ev.error;
+        if (err === 'canceled' || err === 'interrupted') return;
+        if (typeof onFail === 'function') {
+            onFail();
+            return;
         }
+        clearSpeakingUi(el);
     };
+
+    try {
+        window.speechSynthesis.speak(utterance);
+    } catch (e) {
+        if (typeof onFail === 'function') {
+            onFail();
+        } else {
+            clearSpeakingUi(el);
+        }
+    }
+}
+
+/**
+ * @param {boolean} [allowBrowserFallback=true] — set false when browser already
+ *   failed and Azure is the last resort (avoids a pointless second browser try).
+ */
+function startAzureMessageSpeech(el, text, generation, allowBrowserFallback) {
+    var canFallback = allowBrowserFallback !== false;
+
+    function fallbackOrStop() {
+        markAzureSpeechUnavailableTemporarily();
+        if (generation !== speechPlayGeneration || speakingMessageEl !== el) return;
+        if (canFallback && browserSpeechSupported()) {
+            startBrowserMessageSpeech(el, text, generation);
+        } else {
+            clearSpeakingUi(el);
+        }
+    }
+
+    var maxChars = (azureSpeechConfig && azureSpeechConfig.maxChars) || 5000;
+    var clipped = text.length > maxChars ? text.slice(0, maxChars) : text;
+
+    return fetch(API_URL + '/speech/synthesize', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            text: clipped,
+            voice: selectedSpeechVoice
+        })
+    }).then(function (res) {
+        if (!res.ok) {
+            return res.text().then(function (body) {
+                var msg = 'Azure TTS request failed (' + res.status + ')';
+                try {
+                    var data = body ? JSON.parse(body) : null;
+                    if (data && typeof data.message === 'string') msg = data.message;
+                } catch (e) { /* keep default */ }
+                throw new Error(msg);
+            });
+        }
+        return res.blob();
+    }).then(function (blob) {
+        if (generation !== speechPlayGeneration || speakingMessageEl !== el) return;
+
+        stopAzureAudio();
+        azureObjectUrl = URL.createObjectURL(blob);
+        azureAudioEl = new Audio(azureObjectUrl);
+        // Speed slider still works — we just stretch/compress the mp3.
+        azureAudioEl.playbackRate = speechRateInfo(selectedSpeechRateStep).rate;
+
+        azureAudioEl.onended = function () {
+            if (generation !== speechPlayGeneration) return;
+            stopAzureAudio();
+            clearSpeakingUi(el);
+        };
+        azureAudioEl.onerror = function () {
+            if (generation !== speechPlayGeneration) return;
+            stopAzureAudio();
+            fallbackOrStop();
+        };
+
+        return azureAudioEl.play().catch(function () {
+            if (generation !== speechPlayGeneration) return;
+            stopAzureAudio();
+            fallbackOrStop();
+        });
+    }).catch(function () {
+        fallbackOrStop();
+    });
+}
+
+function startMessageSpeech(el) {
+    if (!el || !speechSupported()) return;
+
+    var text = getMessageSpeakText(el);
+    if (!text || text === '...') return;
+
+    // Drop whatever was mid-sentence before starting fresh.
+    speechPlayGeneration += 1;
+    var generation = speechPlayGeneration;
+    stopAzureAudio();
+    if (typeof window !== 'undefined' && window.speechSynthesis) {
+        window.speechSynthesis.cancel();
+    }
 
     speakingMessageEl = el;
     setSpeakButtonPlaying(el, true);
-    window.speechSynthesis.speak(utterance);
+
+    function begin() {
+        if (generation !== speechPlayGeneration || speakingMessageEl !== el) return;
+
+        var azureOk = azureTtsIsAvailable();
+        var nativeFirst = prefersNativeBrowserTts() && browserSpeechSupported();
+
+        // Chrome / Edge / Safari — their own voice first.
+        if (nativeFirst) {
+            startBrowserMessageSpeech(el, text, generation, function () {
+                if (generation !== speechPlayGeneration || speakingMessageEl !== el) return;
+                if (azureOk) {
+                    // Native choked; Azure is the backup. Don't bounce back to browser.
+                    startAzureMessageSpeech(el, text, generation, false);
+                } else {
+                    clearSpeakingUi(el);
+                }
+            });
+            return;
+        }
+
+        // Firefox / Brave / others — Azure when it's up, browser otherwise.
+        if (azureOk) {
+            startAzureMessageSpeech(el, text, generation, true);
+            return;
+        }
+
+        if (browserSpeechSupported()) {
+            startBrowserMessageSpeech(el, text, generation);
+            return;
+        }
+
+        clearSpeakingUi(el);
+    }
+
+    // First click may race the config probe — wait one tick if needed.
+    if (azureSpeechConfig === null) {
+        loadAzureSpeechConfig().then(begin);
+    } else {
+        begin();
+    }
 }
 
 // Browsers don't let you change rate mid-utterance, so we restart the same bubble.
@@ -1878,6 +2137,7 @@ function restartMessageSpeechIfPlaying() {
     if (!el || !speechSupported()) return;
 
     speechRestartPending = true;
+    stopAzureAudio();
     if (window.speechSynthesis) {
         window.speechSynthesis.cancel();
     }
@@ -1897,7 +2157,6 @@ function toggleMessageSpeech(el) {
 
     // Same bubble again = stop.
     if (speakingMessageEl === el) {
-        speechRestartPending = false;
         stopMessageSpeech();
         return;
     }
@@ -1937,8 +2196,9 @@ function attachMessageSpeakButton(el) {
 }
 
 loadSpeechSettings();
+loadAzureSpeechConfig();
 
-if (speechSupported()) {
+if (browserSpeechSupported()) {
     refreshSpeechVoiceCache();
     // Chrome loads voices late — refresh when they show up.
     if (typeof window.speechSynthesis.onvoiceschanged !== 'undefined') {
@@ -2198,6 +2458,547 @@ function initDictation() {
 
 initDictation();
 
+// ===== attachments.js =====
+// Part of the Syllentras chat widget.
+// Included inside the shared IIFE from before_footer.php — do not load standalone.
+//
+// Chat file attachments: Tools → Attach files, or drag-and-drop onto the chat.
+
+var CHAT_ATTACHMENT_MAX_FILES = 10;
+var CHAT_ATTACHMENT_MAX_BYTES = 50 * 1024 * 1024;
+var CHAT_ATTACHMENT_MAX_TOTAL_BYTES = 300 * 1024 * 1024;
+var CHAT_ATTACHMENT_USER_QUOTA_MB = 2048;
+var CHAT_ATTACHMENT_TOAST_MS = 3200;
+var CHAT_ATTACHMENT_ALLOWED_EXTENSIONS = [
+    'pdf', 'docx', 'pptx', 'txt', 'md',
+    'py', 'java', 'js', 'ts', 'cpp', 'c', 'cs', 'php',
+    'xlsx', 'csv', 'zip', 'json', 'xml', 'sql', 'odt', 'ods', 'odp',
+    'epub', 'tex'
+];
+// Blocked until OCR / transcription exists — toast explains why.
+var CHAT_ATTACHMENT_OCR_BLOCKED_EXTENSIONS = [
+    'png', 'jpg', 'jpeg', 'mp3', 'wav', 'm4a', 'mp4', 'mov', 'avi'
+];
+
+var pendingAttachments = [];
+var attachmentInput = document.getElementById('syllentras-chat-file-input');
+var attachmentBar = document.getElementById('syllentras-chat-attachments');
+var attachmentListEl = document.getElementById('syllentras-chat-attachment-list');
+var attachmentCountEl = document.getElementById('syllentras-chat-attachment-count');
+var attachmentErrorEl = document.getElementById('syllentras-chat-attachment-error');
+var attachmentToastEl = null;
+var attachmentToastTimer = null;
+var attachmentDragDepth = 0;
+var attachmentDropHost = null;
+
+function attachmentExtension(filename) {
+    var base = String(filename || '').split(/[/\\]/).pop() || '';
+    var dot = base.lastIndexOf('.');
+    if (dot <= 0 || dot === base.length - 1) return '';
+    return base.slice(dot + 1).toLowerCase();
+}
+
+function isAllowedAttachmentFilename(filename) {
+    var ext = attachmentExtension(filename);
+    return !!ext && CHAT_ATTACHMENT_ALLOWED_EXTENSIONS.indexOf(ext) !== -1;
+}
+
+function isOcrBlockedAttachmentFilename(filename) {
+    var ext = attachmentExtension(filename);
+    return !!ext && CHAT_ATTACHMENT_OCR_BLOCKED_EXTENSIONS.indexOf(ext) !== -1;
+}
+
+function buildAcceptAttribute() {
+    return CHAT_ATTACHMENT_ALLOWED_EXTENSIONS.map(function (ext) {
+        return '.' + ext;
+    }).join(',');
+}
+
+function attachmentLimitMessages() {
+    return {
+        tooManyFiles: 'You can attach up to 10 files per message.',
+        tooLargeFile: 'This file is too large. Maximum size is 50 MB per file.',
+        tooLargeTotal: 'Upload limit exceeded. Maximum total upload size is 300 MB.',
+        quotaFull: 'Your attachment storage is full. Maximum storage is 2 GB.',
+        ocrBlocked: "Images and media files aren't allowed yet (OCR not available).",
+        unsupportedType: 'This file type is not supported.'
+    };
+}
+
+function friendlyAttachmentError(raw) {
+    var text = String(raw || '').trim();
+    var limits = attachmentLimitMessages();
+    if (!text) return 'Upload failed. Please try again.';
+    var lower = text.toLowerCase();
+    if (lower.indexOf('ocr') !== -1
+        || lower.indexOf('images and media') !== -1) {
+        return limits.ocrBlocked;
+    }
+    if (lower.indexOf('not supported') !== -1
+        || lower.indexOf('unsupported') !== -1
+        || lower.indexOf('not a supported') !== -1
+        || lower.indexOf('supported file type') !== -1) {
+        return limits.unsupportedType;
+    }
+    if (lower.indexOf('storage is full') !== -1 || lower.indexOf('quota') !== -1) {
+        return limits.quotaFull;
+    }
+    if (lower.indexOf('total upload') !== -1 || lower.indexOf('combined') !== -1) {
+        return limits.tooLargeTotal;
+    }
+    if (lower.indexOf('too large') !== -1 || lower.indexOf('per file') !== -1) {
+        return limits.tooLargeFile;
+    }
+    if (lower.indexOf('up to 10') !== -1 || lower.indexOf('at most 10') !== -1) {
+        return limits.tooManyFiles;
+    }
+    // Never leak paths or stack-looking text.
+    if (text.indexOf('/') !== -1 || text.indexOf('\\') !== -1 || text.indexOf('Error:') === 0) {
+        return 'Upload failed. Please try again.';
+    }
+    return text;
+}
+
+function ensureAttachmentToast() {
+    if (attachmentToastEl) return attachmentToastEl;
+    var host = document.getElementById('syllentras-chat-main') || panel || root;
+    if (!host) return null;
+    attachmentToastEl = document.createElement('div');
+    attachmentToastEl.id = 'syllentras-attachment-toast';
+    attachmentToastEl.className = 'syllentras-dictation-toast syllentras-attachment-toast';
+    attachmentToastEl.setAttribute('role', 'status');
+    attachmentToastEl.setAttribute('aria-live', 'polite');
+    attachmentToastEl.hidden = true;
+    host.appendChild(attachmentToastEl);
+    return attachmentToastEl;
+}
+
+function showAttachmentToast(message) {
+    var el = ensureAttachmentToast();
+    if (!el) return;
+    var text = friendlyAttachmentError(message);
+    el.textContent = text;
+    el.hidden = false;
+    void el.offsetWidth;
+    el.classList.add('is-visible');
+    if (attachmentToastTimer) {
+        clearTimeout(attachmentToastTimer);
+    }
+    attachmentToastTimer = setTimeout(function () {
+        el.classList.remove('is-visible');
+        attachmentToastTimer = setTimeout(function () {
+            el.hidden = true;
+            attachmentToastTimer = null;
+        }, 220);
+    }, CHAT_ATTACHMENT_TOAST_MS);
+}
+
+function setAttachmentError(message) {
+    if (!attachmentErrorEl) {
+        if (message) showAttachmentToast(message);
+        return;
+    }
+    if (!message) {
+        attachmentErrorEl.hidden = true;
+        attachmentErrorEl.textContent = '';
+        return;
+    }
+    var friendly = friendlyAttachmentError(message);
+    // Prefer the temporary toast; keep the inline alert empty so UI stays clean.
+    attachmentErrorEl.hidden = true;
+    attachmentErrorEl.textContent = '';
+    showAttachmentToast(friendly);
+}
+
+function formatAttachmentSize(bytes) {
+    if (!bytes || bytes < 1024) return (bytes || 0) + ' B';
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+    return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+}
+
+function attachmentStatusLabel(status) {
+    if (status === 'uploading') return 'Uploading…';
+    if (status === 'processing') return 'Processing…';
+    if (status === 'ready') return 'Ready';
+    if (status === 'failed') return 'Failed';
+    if (status === 'uploaded') return 'Uploaded';
+    return status || '';
+}
+
+function renderAttachmentBar() {
+    if (!attachmentBar || !attachmentListEl || !attachmentCountEl) return;
+
+    attachmentListEl.innerHTML = '';
+    pendingAttachments.forEach(function (item, index) {
+        var chip = document.createElement('div');
+        chip.className = 'syllentras-attachment-chip status-' + (item.status || 'ready');
+        chip.title = item.filename + ' (' + formatAttachmentSize(item.size) + ') — ' +
+            attachmentStatusLabel(item.status);
+
+        var name = document.createElement('span');
+        name.className = 'syllentras-attachment-chip-name';
+        name.textContent = item.filename;
+
+        var status = document.createElement('span');
+        status.className = 'syllentras-attachment-chip-status';
+        status.textContent = attachmentStatusLabel(item.status);
+
+        var remove = document.createElement('button');
+        remove.type = 'button';
+        remove.className = 'syllentras-attachment-chip-remove';
+        remove.setAttribute('aria-label', 'Remove ' + item.filename);
+        remove.textContent = '×';
+        remove.disabled = item.status === 'uploading' || item.status === 'processing';
+        remove.addEventListener('click', function (e) {
+            e.stopPropagation();
+            var removed = pendingAttachments.splice(index, 1)[0];
+            setAttachmentError('');
+            renderAttachmentBar();
+            if (removed && removed.id && typeof deleteUploadedAttachment === 'function') {
+                deleteUploadedAttachment(removed.id).catch(function () { /* best-effort */ });
+            }
+        });
+
+        chip.appendChild(name);
+        chip.appendChild(status);
+        chip.appendChild(remove);
+        attachmentListEl.appendChild(chip);
+    });
+
+    attachmentCountEl.textContent = pendingAttachments.length + ' / ' + CHAT_ATTACHMENT_MAX_FILES + ' files';
+    attachmentBar.hidden = pendingAttachments.length === 0;
+}
+
+function clearPendingAttachments() {
+    pendingAttachments = [];
+    if (attachmentInput) attachmentInput.value = '';
+    setAttachmentError('');
+    renderAttachmentBar();
+}
+
+function getPendingAttachmentsForSend() {
+    return pendingAttachments
+        .filter(function (item) {
+            return item.id && (item.status === 'ready' || item.status === 'uploaded' || item.status === 'processing');
+        })
+        .map(function (item) {
+            return {
+                id: item.id,
+                filename: item.filename,
+                status: item.status
+            };
+        });
+}
+
+function hasPendingAttachmentUploads() {
+    return pendingAttachments.some(function (item) {
+        return item.status === 'uploading' || item.status === 'processing';
+    });
+}
+
+function deleteUploadedAttachment(id) {
+    if (!id) return Promise.resolve();
+    return fetch(
+        API_URL + '/chat/attachments/' + encodeURIComponent(id) +
+        '?moodleUserId=' + encodeURIComponent(moodleUserId),
+        { method: 'DELETE' }
+    ).then(function (res) {
+        if (!res.ok) {
+            return res.text().then(function () {
+                // Swallow — chip already removed locally.
+            });
+        }
+    });
+}
+
+function uploadAttachmentFile(file, localItem) {
+    var form = new FormData();
+    form.append('files', file, file.name);
+
+    var url = API_URL + '/chat/attachments'
+        + '?moodleUserId=' + encodeURIComponent(moodleUserId)
+        + '&courseId=' + encodeURIComponent(courseId);
+    if (conversationId) {
+        url += '&conversationId=' + encodeURIComponent(conversationId);
+    }
+
+    localItem.status = 'uploading';
+    renderAttachmentBar();
+
+    return fetch(url, { method: 'POST', body: form })
+        .then(function (res) {
+            return res.text().then(function (text) {
+                var data = null;
+                if (text) {
+                    try { data = JSON.parse(text); } catch (e) { data = null; }
+                }
+                if (!res.ok) {
+                    var msg = null;
+                    if (data) {
+                        if (typeof data.message === 'string') msg = data.message;
+                        else if (Array.isArray(data.message)) msg = data.message.join(' ');
+                    }
+                    throw new Error(msg || 'Upload failed. Please try again.');
+                }
+                return data;
+            });
+        })
+        .then(function (data) {
+            var uploaded = (data && data.attachments && data.attachments[0]) || null;
+            if (!uploaded || !uploaded.id) {
+                throw new Error('Upload did not return an attachment id.');
+            }
+            localItem.id = uploaded.id;
+            localItem.status = uploaded.status || 'ready';
+            localItem.size = uploaded.byteLength || file.size;
+            localItem.mimeType = uploaded.mimeType || file.type || '';
+            if (uploaded.status === 'failed') {
+                localItem.error = uploaded.processingError || 'Processing failed.';
+                setAttachmentError(localItem.error);
+            }
+            renderAttachmentBar();
+            return localItem;
+        })
+        .catch(function (err) {
+            localItem.status = 'failed';
+            localItem.error = friendlyAttachmentError((err && err.message) || 'Upload failed.');
+            setAttachmentError(localItem.error);
+            // Remove failed chip after toast so the bar stays tidy.
+            var idx = pendingAttachments.indexOf(localItem);
+            if (idx !== -1) {
+                pendingAttachments.splice(idx, 1);
+            }
+            renderAttachmentBar();
+            throw err;
+        });
+}
+
+/**
+ * Validate and enqueue FileList / File[] selections, then multipart-upload each.
+ * Returns { added, errors } for callers/tests.
+ */
+function addAttachmentFiles(fileList) {
+    var files = Array.prototype.slice.call(fileList || []);
+    var errors = [];
+    var limits = attachmentLimitMessages();
+
+    if (!files.length) {
+        return { added: 0, errors: errors };
+    }
+
+    var remaining = CHAT_ATTACHMENT_MAX_FILES - pendingAttachments.length;
+    if (remaining <= 0) {
+        errors.push(limits.tooManyFiles);
+        setAttachmentError(errors[0]);
+        return { added: 0, errors: errors };
+    }
+
+    if (files.length > remaining) {
+        errors.push(limits.tooManyFiles);
+        files = files.slice(0, remaining);
+    }
+
+    var pendingBytes = pendingAttachments.reduce(function (sum, item) {
+        return sum + (item.size || 0);
+    }, 0);
+    var batchBytes = 0;
+    var queue = [];
+
+    files.forEach(function (file) {
+        if (!file) return;
+        if (isOcrBlockedAttachmentFilename(file.name)) {
+            errors.push(limits.ocrBlocked);
+            return;
+        }
+        if (!isAllowedAttachmentFilename(file.name)) {
+            errors.push(limits.unsupportedType);
+            return;
+        }
+        if (file.size > CHAT_ATTACHMENT_MAX_BYTES) {
+            errors.push(limits.tooLargeFile);
+            return;
+        }
+        if (pendingBytes + batchBytes + file.size > CHAT_ATTACHMENT_MAX_TOTAL_BYTES) {
+            errors.push(limits.tooLargeTotal);
+            return;
+        }
+        var dup = pendingAttachments.some(function (existing) {
+            return existing.filename === file.name && existing.size === file.size;
+        });
+        if (dup) {
+            errors.push('"' + file.name + '" is already attached.');
+            return;
+        }
+        queue.push(file);
+        batchBytes += file.size;
+    });
+
+    if (!queue.length) {
+        // Always toast validation failures (unsupported type, size, etc.).
+        setAttachmentError(errors[0] || limits.unsupportedType);
+        return { added: 0, errors: errors };
+    }
+
+    queue.forEach(function (file) {
+        var localItem = {
+            id: null,
+            filename: file.name,
+            mimeType: file.type || '',
+            size: file.size,
+            status: 'uploading',
+            error: null
+        };
+        pendingAttachments.push(localItem);
+        renderAttachmentBar();
+        uploadAttachmentFile(file, localItem).catch(function () { /* toast already shown */ });
+    });
+
+    // Mixed batch: some files accepted, some rejected — still notify.
+    if (errors.length) {
+        setAttachmentError(errors[0]);
+    }
+    return { added: queue.length, errors: errors };
+}
+
+function openAttachmentPicker() {
+    if (!attachmentInput) return;
+    setAttachmentError('');
+    if (pendingAttachments.length >= CHAT_ATTACHMENT_MAX_FILES) {
+        setAttachmentError(attachmentLimitMessages().tooManyFiles);
+        if (attachmentBar) attachmentBar.hidden = false;
+        return;
+    }
+    attachmentInput.value = '';
+    attachmentInput.click();
+}
+
+function parseStoredAttachmentNames(content) {
+    var text = String(content || '');
+    var match = text.match(/^\[syllentras-files:\s*([^\]]+)\]\s*(?:\n+)?([\s\S]*)$/i);
+    if (!match) {
+        return { filenames: [], displayText: text };
+    }
+    var filenames = match[1].split(',').map(function (part) {
+        return part.trim();
+    }).filter(Boolean);
+    return {
+        filenames: filenames,
+        displayText: (match[2] || '').trim()
+    };
+}
+
+function renderUserMessageContent(el, text, attachmentNames) {
+    if (!el) return;
+    el.textContent = '';
+
+    var names = Array.isArray(attachmentNames) ? attachmentNames.slice() : [];
+    var parsed = parseStoredAttachmentNames(text);
+    if (!names.length && parsed.filenames.length) {
+        names = parsed.filenames;
+    }
+    var displayText = names.length ? parsed.displayText : text;
+
+    if (names.length) {
+        var wrap = document.createElement('div');
+        wrap.className = 'syllentras-msg-attachments';
+        names.forEach(function (name) {
+            var chip = document.createElement('span');
+            chip.className = 'syllentras-msg-attachment-chip';
+            chip.textContent = typeof name === 'string' ? name : (name.filename || name);
+            wrap.appendChild(chip);
+        });
+        el.appendChild(wrap);
+    }
+
+    if (displayText) {
+        var body = document.createElement('div');
+        body.className = 'syllentras-msg-text';
+        body.textContent = displayText;
+        el.appendChild(body);
+    } else if (!names.length) {
+        el.textContent = text;
+    }
+}
+
+function eventHasFiles(e) {
+    var types = e && e.dataTransfer && e.dataTransfer.types;
+    if (!types) return false;
+    if (typeof types.includes === 'function') return types.includes('Files');
+    return Array.prototype.indexOf.call(types, 'Files') !== -1;
+}
+
+function setAttachmentDropHighlight(active) {
+    if (!attachmentDropHost) return;
+    attachmentDropHost.classList.toggle('is-file-dragover', !!active);
+}
+
+function clearAttachmentDropHighlight() {
+    attachmentDragDepth = 0;
+    setAttachmentDropHighlight(false);
+}
+
+function initAttachmentDragDrop() {
+    attachmentDropHost = document.getElementById('syllentras-chat-main') || panel;
+    if (!attachmentDropHost) return;
+
+    attachmentDropHost.addEventListener('dragenter', function (e) {
+        if (!eventHasFiles(e)) return;
+        e.preventDefault();
+        e.stopPropagation();
+        attachmentDragDepth += 1;
+        setAttachmentDropHighlight(true);
+    });
+
+    attachmentDropHost.addEventListener('dragover', function (e) {
+        if (!eventHasFiles(e)) return;
+        e.preventDefault();
+        e.stopPropagation();
+        if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+        setAttachmentDropHighlight(true);
+    });
+
+    attachmentDropHost.addEventListener('dragleave', function (e) {
+        if (!eventHasFiles(e)) return;
+        e.preventDefault();
+        e.stopPropagation();
+        attachmentDragDepth = Math.max(0, attachmentDragDepth - 1);
+        if (attachmentDragDepth === 0) {
+            setAttachmentDropHighlight(false);
+        }
+    });
+
+    attachmentDropHost.addEventListener('drop', function (e) {
+        if (!eventHasFiles(e)) return;
+        e.preventDefault();
+        e.stopPropagation();
+        clearAttachmentDropHighlight();
+        var files = e.dataTransfer && e.dataTransfer.files;
+        if (files && files.length) {
+            addAttachmentFiles(files);
+        }
+    });
+
+    // Avoid the browser navigating away if a file is dropped outside the host.
+    document.addEventListener('dragover', function (e) {
+        if (eventHasFiles(e)) e.preventDefault();
+    });
+    document.addEventListener('drop', function (e) {
+        if (eventHasFiles(e)) e.preventDefault();
+    });
+}
+
+function initAttachments() {
+    if (attachmentInput) {
+        attachmentInput.setAttribute('accept', buildAcceptAttribute());
+        attachmentInput.addEventListener('change', function () {
+            addAttachmentFiles(attachmentInput.files);
+            attachmentInput.value = '';
+        });
+    }
+    initAttachmentDragDrop();
+    renderAttachmentBar();
+}
+
 // ===== messages.js =====
 // Part of the Syllentras chat widget.
 // Included inside the shared IIFE from before_footer.php — do not load standalone.
@@ -2244,6 +3045,12 @@ function createMessageElement(role, text, options) {
     if (role === 'assistant' && text !== '...') {
         renderAssistantContent(div, text);
         applyModeChip(div, options.mode);
+    } else if (role === 'user') {
+        if (typeof renderUserMessageContent === 'function') {
+            renderUserMessageContent(div, text, options.attachmentNames);
+        } else {
+            div.textContent = text;
+        }
     } else {
         div.textContent = text;
     }
@@ -2313,11 +3120,18 @@ function renderMessageBatch(messages, prepend) {
     var list = prepend ? messages.slice().reverse() : messages;
     list.forEach(function (m) {
         var role = m.role === 'assistant' ? 'assistant' : 'user';
+        var attachmentNames = [];
+        if (Array.isArray(m.attachments) && m.attachments.length) {
+            attachmentNames = m.attachments.map(function (a) {
+                return a.filename || a;
+            });
+        }
         var opts = {
             scroll: false,
             createdAt: m.createdAt,
             mode: m.mode,
-            id: m.id
+            id: m.id,
+            attachmentNames: attachmentNames
         };
         if (prepend) {
             prependMessage(role, m.content, opts);
@@ -2872,16 +3686,51 @@ function createManualConversation(title) {
 
 function sendMessage() {
     var text = input.value.trim();
-    if (!text || !conversationId) return;
+    var attachmentsPayload = typeof getPendingAttachmentsForSend === 'function'
+        ? getPendingAttachmentsForSend()
+        : [];
+    var hasAttachments = attachmentsPayload.length > 0;
+    if ((!text && !hasAttachments) || !conversationId) return;
+
+    if (typeof hasPendingAttachmentUploads === 'function' && hasPendingAttachmentUploads()) {
+        if (typeof setAttachmentError === 'function') {
+            setAttachmentError('Wait for uploads to finish before sending.');
+        }
+        return;
+    }
+
+    var failed = attachmentsPayload.filter(function (item) {
+        return item.status === 'failed';
+    });
+    if (failed.length) {
+        if (typeof setAttachmentError === 'function') {
+            setAttachmentError('Remove failed attachments before sending.');
+        }
+        return;
+    }
 
     if (typeof stopDictation === 'function') {
         stopDictation();
     }
 
+    var attachmentNames = attachmentsPayload.map(function (item) {
+        return item.filename;
+    });
+    var attachmentIds = attachmentsPayload.map(function (item) {
+        return item.id;
+    }).filter(Boolean);
     input.value = '';
+    if (typeof clearPendingAttachments === 'function') {
+        clearPendingAttachments();
+    }
     send.disabled = true;
     setGeneratingState(true);
-    appendMessage('user', text);
+
+    var displayText = text || (hasAttachments ? 'Please review the attached file(s).' : '');
+    appendMessage('user', displayText, {
+        attachmentNames: attachmentNames
+    });
+
     var loadingEl = appendMessage('assistant', '...');
     var pendingAssistantId = loadingEl.dataset.messageId || nextLocalMessageId();
     loadingEl.dataset.messageId = pendingAssistantId;
@@ -2894,6 +3743,9 @@ function sendMessage() {
         message: text,
         conversationId: conversationId
     };
+    if (attachmentIds.length) {
+        body.attachmentIds = attachmentIds;
+    }
     // Selected provider rides along so mid-chat switches apply to the next turn.
     var providerId = typeof getSelectedProviderId === 'function' ? getSelectedProviderId() : null;
     if (providerId) {
@@ -2932,6 +3784,11 @@ function sendMessage() {
         }
         if (data.pendingAction) {
             attachPendingAction(loadingEl, data.pendingAction);
+        }
+        if (Array.isArray(data.attachmentWarnings) && data.attachmentWarnings.length) {
+            if (typeof appendSystemNotice === 'function') {
+                appendSystemNotice(data.attachmentWarnings.join(' '));
+            }
         }
         return loadConversations();
     })
@@ -3844,11 +4701,55 @@ function showToolsMenu() {
             Array.from(toolsCol.querySelectorAll('.syllentras-tools-menu-item')).forEach(function (el) {
                 el.classList.toggle('selected', el === button);
             });
+            topicsCol.hidden = false;
             selectFirstTopicIfNeeded(topicsCol);
             updateContinueState(topicsCol);
         });
         toolsCol.appendChild(button);
     });
+
+    var attachBtn = document.createElement('button');
+    attachBtn.type = 'button';
+    attachBtn.className = 'syllentras-tools-menu-item syllentras-tools-attach-item';
+    attachBtn.setAttribute('role', 'menuitem');
+    attachBtn.dataset.toolKey = 'attach_files';
+
+    var attachRow = document.createElement('span');
+    attachRow.className = 'syllentras-tools-attach-row';
+
+    var attachIcon = document.createElement('span');
+    attachIcon.className = 'syllentras-tools-attach-icon';
+    attachIcon.setAttribute('aria-hidden', 'true');
+    attachIcon.innerHTML =
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18" fill="none" focusable="false">' +
+        '<path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" ' +
+        'stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round"/>' +
+        '</svg>';
+
+    var attachText = document.createElement('span');
+    attachText.className = 'syllentras-tools-attach-text';
+
+    var attachLabel = document.createElement('span');
+    attachLabel.className = 'syllentras-tools-menu-item-label';
+    attachLabel.textContent = 'Attach files';
+
+    var attachDesc = document.createElement('span');
+    attachDesc.className = 'syllentras-tools-menu-item-desc';
+    attachDesc.textContent = 'Drop files here or browse';
+
+    attachText.appendChild(attachLabel);
+    attachText.appendChild(attachDesc);
+    attachRow.appendChild(attachIcon);
+    attachRow.appendChild(attachText);
+    attachBtn.appendChild(attachRow);
+    attachBtn.addEventListener('click', function (e) {
+        e.stopPropagation();
+        closeToolsMenu();
+        if (typeof openAttachmentPicker === 'function') {
+            openAttachmentPicker();
+        }
+    });
+    toolsCol.appendChild(attachBtn);
 
     toolsMenu.appendChild(toolsCol);
     toolsMenu.appendChild(topicsCol);
@@ -4889,7 +5790,7 @@ function buildDisplayMenu() {
     fontSection.appendChild(displayFontSlider);
     displayMenu.appendChild(fontSection);
 
-    // Voice + speed only show up when the browser can actually talk.
+    // Voice + speed when read-aloud works (Azure cloud and/or browser TTS).
     if (typeof speechSupported === 'function' && speechSupported()
         && typeof SPEECH_VOICES !== 'undefined'
         && typeof SPEECH_RATE_STEPS !== 'undefined') {
@@ -5306,10 +6207,12 @@ if (window.ResizeObserver) {
 applyExpandedState();
 applyStoredSidebarWidth();
 applyStoredInputHeight();
+initAttachments();
 initToolsMenu();
 initModeSelector();
 bindMessageSearchUi();
 loadProviders();
+loadAzureSpeechConfig();
 loadConversations();
 installSectionButtons();
 if (document.readyState === 'loading') {

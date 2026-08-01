@@ -9,9 +9,12 @@ import {
   Min,
   Max,
   MinLength,
+  ArrayMaxSize,
+  ValidateIf,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { AI_PROVIDER_IDS } from '../providers/provider.types';
+import { CHAT_ATTACHMENT_MAX_FILES } from '../attachments/attachment.constants';
 
 export class HistoryEntryDto {
   @IsIn(['user', 'assistant'])
@@ -39,25 +42,33 @@ export class SendMessageDto {
   @IsString()
   userFirstName?: string;
 
+  /**
+   * Student message text. Optional when attachmentIds are present.
+   */
+  @ValidateIf((o: SendMessageDto) => !o.attachmentIds?.length)
   @IsString()
   @MinLength(1)
   message: string;
+
+  /** Persistent attachment IDs from POST /chat/attachments. */
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(CHAT_ATTACHMENT_MAX_FILES)
+  @IsUUID('4', { each: true })
+  attachmentIds?: string[];
 
   @IsOptional()
   @IsUUID()
   conversationId?: string;
 
-  /** Which AI backend should answer this turn (openai, gemini, …). */
   @IsOptional()
   @IsIn([...AI_PROVIDER_IDS])
   provider?: string;
 
-  /** Teaching style for this turn. Defaults to direct in the service. */
   @IsOptional()
   @IsIn(['direct', 'coach'])
   mode?: 'direct' | 'coach';
 
-  /** Coach guidance level 1 (least) – 5 (most). Ignored unless mode is coach. */
   @IsOptional()
   @Type(() => Number)
   @IsInt()

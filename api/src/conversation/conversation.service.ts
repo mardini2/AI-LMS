@@ -1,8 +1,11 @@
 import {
   BadRequestException,
   ForbiddenException,
+  Inject,
   Injectable,
   NotFoundException,
+  Optional,
+  forwardRef,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Brackets, Repository } from 'typeorm';
@@ -15,6 +18,8 @@ import {
   Message,
   MessageRole,
 } from './entities/message.entity';
+import { AttachmentService } from '../chat/attachments/attachment.service';
+import type { AttachmentClientDto } from '../chat/attachments/attachment.constants';
 
 export interface MessagePageItem {
   id: string;
@@ -23,6 +28,7 @@ export interface MessagePageItem {
   createdAt: Date;
   mode?: ChatMode | null;
   guidance?: number | null;
+  attachments?: AttachmentClientDto[];
 }
 
 export interface MessagesPageResult {
@@ -76,6 +82,9 @@ export class ConversationService {
     private readonly conversationRepo: Repository<Conversation>,
     @InjectRepository(Message)
     private readonly messageRepo: Repository<Message>,
+    @Optional()
+    @Inject(forwardRef(() => AttachmentService))
+    private readonly attachmentService?: AttachmentService,
   ) {}
 
   async create(
@@ -274,6 +283,11 @@ export class ConversationService {
   ): Promise<DeleteConversationResult> {
     const conversation = await this.assertConversationOwner(id, moodleUserId);
 
+    // Remove attachment binaries + metadata before wiping messages.
+    if (this.attachmentService) {
+      await this.attachmentService.purgeForConversation(id);
+    }
+
     // Main (general) is a singleton — clear history instead of removing it.
     if ((conversation.type ?? 'general') === 'general') {
       await this.messageRepo.delete({ conversationId: id });
@@ -383,6 +397,14 @@ export class ConversationService {
       conversation,
     ).reverse();
 
+    const attachmentMap =
+      this.attachmentService && page.length
+        ? await this.attachmentService.listForMessages(
+            page.map((m) => m.id),
+            moodleUserId,
+          )
+        : new Map();
+
     return {
       messages: page.map((m) => ({
         id: m.id,
@@ -391,6 +413,7 @@ export class ConversationService {
         createdAt: m.createdAt,
         mode: m.mode ?? null,
         guidance: m.guidance ?? null,
+        attachments: attachmentMap.get(m.id) || [],
       })),
       hasMore,
     };
@@ -450,9 +473,10 @@ export class ConversationService {
       mode?: ChatMode | null;
       guidance?: number | null;
     }>,
-  ): Promise<void> {
+  ): Promise<Message[]> {
+    const saved: Message[] = [];
     for (const p of pairs) {
-      await this.messageRepo.save(
+      const row = await this.messageRepo.save(
         this.messageRepo.create({
           conversationId,
           role: p.role,
@@ -461,7 +485,14 @@ export class ConversationService {
           guidance: p.guidance ?? null,
         }),
       );
+      saved.push(row);
     }
+    // Touch conversation for retention / activity tracking.
+    await this.conversationRepo.update(
+      { id: conversationId },
+      { updatedAt: new Date() },
+    );
+    return saved;
   }
 
   async updateTopicSuggestions(

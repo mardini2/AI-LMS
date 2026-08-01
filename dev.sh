@@ -11,7 +11,7 @@
 #
 # Commands: up | down | restart | logs | ps | install-api |
 #           moodle-install | moodle-upgrade | moodle-purge | rebuild-chat-js |
-#           tunnel | tunnel-stop
+#           clear-attachments | tunnel | tunnel-stop
 
 set -euo pipefail
 
@@ -521,6 +521,10 @@ case "$CMD" in
         $COMPOSE exec webserver php admin/cli/purge_caches.php
         echo "Done. Hard-refresh the Moodle page if it still looks stale."
         ;;
+    clear-attachments)
+        echo "Clearing all chat attachments (all users)..."
+        bash ./clear-attachments.sh --force
+        ;;
     tunnel)
         tunnel_start
         ;;
@@ -528,7 +532,7 @@ case "$CMD" in
         tunnel_restore
         ;;
     *)
-        echo "Usage: ./dev.sh {up|down|restart|logs|ps|install-api|moodle-install|moodle-upgrade|moodle-purge|rebuild-chat-js|tunnel|tunnel-stop}"
+        echo "Usage: ./dev.sh {up|down|restart|logs|ps|install-api|moodle-install|moodle-upgrade|moodle-purge|rebuild-chat-js|clear-attachments|tunnel|tunnel-stop}"
         exit 1
         ;;
 esac

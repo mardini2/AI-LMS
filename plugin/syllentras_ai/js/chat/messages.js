@@ -43,6 +43,12 @@ function createMessageElement(role, text, options) {
     if (role === 'assistant' && text !== '...') {
         renderAssistantContent(div, text);
         applyModeChip(div, options.mode);
+    } else if (role === 'user') {
+        if (typeof renderUserMessageContent === 'function') {
+            renderUserMessageContent(div, text, options.attachmentNames);
+        } else {
+            div.textContent = text;
+        }
     } else {
         div.textContent = text;
     }
@@ -112,11 +118,18 @@ function renderMessageBatch(messages, prepend) {
     var list = prepend ? messages.slice().reverse() : messages;
     list.forEach(function (m) {
         var role = m.role === 'assistant' ? 'assistant' : 'user';
+        var attachmentNames = [];
+        if (Array.isArray(m.attachments) && m.attachments.length) {
+            attachmentNames = m.attachments.map(function (a) {
+                return a.filename || a;
+            });
+        }
         var opts = {
             scroll: false,
             createdAt: m.createdAt,
             mode: m.mode,
-            id: m.id
+            id: m.id,
+            attachmentNames: attachmentNames
         };
         if (prepend) {
             prependMessage(role, m.content, opts);
