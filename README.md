@@ -249,6 +249,7 @@ Sections and groups are created automatically by the web service - no need to cr
 .\dev.ps1 ps        # Check service status
 .\dev.ps1 install-api # Reinstall API dependencies after package.json changes
 .\dev.ps1 rebuild-chat-js # Rebuild chat boot.js, upgrade plugin if needed, purge caches
+.\dev.ps1 clear-attachments # Delete all chat attachment uploads (keeps conversations/messages)
 .\dev.ps1 tunnel      # Temporary public URLs via Cloudflare quick tunnel
 .\dev.ps1 tunnel-stop # Stop tunnels and restore local localhost config
 ```
