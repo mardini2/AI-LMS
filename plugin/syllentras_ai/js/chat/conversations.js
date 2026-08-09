@@ -405,6 +405,7 @@ function sendMessage() {
         return;
     }
 
+    // Stop the mic first so a trailing STT result can't refill the box.
     if (typeof stopDictation === 'function') {
         stopDictation();
     }

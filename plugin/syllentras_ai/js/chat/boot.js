@@ -2214,6 +2214,47 @@ if (browserSpeechSupported()) {
 // Mic next to the composer. Uses the browser speech-recognition API to dump
 // what you say into the message box (speech-to-text).
 
+var DICTATION_LANG_KEY = 'syllentras_dictation_lang';
+var DICTATION_LANG_DEFAULT = 'en-US';
+
+// Curated locales that browser STT usually handles well — not every language
+// on earth, just a solid campus-friendly set. Labels stay short for the menu.
+var DICTATION_LANGUAGES = [
+    { id: 'en-US', label: 'English (US)' },
+    { id: 'en-GB', label: 'English (UK)' },
+    { id: 'ar-SA', label: 'Arabic' },
+    { id: 'zh-CN', label: 'Chinese (Simplified)' },
+    { id: 'zh-TW', label: 'Chinese (Traditional)' },
+    { id: 'cs-CZ', label: 'Czech' },
+    { id: 'da-DK', label: 'Danish' },
+    { id: 'nl-NL', label: 'Dutch' },
+    { id: 'fi-FI', label: 'Finnish' },
+    { id: 'fr-FR', label: 'French' },
+    { id: 'de-DE', label: 'German' },
+    { id: 'el-GR', label: 'Greek' },
+    { id: 'he-IL', label: 'Hebrew' },
+    { id: 'hi-IN', label: 'Hindi' },
+    { id: 'hu-HU', label: 'Hungarian' },
+    { id: 'id-ID', label: 'Indonesian' },
+    { id: 'it-IT', label: 'Italian' },
+    { id: 'ja-JP', label: 'Japanese' },
+    { id: 'ko-KR', label: 'Korean' },
+    { id: 'nb-NO', label: 'Norwegian' },
+    { id: 'pl-PL', label: 'Polish' },
+    { id: 'pt-BR', label: 'Portuguese (Brazil)' },
+    { id: 'pt-PT', label: 'Portuguese (Portugal)' },
+    { id: 'ro-RO', label: 'Romanian' },
+    { id: 'ru-RU', label: 'Russian' },
+    { id: 'es-ES', label: 'Spanish (Spain)' },
+    { id: 'es-MX', label: 'Spanish (Latin America)' },
+    { id: 'sv-SE', label: 'Swedish' },
+    { id: 'th-TH', label: 'Thai' },
+    { id: 'tr-TR', label: 'Turkish' },
+    { id: 'uk-UA', label: 'Ukrainian' },
+    { id: 'vi-VN', label: 'Vietnamese' }
+];
+
+var selectedDictationLang = DICTATION_LANG_DEFAULT;
 var dictationRecognition = null;
 var dictationListening = false;
 var dictationBaseText = '';
@@ -2224,6 +2265,56 @@ var micBtn = document.getElementById('syllentras-chat-mic');
 function speechRecognitionSupported() {
     return typeof window !== 'undefined'
         && !!(window.SpeechRecognition || window.webkitSpeechRecognition);
+}
+
+function normalizeDictationLang(raw) {
+    var id = String(raw || '').trim();
+    for (var i = 0; i < DICTATION_LANGUAGES.length; i++) {
+        if (DICTATION_LANGUAGES[i].id === id) return id;
+    }
+    return DICTATION_LANG_DEFAULT;
+}
+
+function loadDictationLanguage() {
+    var raw = null;
+    try {
+        raw = localStorage.getItem(DICTATION_LANG_KEY);
+    } catch (e) {
+        raw = null;
+    }
+    selectedDictationLang = normalizeDictationLang(raw);
+}
+
+function saveDictationLanguage() {
+    try {
+        localStorage.setItem(DICTATION_LANG_KEY, selectedDictationLang);
+    } catch (e) { /* private mode / quota */ }
+}
+
+function getDictationLang() {
+    return normalizeDictationLang(selectedDictationLang);
+}
+
+function setDictationLang(langId) {
+    var next = normalizeDictationLang(langId);
+    if (next === selectedDictationLang) return;
+    selectedDictationLang = next;
+    saveDictationLanguage();
+    // Restart listening so the new language kicks in right away.
+    if (dictationListening) {
+        stopDictation();
+        window.setTimeout(function () {
+            startDictation();
+        }, 80);
+    }
+}
+
+function resetDictationLanguage() {
+    selectedDictationLang = DICTATION_LANG_DEFAULT;
+    saveDictationLanguage();
+    if (dictationListening) {
+        stopDictation();
+    }
 }
 
 function appendDictationChunk(base, chunk) {
@@ -2330,28 +2421,44 @@ function syncMicButtonUi() {
 }
 
 function stopDictation() {
+    dictationListening = false;
+    // Wipe the scratch buffer too — otherwise a late result can refill the box
+    // after send already cleared it (super annoying).
+    dictationBaseText = '';
     if (!dictationRecognition) {
-        dictationListening = false;
         syncMicButtonUi();
         return;
     }
+    var rec = dictationRecognition;
+    dictationRecognition = null;
+    // Kill handlers BEFORE stop/abort. Browsers love to fire one more onresult
+    // when you stop, and that was putting the sent text back in the composer.
+    rec.onresult = null;
+    rec.onerror = null;
+    rec.onend = null;
     try {
-        dictationRecognition.onend = null;
-        dictationRecognition.stop();
+        if (typeof rec.abort === 'function') {
+            rec.abort();
+        } else {
+            rec.stop();
+        }
     } catch (e) { /* already stopped */ }
-    dictationListening = false;
     syncMicButtonUi();
 }
 
 function beginSpeechRecognition() {
     var Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     dictationRecognition = new Recognition();
-    dictationRecognition.lang = 'en-US';
+    var session = dictationRecognition;
+    dictationRecognition.lang = getDictationLang();
     dictationRecognition.continuous = true;
     dictationRecognition.interimResults = true;
     dictationBaseText = input.value || '';
 
     dictationRecognition.onresult = function (event) {
+        // Ignore leftovers from a session we already stopped/sent.
+        if (!dictationListening || dictationRecognition !== session) return;
+
         var interim = '';
         var finals = '';
         for (var i = event.resultIndex; i < event.results.length; i++) {
@@ -2377,6 +2484,7 @@ function beginSpeechRecognition() {
     };
 
     dictationRecognition.onerror = function (event) {
+        if (dictationRecognition !== session) return;
         // no-speech / aborted are normal — only nag on real mic problems.
         var code = event && event.error ? String(event.error) : '';
         var msg = dictationErrorMessage(code);
@@ -2389,6 +2497,7 @@ function beginSpeechRecognition() {
     };
 
     dictationRecognition.onend = function () {
+        if (dictationRecognition !== session) return;
         // continuous mode can end on its own — flip the button back off.
         dictationListening = false;
         syncMicButtonUi();
@@ -2440,6 +2549,7 @@ function toggleDictation() {
 }
 
 function initDictation() {
+    loadDictationLanguage();
     if (!micBtn) return;
 
     if (!speechRecognitionSupported()) {
@@ -3709,6 +3819,7 @@ function sendMessage() {
         return;
     }
 
+    // Stop the mic first so a trailing STT result can't refill the box.
     if (typeof stopDictation === 'function') {
         stopDictation();
     }
@@ -5647,6 +5758,7 @@ var displayFontValueEl = null;
 var displayFontSlider = null;
 var displaySpeechRateValueEl = null;
 var displaySpeechRateSlider = null;
+var displayDictationLangSelect = null;
 
 function normalizeDisplayTheme(raw) {
     for (var i = 0; i < DISPLAY_THEMES.length; i++) {
@@ -5715,6 +5827,10 @@ function resetDisplaySettings() {
     if (typeof resetSpeechSettings === 'function') {
         resetSpeechSettings();
     }
+    // Mic STT language goes back to English (US) with the rest of accessibility.
+    if (typeof resetDictationLanguage === 'function') {
+        resetDictationLanguage();
+    }
     applyDisplaySettings();
     saveDisplaySettings();
     syncDisplayMenuUi();
@@ -5753,6 +5869,10 @@ function syncDisplayMenuUi() {
         btn.classList.toggle('selected', active);
         btn.setAttribute('aria-pressed', active ? 'true' : 'false');
     });
+
+    if (displayDictationLangSelect && typeof getDictationLang === 'function') {
+        displayDictationLangSelect.value = getDictationLang();
+    }
 }
 
 function buildDisplayMenu() {
@@ -5862,6 +5982,52 @@ function buildDisplayMenu() {
         displayMenu.appendChild(rateSection);
     }
 
+    // Mic language — only when the browser can do speech-to-text.
+    if (typeof speechRecognitionSupported === 'function' && speechRecognitionSupported()
+        && typeof DICTATION_LANGUAGES !== 'undefined') {
+        var micLangSection = document.createElement('div');
+        micLangSection.className = 'syllentras-display-section';
+
+        var micLangLabel = document.createElement('div');
+        micLangLabel.className = 'syllentras-display-label';
+        micLangLabel.textContent = 'Mic language';
+        micLangSection.appendChild(micLangLabel);
+
+        var micLangHint = document.createElement('div');
+        micLangHint.className = 'syllentras-display-hint';
+        micLangHint.textContent = 'Language the microphone listens for';
+        micLangSection.appendChild(micLangHint);
+
+        // Wrap the select so we can draw a chevron that matches light/dark themes.
+        var micLangWrap = document.createElement('div');
+        micLangWrap.className = 'syllentras-display-select-wrap';
+
+        displayDictationLangSelect = document.createElement('select');
+        displayDictationLangSelect.className = 'syllentras-display-select';
+        displayDictationLangSelect.id = 'syllentras-display-dictation-lang';
+        displayDictationLangSelect.setAttribute('aria-label', 'Microphone speech-to-text language');
+        DICTATION_LANGUAGES.forEach(function (lang) {
+            var opt = document.createElement('option');
+            opt.value = lang.id;
+            opt.textContent = lang.label;
+            displayDictationLangSelect.appendChild(opt);
+        });
+        if (typeof getDictationLang === 'function') {
+            displayDictationLangSelect.value = getDictationLang();
+        }
+        displayDictationLangSelect.addEventListener('change', function () {
+            if (typeof setDictationLang === 'function') {
+                setDictationLang(displayDictationLangSelect.value);
+            }
+        });
+        displayDictationLangSelect.addEventListener('click', function (e) {
+            e.stopPropagation();
+        });
+        micLangWrap.appendChild(displayDictationLangSelect);
+        micLangSection.appendChild(micLangWrap);
+        displayMenu.appendChild(micLangSection);
+    }
+
     var themeSection = document.createElement('div');
     themeSection.className = 'syllentras-display-section';
 
@@ -5906,6 +6072,10 @@ function buildDisplayMenu() {
     displayMenu.addEventListener('click', function (e) {
         e.stopPropagation();
     });
+    // Stop the chat body from eating the wheel so this menu can actually scroll.
+    displayMenu.addEventListener('wheel', function (e) {
+        e.stopPropagation();
+    }, { passive: true });
 
     displayMenuBuilt = true;
     syncDisplayMenuUi();
@@ -5917,6 +6087,19 @@ function closeDisplayMenu() {
     displayBtn.setAttribute('aria-expanded', 'false');
 }
 
+function fitDisplayMenuInPanel() {
+    if (!displayMenu || !displayBtn) return;
+    var panel = document.getElementById('syllentras-chat-panel');
+    if (!panel) return;
+    // Panel uses overflow:hidden, so if the menu is taller than the room under
+    // the Aa button it just gets chopped. Cap height to whatever still fits.
+    var panelRect = panel.getBoundingClientRect();
+    var btnRect = displayBtn.getBoundingClientRect();
+    var room = Math.floor(panelRect.bottom - btnRect.bottom - 12);
+    var capped = Math.max(160, Math.min(room, 320));
+    displayMenu.style.maxHeight = capped + 'px';
+}
+
 function openDisplayMenu() {
     if (!displayMenu || !displayBtn) return;
     if (typeof closeToolsMenu === 'function') closeToolsMenu();
@@ -5925,6 +6108,7 @@ function openDisplayMenu() {
     buildDisplayMenu();
     displayMenu.hidden = false;
     displayBtn.setAttribute('aria-expanded', 'true');
+    fitDisplayMenuInPanel();
 }
 
 function toggleDisplayMenu(e) {
@@ -5959,6 +6143,10 @@ document.addEventListener('keydown', function (e) {
 });
 
 window.addEventListener('resize', function () {
+    if (displayMenu && !displayMenu.hidden) {
+        fitDisplayMenuInPanel();
+        return;
+    }
     closeDisplayMenu();
 });
 

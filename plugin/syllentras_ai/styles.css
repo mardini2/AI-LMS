@@ -237,6 +237,7 @@
 }
 .syllentras-display-wrap {
     position: relative;
+    overflow: visible;
 }
 #syllentras-chat-root #syllentras-display-btn,
 #syllentras-chat-root #syllentras-chat-expand,
@@ -288,9 +289,15 @@
     position: absolute;
     top: calc(100% + 8px);
     right: 0;
-    z-index: 30;
-    width: 260px;
-    max-width: min(260px, calc(100vw - 48px));
+    z-index: 40;
+    width: 280px;
+    max-width: min(280px, calc(100vw - 48px));
+    /* Fallback cap — JS also sets max-height to fit inside the chat panel. */
+    max-height: min(42vh, 300px);
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
     background: var(--syll-panel-bg);
     color: var(--syll-text);
     border: 1px solid var(--syll-border);
@@ -299,6 +306,15 @@
     padding: 12px;
     cursor: default;
     user-select: auto;
+    scrollbar-width: thin;
+    scrollbar-color: var(--syll-border) transparent;
+}
+.syllentras-display-menu::-webkit-scrollbar {
+    width: 8px;
+}
+.syllentras-display-menu::-webkit-scrollbar-thumb {
+    background: var(--syll-border);
+    border-radius: 999px;
 }
 .syllentras-display-menu[hidden] {
     display: none;
@@ -320,10 +336,67 @@
     color: var(--syll-text);
     margin-bottom: 6px;
 }
+/* Keep this tiny on purpose — font-scale was making the hint look like a title. */
+.syllentras-display-hint {
+    font-size: 10px;
+    color: var(--syll-text-muted);
+    margin: -2px 0 8px;
+    line-height: 1.3;
+    font-weight: 400;
+    opacity: 0.9;
+}
 .syllentras-display-slider {
     width: 100%;
     margin: 0;
     accent-color: var(--syll-accent);
+}
+/* Custom select shell — hides the ugly OS arrow and matches our theme buttons. */
+.syllentras-display-select-wrap {
+    position: relative;
+}
+.syllentras-display-select-wrap::after {
+    content: '';
+    position: absolute;
+    right: 14px;
+    top: 50%;
+    width: 7px;
+    height: 7px;
+    border-right: 2px solid var(--syll-text-muted);
+    border-bottom: 2px solid var(--syll-text-muted);
+    transform: translateY(-70%) rotate(45deg);
+    pointer-events: none;
+}
+.syllentras-display-select {
+    display: block;
+    width: 100%;
+    box-sizing: border-box;
+    appearance: none;
+    -webkit-appearance: none;
+    -moz-appearance: none;
+    border: 1px solid var(--syll-border);
+    background: var(--syll-input-bg);
+    color: var(--syll-text);
+    border-radius: 8px;
+    padding: 9px 34px 9px 11px;
+    font: inherit;
+    font-size: calc(13px * var(--syll-font-scale));
+    font-weight: 500;
+    line-height: 1.35;
+    cursor: pointer;
+    transition: border-color 0.12s ease, background-color 0.12s ease;
+}
+.syllentras-display-select:hover {
+    background: var(--syll-surface-hover);
+    border-color: var(--syll-surface-active-border);
+}
+.syllentras-display-select:focus {
+    outline: none;
+    border-color: var(--syll-accent);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--syll-accent) 28%, transparent);
+}
+/* IE/old Edge leftover arrow — hide if it still shows up. */
+.syllentras-display-select::-ms-expand {
+    display: none;
 }
 .syllentras-display-theme-list {
     display: flex;

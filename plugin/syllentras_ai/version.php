@@ -5,7 +5,7 @@
 defined('MOODLE_INTERNAL') || die();
 
 $plugin->component = 'local_syllentras_ai';
-$plugin->version   = 2026080104;   // YYYYMMDDXX — bump XX when releasing changes
+$plugin->version   = 2026080904;   // YYYYMMDDXX — bump XX when releasing changes
 $plugin->requires  = 2024042200;   // Minimum Moodle version (4.4)
 $plugin->maturity  = MATURITY_ALPHA;
-$plugin->release   = '0.6.74';
+$plugin->release   = '0.6.78';

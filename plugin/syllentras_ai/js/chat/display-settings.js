@@ -29,6 +29,7 @@ var displayFontValueEl = null;
 var displayFontSlider = null;
 var displaySpeechRateValueEl = null;
 var displaySpeechRateSlider = null;
+var displayDictationLangSelect = null;
 
 function normalizeDisplayTheme(raw) {
     for (var i = 0; i < DISPLAY_THEMES.length; i++) {
@@ -97,6 +98,10 @@ function resetDisplaySettings() {
     if (typeof resetSpeechSettings === 'function') {
         resetSpeechSettings();
     }
+    // Mic STT language goes back to English (US) with the rest of accessibility.
+    if (typeof resetDictationLanguage === 'function') {
+        resetDictationLanguage();
+    }
     applyDisplaySettings();
     saveDisplaySettings();
     syncDisplayMenuUi();
@@ -135,6 +140,10 @@ function syncDisplayMenuUi() {
         btn.classList.toggle('selected', active);
         btn.setAttribute('aria-pressed', active ? 'true' : 'false');
     });
+
+    if (displayDictationLangSelect && typeof getDictationLang === 'function') {
+        displayDictationLangSelect.value = getDictationLang();
+    }
 }
 
 function buildDisplayMenu() {
@@ -244,6 +253,52 @@ function buildDisplayMenu() {
         displayMenu.appendChild(rateSection);
     }
 
+    // Mic language — only when the browser can do speech-to-text.
+    if (typeof speechRecognitionSupported === 'function' && speechRecognitionSupported()
+        && typeof DICTATION_LANGUAGES !== 'undefined') {
+        var micLangSection = document.createElement('div');
+        micLangSection.className = 'syllentras-display-section';
+
+        var micLangLabel = document.createElement('div');
+        micLangLabel.className = 'syllentras-display-label';
+        micLangLabel.textContent = 'Mic language';
+        micLangSection.appendChild(micLangLabel);
+
+        var micLangHint = document.createElement('div');
+        micLangHint.className = 'syllentras-display-hint';
+        micLangHint.textContent = 'Language the microphone listens for';
+        micLangSection.appendChild(micLangHint);
+
+        // Wrap the select so we can draw a chevron that matches light/dark themes.
+        var micLangWrap = document.createElement('div');
+        micLangWrap.className = 'syllentras-display-select-wrap';
+
+        displayDictationLangSelect = document.createElement('select');
+        displayDictationLangSelect.className = 'syllentras-display-select';
+        displayDictationLangSelect.id = 'syllentras-display-dictation-lang';
+        displayDictationLangSelect.setAttribute('aria-label', 'Microphone speech-to-text language');
+        DICTATION_LANGUAGES.forEach(function (lang) {
+            var opt = document.createElement('option');
+            opt.value = lang.id;
+            opt.textContent = lang.label;
+            displayDictationLangSelect.appendChild(opt);
+        });
+        if (typeof getDictationLang === 'function') {
+            displayDictationLangSelect.value = getDictationLang();
+        }
+        displayDictationLangSelect.addEventListener('change', function () {
+            if (typeof setDictationLang === 'function') {
+                setDictationLang(displayDictationLangSelect.value);
+            }
+        });
+        displayDictationLangSelect.addEventListener('click', function (e) {
+            e.stopPropagation();
+        });
+        micLangWrap.appendChild(displayDictationLangSelect);
+        micLangSection.appendChild(micLangWrap);
+        displayMenu.appendChild(micLangSection);
+    }
+
     var themeSection = document.createElement('div');
     themeSection.className = 'syllentras-display-section';
 
@@ -288,6 +343,10 @@ function buildDisplayMenu() {
     displayMenu.addEventListener('click', function (e) {
         e.stopPropagation();
     });
+    // Stop the chat body from eating the wheel so this menu can actually scroll.
+    displayMenu.addEventListener('wheel', function (e) {
+        e.stopPropagation();
+    }, { passive: true });
 
     displayMenuBuilt = true;
     syncDisplayMenuUi();
@@ -299,6 +358,19 @@ function closeDisplayMenu() {
     displayBtn.setAttribute('aria-expanded', 'false');
 }
 
+function fitDisplayMenuInPanel() {
+    if (!displayMenu || !displayBtn) return;
+    var panel = document.getElementById('syllentras-chat-panel');
+    if (!panel) return;
+    // Panel uses overflow:hidden, so if the menu is taller than the room under
+    // the Aa button it just gets chopped. Cap height to whatever still fits.
+    var panelRect = panel.getBoundingClientRect();
+    var btnRect = displayBtn.getBoundingClientRect();
+    var room = Math.floor(panelRect.bottom - btnRect.bottom - 12);
+    var capped = Math.max(160, Math.min(room, 320));
+    displayMenu.style.maxHeight = capped + 'px';
+}
+
 function openDisplayMenu() {
     if (!displayMenu || !displayBtn) return;
     if (typeof closeToolsMenu === 'function') closeToolsMenu();
@@ -307,6 +379,7 @@ function openDisplayMenu() {
     buildDisplayMenu();
     displayMenu.hidden = false;
     displayBtn.setAttribute('aria-expanded', 'true');
+    fitDisplayMenuInPanel();
 }
 
 function toggleDisplayMenu(e) {
@@ -341,5 +414,9 @@ document.addEventListener('keydown', function (e) {
 });
 
 window.addEventListener('resize', function () {
+    if (displayMenu && !displayMenu.hidden) {
+        fitDisplayMenuInPanel();
+        return;
+    }
     closeDisplayMenu();
 });
