@@ -118,11 +118,10 @@ function confirmDeleteConversation() {
         + '?moodleUserId=' + encodeURIComponent(moodleUserId), { method: 'DELETE' })
     .then(function (result) {
         if (result && result.cleared) {
+            // Reload history so the fresh welcome bubble shows up after clear.
             if (conversation.id === conversationId) {
-                clearMessages();
-                if (result.conversation) {
-                    activeConversation = result.conversation;
-                }
+                return setActiveConversation(result.conversation || conversation)
+                    .then(loadConversations);
             }
             return loadConversations();
         }

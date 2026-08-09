@@ -181,7 +181,12 @@ export class ConversationService {
         existing.sectionName ?? existing.title,
         courseId,
       );
-      return this.conversationRepo.save(existing);
+      const saved = await this.conversationRepo.save(existing);
+      // Empty Main/Home chats should still greet people (not just brand-new ones).
+      if (type === 'general') {
+        await this.ensureGeneralWelcome(saved);
+      }
+      return this.findById(saved.id);
     }
 
     const conversation = await this.create(courseId, moodleUserId, {
@@ -198,9 +203,56 @@ export class ConversationService {
           content: `What would you like to know about ${sectionName}?`,
         },
       ]);
+    } else if (type === 'general') {
+      await this.appendMessages(conversation.id, [
+        {
+          role: 'assistant',
+          content: buildGeneralWelcomeMessage(courseId),
+        },
+      ]);
     }
 
     return this.findById(conversation.id);
+  }
+
+  /**
+   * Drop in the Main/Home welcome when the chat is effectively empty.
+   * Skips once the student has actually sent something.
+   *
+   * Note: an old hidden welcome ("What would you like to know about this course?")
+   * still counts as a DB row, so the UI looked empty while we thought it wasn't.
+   * We treat that as empty and replace it.
+   */
+  private async ensureGeneralWelcome(conversation: Conversation): Promise<void> {
+    if ((conversation.type ?? 'general') !== 'general') return;
+
+    const userCount = await this.messageRepo.count({
+      where: { conversationId: conversation.id, role: 'user' },
+    });
+    // They've already been chatting — leave their history alone.
+    if (userCount > 0) return;
+
+    const existing = await this.messageRepo.find({
+      where: { conversationId: conversation.id },
+      order: { createdAt: 'ASC' },
+      take: 10,
+    });
+
+    if (existing.some((m) => isGeneralWelcomeMessage(m.content))) {
+      return;
+    }
+
+    // Empty, or only stale/filtered assistant intros — wipe then seed.
+    if (existing.length) {
+      await this.messageRepo.delete({ conversationId: conversation.id });
+    }
+
+    await this.appendMessages(conversation.id, [
+      {
+        role: 'assistant',
+        content: buildGeneralWelcomeMessage(conversation.courseId),
+      },
+    ]);
   }
 
   async listForCourse(
@@ -294,6 +346,8 @@ export class ConversationService {
       conversation.topicSuggestions = null;
       conversation.updatedAt = new Date();
       const saved = await this.conversationRepo.save(conversation);
+      // Put the welcome back so a cleared Main isn't a blank void.
+      await this.ensureGeneralWelcome(saved);
       return { cleared: true, conversation: toSummary(saved) };
     }
 
@@ -653,11 +707,33 @@ function filterSyntheticMainWelcome<T extends { role: MessageRole; content: stri
     return messages;
   }
 
+  // Hide the old one-liner welcome only. The newer multilingual welcome stays.
   return messages.filter(
     (message) =>
       !(
         message.role === 'assistant' &&
         message.content === 'What would you like to know about this course?'
       ),
+  );
+}
+
+/** First bubble in an empty Main/Home chat — keep it short and useful. */
+export function buildGeneralWelcomeMessage(courseId: number): string {
+  // Course Main vs dashboard Home — coach-first, light language tip.
+  if (courseId > 1) {
+    return "Hi! I'm Syllentras AI, your course coach. Ask about course content, or request a study guide, flashcards, or a practice quiz. You can chat in any language. (Mic language can be changed in Accessibility.)";
+  }
+
+  return "Hi! I'm Syllentras AI, your learning coach. Open a course to explore its material, or ask about any of your enrolled courses. You can chat in any language. (Mic language can be changed in Accessibility.)";
+}
+
+/** Detect our seeded welcome so we don't double-post it. */
+export function isGeneralWelcomeMessage(content: string): boolean {
+  const text = String(content || '');
+  return (
+    /I'm Syllentras AI/i.test(text) &&
+    /chat in any language/i.test(text) &&
+    (/course coach|learning coach/i.test(text) ||
+      /Mic language can be changed in Accessibility/i.test(text))
   );
 }
