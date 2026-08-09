@@ -60,6 +60,10 @@ import {
   shouldLogGreetingDebug,
 } from './greeting-debug';
 import { ChatAttachmentsService } from './attachments/chat-attachments.service';
+import {
+  isPrimaryGratitudeMessage,
+  pickGratitudeReply,
+} from './chat-gratitude';
 
 export type {
   ChatResponse,
@@ -271,6 +275,40 @@ export class ChatService {
     const message = rawMessage.trim()
       ? rawMessage.trim()
       : processedAttachments.usableFilenames.join(', ') || messageForStorage;
+
+    // Pure "thanks" / "appreciate it" — short reply, don't re-run the last answer.
+    // Skip when they also attached files; those still need the normal path.
+    if (!attachmentIds.length && isPrimaryGratitudeMessage(rawMessage)) {
+      const responseText = pickGratitudeReply(rawMessage);
+      await this.conversationService.appendMessages(conversationId, [
+        {
+          role: 'user',
+          content: messageForStorage,
+          mode,
+          guidance: guidance ?? null,
+        },
+        {
+          role: 'assistant',
+          content: responseText,
+          mode,
+          guidance: guidance ?? null,
+        },
+      ]);
+      const topicSuggestions = normalizeReturnedTopics(
+        conversation.topicSuggestions,
+      );
+      this.logger.log(
+        `Gratitude acknowledgment for conversation ${conversationId} (skipped LLM)`,
+      );
+      return {
+        response: responseText,
+        conversationId,
+        topicSuggestions,
+        provider: llm.id,
+        mode,
+        guidance,
+      };
+    }
 
     const [
       courseMaterial,

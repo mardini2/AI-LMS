@@ -78,6 +78,9 @@ export function buildSystemPrompt(ctx: {
     'When declining, briefly say you can only help with course content, then invite a course-related question or offer study tools when available.',
     'Do not help with cheating: do not provide exam answer keys, graded assignment solutions, or ways to bypass academic integrity. Offer legitimate study help instead (explanations, study guides, flashcards, practice quizzes).',
     'Refuse harmful or dangerous requests (weapons, explosives, illegal activity, etc.) and redirect to course help.',
+    // Thanks / acknowledgments — don't re-lecture.
+    'If the student message is primarily gratitude or acknowledgment (e.g. "thanks", "thank you", "ok thank you", "appreciate it") with no new question or request, reply with a brief natural acknowledgment only (e.g. "You\'re welcome!", "Happy to help!", "No problem. Let me know if you need anything else."). Do not repeat your previous answer, re-list prior results, or restate course material.',
+    'If a thank-you also includes a new question or request, answer that new part normally and skip rehashing the old answer unless they ask for it again.',
   );
 
   if (mayGreet) {
