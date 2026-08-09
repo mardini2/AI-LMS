@@ -70,6 +70,10 @@ function appendMessage(role, text, options) {
     options = options || {};
     var div = createMessageElement(role, text, options);
     msgs.appendChild(div);
+    // Live sends / notices — refresh separators + grouping for the new tail.
+    if (options.skipTimeline !== true && typeof rebuildChatTimeline === 'function') {
+        rebuildChatTimeline();
+    }
     if (options.scroll !== false) msgs.scrollTop = msgs.scrollHeight;
     return div;
 }
@@ -82,6 +86,9 @@ function prependMessage(role, text, options) {
     }
     var div = createMessageElement(role, text, options);
     msgs.insertBefore(div, loadMore.nextSibling);
+    if (options.skipTimeline !== true && typeof rebuildChatTimeline === 'function') {
+        rebuildChatTimeline();
+    }
     return div;
 }
 
@@ -89,9 +96,11 @@ function clearMessages() {
     if (typeof stopMessageSpeech === 'function') {
         stopMessageSpeech();
     }
-    Array.from(msgs.querySelectorAll('.syllentras-msg')).forEach(function (node) {
-        node.remove();
-    });
+    Array.from(msgs.querySelectorAll('.syllentras-msg, .syllentras-chat-sep')).forEach(
+        function (node) {
+            node.remove();
+        }
+    );
     resetMessageSearchIndex();
     clearMessageTextHighlights();
     if (typeof setMessageSearchResults === 'function') {
@@ -126,6 +135,8 @@ function renderMessageBatch(messages, prepend) {
         }
         var opts = {
             scroll: false,
+            // Batch first, then one timeline pass — avoids N separator rebuilds.
+            skipTimeline: true,
             createdAt: m.createdAt,
             mode: m.mode,
             id: m.id,
@@ -137,6 +148,9 @@ function renderMessageBatch(messages, prepend) {
             appendMessage(role, m.content, opts);
         }
     });
+    if (typeof rebuildChatTimeline === 'function') {
+        rebuildChatTimeline();
+    }
 }
 
 function findMessageElement(messageId) {
@@ -178,8 +192,13 @@ function highlightTextNodeMatches(root, query) {
             if (!node.nodeValue || !node.nodeValue.toLowerCase().includes(needle)) {
                 return NodeFilter.FILTER_REJECT;
             }
-            // Don't mess with mode chips or other chrome.
-            if (node.parentElement && node.parentElement.closest('.syllentras-msg-mode')) {
+            // Don't mess with mode chips, timestamps, or other chrome.
+            if (
+                node.parentElement &&
+                node.parentElement.closest(
+                    '.syllentras-msg-mode, .syllentras-msg-time, .syllentras-chat-sep'
+                )
+            ) {
                 return NodeFilter.FILTER_REJECT;
             }
             return NodeFilter.FILTER_ACCEPT;

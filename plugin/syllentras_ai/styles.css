@@ -747,30 +747,27 @@
     letter-spacing: 0.03em;
 }
 .syllentras-ai-content-menu-btn {
+    /* Match the chat conversation ⋮ control. */
+    width: 22px;
+    height: 22px;
     border: none;
     background: transparent;
-    cursor: pointer;
+    border-radius: 50%;
     color: var(--syll-text-muted);
-    font-size: 18px;
-    line-height: 1;
-    padding: 4px 6px;
-    border-radius: 4px;
+    cursor: pointer;
+    padding: 0;
+    font-size: 16px;
+    line-height: 22px;
+    text-align: center;
 }
 .syllentras-ai-content-menu-btn:hover,
 .syllentras-ai-content-menu-btn.open {
     background: var(--syll-surface-hover);
     color: var(--syll-text);
 }
-.syllentras-ai-content-menu {
-    position: fixed;
+/* Reuses .syllentras-conversation-menu for the solid panel look; keep z-index above content. */
+.syllentras-ai-content-menu.syllentras-conversation-menu {
     z-index: 10050;
-    min-width: 120px;
-    background: var(--syll-panel-bg);
-    color: var(--syll-text);
-    border: 1px solid var(--syll-border);
-    border-radius: 8px;
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.16);
-    padding: 4px;
 }
 
 .syllentras-conversation-group-title {
@@ -915,6 +912,19 @@
     opacity: 1;
 }
 .syllentras-conversation-menu[hidden] { display: none; }
+/* Tiny relative time above the ⋮ actions — not on the list row itself. */
+.syllentras-conversation-menu-meta {
+    color: var(--syll-text-muted);
+    font-size: calc(10px * var(--syll-font-scale));
+    font-weight: 500;
+    letter-spacing: 0.02em;
+    line-height: 1.2;
+    padding: 5px 8px 6px;
+    text-align: center;
+    border-bottom: 1px solid var(--syll-border-soft, rgba(0, 0, 0, 0.08));
+    margin: 0 0 2px;
+    user-select: none;
+}
 .syllentras-menu-action {
     background: transparent;
     border: none;
@@ -1130,6 +1140,9 @@
     #syllentras-chat-main.is-file-dragover::after {
         background: rgba(11, 110, 79, 0.12);
     }
+    .syllentras-chat-sep-line {
+        background: rgba(0, 0, 0, 0.12);
+    }
 }
 #syllentras-chat-active-meta {
     border-bottom: 1px solid var(--syll-border-soft);
@@ -1297,7 +1310,8 @@
     padding: 12px;
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    /* Tight base gap; group-start / separators add the breathing room. */
+    gap: 2px;
     min-height: 120px;
 }
 #syllentras-chat-load-more {
@@ -1309,6 +1323,57 @@
 #syllentras-chat-load-more[hidden] {
     display: none;
 }
+/* Day / pause markers — full-width so --- Today --- stays centered. */
+.syllentras-chat-sep {
+    align-self: stretch;
+    box-sizing: border-box;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    width: 100%;
+    max-width: 100%;
+    margin: 12px 0 8px;
+    padding: 0 16px;
+    animation: syllentras-sep-in 0.2s ease-out;
+}
+.syllentras-chat-sep-line {
+    flex: 1 1 auto;
+    height: 1px;
+    max-width: 56px;
+    background: color-mix(in srgb, var(--syll-text-muted) 35%, transparent);
+    opacity: 0.85;
+}
+.syllentras-chat-sep-label {
+    flex: 0 0 auto;
+    color: var(--syll-text-muted);
+    font-size: calc(10px * var(--syll-font-scale));
+    font-weight: 500;
+    letter-spacing: 0.04em;
+    line-height: 1;
+    text-align: center;
+    text-transform: none;
+    opacity: 0.85;
+    white-space: nowrap;
+}
+.syllentras-chat-sep-time {
+    margin: 8px 0 6px;
+    gap: 0;
+}
+.syllentras-chat-sep-time .syllentras-chat-sep-label {
+    letter-spacing: 0.02em;
+    opacity: 0.7;
+}
+@keyframes syllentras-sep-in {
+    from {
+        opacity: 0;
+        transform: translateY(3px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
 .syllentras-msg {
     max-width: 85%;
     padding: 8px 12px;
@@ -1317,10 +1382,88 @@
     font-size: calc(14px * var(--syll-font-scale));
     word-break: break-word;
     position: relative;
+    transition: margin 0.15s ease, border-radius 0.15s ease;
 }
 .syllentras-msg.user,
 .syllentras-msg.assistant {
     padding-right: 30px;
+}
+.syllentras-msg.user.is-group-start,
+.syllentras-msg.assistant.is-group-start {
+    margin-top: 8px;
+}
+/* Separators already add space — don't double it under a day/time marker. */
+.syllentras-chat-sep + .syllentras-msg.is-group-start {
+    margin-top: 0;
+}
+.syllentras-msg.user.is-group-continued,
+.syllentras-msg.assistant.is-group-continued {
+    margin-top: 0;
+}
+/* Same-sender stacks: soften the touching corners so it reads as one run. */
+.syllentras-msg.user.is-group-start:not(.is-group-end) {
+    border-bottom-right-radius: 3px;
+}
+.syllentras-msg.user.is-group-continued:not(.is-group-end) {
+    border-top-right-radius: 3px;
+    border-bottom-right-radius: 3px;
+}
+.syllentras-msg.user.is-group-end:not(.is-group-start) {
+    border-top-right-radius: 3px;
+}
+.syllentras-msg.assistant.is-group-start:not(.is-group-end) {
+    border-bottom-left-radius: 3px;
+}
+.syllentras-msg.assistant.is-group-continued:not(.is-group-end) {
+    border-top-left-radius: 3px;
+    border-bottom-left-radius: 3px;
+}
+.syllentras-msg.assistant.is-group-end:not(.is-group-start) {
+    border-top-left-radius: 3px;
+}
+/* Per-message clock — hidden until you hover / tap a sent bubble. */
+.syllentras-msg-time {
+    display: block;
+    margin-top: 0;
+    font-size: calc(10px * var(--syll-font-scale));
+    font-weight: 500;
+    letter-spacing: 0.01em;
+    line-height: 1.2;
+    color: var(--syll-text-muted);
+    opacity: 0;
+    max-height: 0;
+    overflow: hidden;
+    transform: translateY(2px);
+    transition:
+        opacity 0.18s ease,
+        max-height 0.18s ease,
+        transform 0.18s ease,
+        margin 0.18s ease;
+    pointer-events: none;
+    user-select: none;
+}
+.syllentras-msg.user .syllentras-msg-time {
+    text-align: right;
+    color: rgba(255, 255, 255, 0.62);
+}
+.syllentras-msg.assistant .syllentras-msg-time {
+    text-align: left;
+    color: var(--syll-text-muted);
+}
+.syllentras-msg:hover .syllentras-msg-time,
+.syllentras-msg:focus-within .syllentras-msg-time,
+.syllentras-msg.is-time-visible .syllentras-msg-time {
+    opacity: 0.8;
+    max-height: 1.4em;
+    transform: translateY(0);
+    margin-top: 4px;
+}
+/* Stacked bubbles: keep middle stamps quiet unless that bubble is hovered/tapped. */
+.syllentras-msg.is-group-continued:not(.is-group-end):not(:hover):not(.is-time-visible):not(:focus-within)
+    .syllentras-msg-time {
+    opacity: 0;
+    max-height: 0;
+    margin-top: 0;
 }
 /* Kill Moodle/browser default button chrome — just a bare icon. */
 #syllentras-chat-root button.syllentras-msg-speak {
@@ -2292,6 +2435,7 @@
     font-size: calc(12px * var(--syll-font-scale));
     font-style: italic;
     max-width: 90%;
+    margin: 8px 0;
     padding: 2px 8px;
     text-align: center;
 }

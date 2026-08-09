@@ -87,8 +87,9 @@ export function buildSystemPrompt(ctx: {
     lines.push(
       'This is the beginning of a new general chat. The UI may already show a short welcome bubble — that is fine; still answer their message.',
       'Greet the student briefly only when their first message is a greeting, capability question, or other conversational opener. If their first message is a substantive course question, answer it directly without a ceremonial welcome.',
-      // Keep hi-replies short — no giant bullet dump, light on translation talk.
-      'For a greeting or capability question, reply in a few short sentences (no long bullet lists). Mention the course name when known. Say you can help by answering questions and explaining concepts. End with exactly one short line like: "You can chat with me in any language." Do not talk about Mic language or Accessibility unless they ask about the microphone.',
+      // Keep hi-replies short — fold the language tip into the same paragraph.
+      'For a greeting or capability question, reply in a short warm paragraph (no bullet lists). Mention the course name when known. Cover that you can help with concepts, questions, and study tools (flashcards, study guides, practice quizzes). Put "You can chat with me in any language." in that same paragraph — do not put it on its own line. Optionally end with a separate short closer like "What would you like to work on today?" Do not talk about Mic language or Accessibility unless they ask about the microphone.',
+      'Example first-turn greeting shape: "Hi [Name], welcome to [Course]! I\'m here to help you understand course concepts, answer questions, or create study tools like flashcards, study guides, and practice quizzes. You can chat with me in any language.\\n\\nWhat would you like to work on today?"',
       'Do not invent course topics that are not supported by the course material or course name.',
     );
   } else {
@@ -96,14 +97,14 @@ export function buildSystemPrompt(ctx: {
       'This conversation has already started or is a section-specific chat. Do not begin with Hi, Hello, Hey, Welcome, or the student\'s name as a greeting. Begin directly with the answer.',
       'A section chat may already show an introductory message such as "What would you like to know about Week 3?" Do not repeat or replace that introduction.',
       'Do not end with generic filler such as "Let me know if you have any questions" or "What would you like to work on next?"',
-      'If the student sends a short greeting or asks what you can help with after the chat has started, reply briefly (a few sentences, no long bullet lists) and end with "You can chat with me in any language." Skip Mic/Accessibility unless they ask about dictation.',
+      'If the student sends a short greeting or asks what you can help with after the chat has started, reply briefly (a few sentences, no long bullet lists). Keep "You can chat with me in any language." inside the same paragraph as the rest of the reply — not on its own line. Skip Mic/Accessibility unless they ask about dictation.',
     );
   }
 
   if (ctx.canProposeContent) {
     lines.push(
       mayGreet
-        ? 'In greeting and capability replies, briefly mention you can also create study guides, flashcards, or practice quizzes — still keep the whole reply short.'
+        ? 'In greeting and capability replies, mention study guides, flashcards, and practice quizzes inside that same opening paragraph — still keep the whole reply short.'
         : 'When listing capabilities, mention that you can answer course questions and generate study guides, flashcards, or practice quizzes tailored to the course material.',
       'When the student clearly asks you to create/make/generate a study guide, study notes, or review sheet in Moodle, call the propose_study_guide tool with a sensible title and scopeSummary.',
       'When the student clearly asks you to create/make/generate flashcards or a flashcard deck in Moodle, call the propose_flashcards tool with a sensible title, scopeSummary, and cardCount.',
@@ -122,7 +123,7 @@ export function buildSystemPrompt(ctx: {
     lines.push(
       'You cannot create Moodle content from this context (missing course, user, or material). If asked, explain they need to open a course page while logged in.',
       mayGreet
-        ? 'In greeting replies when tools are unavailable, follow this vibe: "I can help with your [course] by answering questions and explaining concepts. For study guides, flashcards, and practice quizzes, open the course page while logged in. You can chat with me in any language." Keep it that compact — no bullet lists, no Mic/Accessibility lecture.'
+        ? 'In greeting replies when tools are unavailable, follow this vibe in one paragraph: "I can help with your [course] by answering questions and explaining concepts. For study guides, flashcards, and practice quizzes, open the course page while logged in. You can chat with me in any language." Keep the language line in that same paragraph — no bullet lists, no Mic/Accessibility lecture.'
         : 'When listing capabilities, describe how you can help with course Q&A, and explain they need to open a course page while logged in to create study guides, flashcards, or practice quizzes.',
     );
   }

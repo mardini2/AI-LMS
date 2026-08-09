@@ -19,6 +19,22 @@ function showConversationMenu(anchor, conversation) {
     var menu = document.createElement('div');
     menu.className = 'syllentras-conversation-menu';
     menu.setAttribute('role', 'menu');
+
+    // Only show a clock after the student has actually typed — welcome-only
+    // Main/Home (or a just-cleared one) should stay quiet.
+    var when = conversation.lastUserMessageAt || null;
+    var relative =
+        when && typeof formatRelativeConversationTime === 'function'
+            ? formatRelativeConversationTime(when)
+            : '';
+    if (relative) {
+        var meta = document.createElement('div');
+        meta.className = 'syllentras-conversation-menu-meta';
+        meta.textContent = relative;
+        meta.title = new Date(when).toLocaleString();
+        menu.appendChild(meta);
+    }
+
     addMenuAction(menu, 'Rename', function () { showRenameModal(conversation); }, conversation.type !== 'manual');
     addMenuAction(menu, conversation.pinned ? 'Unpin' : 'Pin', function () { togglePinConversation(conversation); }, conversation.type === 'general');
     addMenuAction(menu, 'Export', function () { showExportModal(conversation); });

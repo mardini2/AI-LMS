@@ -59,6 +59,8 @@ export interface ConversationSummary {
   topicSuggestions?: string[];
   createdAt: Date;
   updatedAt: Date;
+  /** Last student message — null until they type (welcome alone doesn't count). */
+  lastUserMessageAt?: Date | null;
 }
 
 export interface ConversationSearchResult {
@@ -269,7 +271,36 @@ export class ConversationService {
       },
     });
 
-    return conversations.map(toSummary);
+    const lastUserAt = await this.lastUserMessageAtByConversation(
+      conversations.map((c) => c.id),
+    );
+    return conversations.map((c) => ({
+      ...toSummary(c),
+      lastUserMessageAt: lastUserAt.get(c.id) ?? null,
+    }));
+  }
+
+  /** Latest user-turn timestamp per chat — used so empty Main/Home has no "Just now". */
+  private async lastUserMessageAtByConversation(
+    conversationIds: string[],
+  ): Promise<Map<string, Date>> {
+    const map = new Map<string, Date>();
+    if (!conversationIds.length) return map;
+
+    const rows = await this.messageRepo
+      .createQueryBuilder('m')
+      .select('m.conversationId', 'conversationId')
+      .addSelect('MAX(m.createdAt)', 'lastUserMessageAt')
+      .where('m.conversationId IN (:...ids)', { ids: conversationIds })
+      .andWhere("m.role = 'user'")
+      .groupBy('m.conversationId')
+      .getRawMany<{ conversationId: string; lastUserMessageAt: Date | string }>();
+
+    for (const row of rows) {
+      if (!row.conversationId || !row.lastUserMessageAt) continue;
+      map.set(row.conversationId, new Date(row.lastUserMessageAt));
+    }
+    return map;
   }
 
   async searchForCourse(
@@ -344,11 +375,14 @@ export class ConversationService {
     if ((conversation.type ?? 'general') === 'general') {
       await this.messageRepo.delete({ conversationId: id });
       conversation.topicSuggestions = null;
-      conversation.updatedAt = new Date();
       const saved = await this.conversationRepo.save(conversation);
       // Put the welcome back so a cleared Main isn't a blank void.
       await this.ensureGeneralWelcome(saved);
-      return { cleared: true, conversation: toSummary(saved) };
+      // Fresh welcome only — no student activity clock for the ⋮ menu yet.
+      return {
+        cleared: true,
+        conversation: { ...toSummary(saved), lastUserMessageAt: null },
+      };
     }
 
     await this.conversationRepo.delete({ id });
@@ -623,6 +657,7 @@ function toSummary(conversation: Conversation): ConversationSummary {
     topicSuggestions: normalizeTopicSuggestions(conversation.topicSuggestions),
     createdAt: conversation.createdAt,
     updatedAt: conversation.updatedAt,
+    lastUserMessageAt: null,
   };
 }
 

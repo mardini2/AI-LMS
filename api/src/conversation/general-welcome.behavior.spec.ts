@@ -47,7 +47,8 @@ describe('general chat welcome', () => {
       conversationType: 'general',
     });
     expect(withTools).toMatch(/You can chat with me in any language/i);
-    expect(withTools).toMatch(/no long bullet lists/i);
+    expect(withTools).toMatch(/same paragraph/i);
+    expect(withTools).toMatch(/What would you like to work on today/i);
   });
 
   it('does not treat the old filtered welcome as our new one', () => {

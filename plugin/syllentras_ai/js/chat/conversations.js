@@ -220,10 +220,16 @@ function renderSearchResultItem(conversation, matchedMessage) {
         var meta = document.createElement('span');
         meta.className = 'syllentras-conversation-search-meta';
         var roleLabel = matchedMessage.role === 'assistant' ? 'Assistant' : 'You';
-        var when = matchedMessage.createdAt
-            ? new Date(matchedMessage.createdAt).toLocaleString()
-            : '';
+        var when =
+            matchedMessage.createdAt && typeof formatRelativeConversationTime === 'function'
+                ? formatRelativeConversationTime(matchedMessage.createdAt)
+                : matchedMessage.createdAt
+                  ? new Date(matchedMessage.createdAt).toLocaleString()
+                  : '';
         meta.textContent = when ? roleLabel + ' · ' + when : roleLabel;
+        if (matchedMessage.createdAt) {
+            meta.title = new Date(matchedMessage.createdAt).toLocaleString();
+        }
         item.appendChild(meta);
 
         if (matchedMessage.content) {
@@ -424,13 +430,22 @@ function sendMessage() {
     setGeneratingState(true);
 
     var displayText = text || (hasAttachments ? 'Please review the attached file(s).' : '');
+    var sentAt = new Date().toISOString();
     appendMessage('user', displayText, {
-        attachmentNames: attachmentNames
+        attachmentNames: attachmentNames,
+        createdAt: sentAt,
+        // Wait for the assistant placeholder so we only rebuild the timeline once.
+        skipTimeline: true
     });
 
-    var loadingEl = appendMessage('assistant', '...');
+    var loadingEl = appendMessage('assistant', '...', {
+        skipTimeline: true
+    });
     var pendingAssistantId = loadingEl.dataset.messageId || nextLocalMessageId();
     loadingEl.dataset.messageId = pendingAssistantId;
+    if (typeof rebuildChatTimeline === 'function') {
+        rebuildChatTimeline();
+    }
 
     var body = {
         courseId: courseId,
@@ -471,6 +486,9 @@ function sendMessage() {
             content: data.response,
             createdAt: loadingEl.dataset.createdAt
         });
+        if (typeof rebuildChatTimeline === 'function') {
+            rebuildChatTimeline();
+        }
         if (messageSearchOpen && msgSearchInput && msgSearchInput.value.trim()) {
             runMessageSearch(msgSearchInput.value);
         }

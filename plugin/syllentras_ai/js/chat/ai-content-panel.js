@@ -374,8 +374,10 @@ function showAiContentMenu(anchor, item) {
     closeAiContentDropdowns();
     anchor.classList.add('open');
 
+    // Same shell as the chat ⋮ menu so theme vars + solid fallbacks apply.
+    // (Appending to document.body made --syll-panel-bg resolve to transparent.)
     var menu = document.createElement('div');
-    menu.className = 'syllentras-ai-content-menu';
+    menu.className = 'syllentras-conversation-menu syllentras-ai-content-menu';
     menu.setAttribute('role', 'menu');
 
     function addAction(label, handler, danger) {
@@ -398,9 +400,9 @@ function showAiContentMenu(anchor, item) {
     addAction('Rename', function () { renameAiContentItem(item); });
     addAction('Delete', function () { deleteAiContentItem(item); }, true);
 
-    document.body.appendChild(menu);
+    (root || document.body).appendChild(menu);
     var rect = anchor.getBoundingClientRect();
-    menu.style.left = Math.max(8, rect.right - 140) + 'px';
+    menu.style.left = Math.max(8, rect.right - 124) + 'px';
     menu.style.top = Math.min(window.innerHeight - menu.offsetHeight - 8, rect.bottom + 4) + 'px';
     aiContentOpenMenu = menu;
 }
