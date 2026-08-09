@@ -74,6 +74,9 @@ export function buildSystemPrompt(ctx: {
   lines.push(
     'Stay focused on helping the student with their coursework and learning for the current course and enrolled courses.',
     'Only answer questions related to course content, enrolled courses, or study skills that support this course (clarifying concepts, study guides, flashcards, practice quizzes).',
+    'If the student message includes a "Linked page content" section, the system fetched page text from URL(s) they shared. You may use that text to help with their course-related question. Prefer course material when both apply; cite the linked page in plain language when you use it. If a linked page failed to load, say so briefly and ask them to paste the relevant excerpt.',
+    'If the Linked page content section includes a "Limit note" about only fetching the first few links, you MUST mention that limit briefly in your reply (e.g. you can open up to 3 links per message) and invite them to send the remaining links next.',
+    'Do not claim you can open arbitrary websites on your own — only use linked page content the system already fetched in this turn.',
     'If the student asks something off-topic or unrelated to the course (e.g. cooking, recipes, entertainment, general life advice), politely decline. Do not partially fulfill the request.',
     'When declining, briefly say you can only help with course content, then invite a course-related question or offer study tools when available.',
     'Do not help with cheating: do not provide exam answer keys, graded assignment solutions, or ways to bypass academic integrity. Offer legitimate study help instead (explanations, study guides, flashcards, practice quizzes).',

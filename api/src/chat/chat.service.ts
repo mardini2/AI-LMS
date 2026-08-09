@@ -64,6 +64,12 @@ import {
   isPrimaryGratitudeMessage,
   pickGratitudeReply,
 } from './chat-gratitude';
+import {
+  buildLinkFetchPromptBlock,
+  extractHttpUrls,
+  fetchLinkedPagesFromMessage,
+  linkFetchWarningMessages,
+} from './link-fetch';
 
 export type {
   ChatResponse,
@@ -263,7 +269,7 @@ export class ChatService {
       throw new BadRequestException('Message cannot be empty.');
     }
 
-    const messageForLlm = this.chatAttachments.buildLlmMessage(
+    let messageForLlm = this.chatAttachments.buildLlmMessage(
       rawMessage,
       processedAttachments.promptBlock,
     );
@@ -276,9 +282,35 @@ export class ChatService {
       ? rawMessage.trim()
       : processedAttachments.usableFilenames.join(', ') || messageForStorage;
 
+    // Student pasted http(s) links — fetch readable text for the model only
+    // (not saved into chat history). SSRF-checked inside link-fetch.
+    const sharedUrls = extractHttpUrls(rawMessage);
+    let linkWarnings: string[] = [];
+    if (sharedUrls.length) {
+      const linkBatch = await fetchLinkedPagesFromMessage(rawMessage);
+      const linkBlock = buildLinkFetchPromptBlock(linkBatch);
+      if (linkBlock) {
+        messageForLlm = messageForLlm
+          ? `${messageForLlm}\n\n${linkBlock}`
+          : linkBlock;
+      }
+      linkWarnings = linkFetchWarningMessages(linkBatch);
+      this.logger.log(
+        `Link fetch for conversation ${conversationId}: opened ${linkBatch.results.length}/${linkBatch.totalUrls}` +
+          (linkBatch.skippedUrls ? ` (skipped ${linkBatch.skippedUrls})` : '') +
+          ` — ${linkBatch.results
+            .map((r) => (r.ok ? `ok:${r.url}` : `fail:${r.url}`))
+            .join(', ')}`,
+      );
+    }
+
     // Pure "thanks" / "appreciate it" — short reply, don't re-run the last answer.
-    // Skip when they also attached files; those still need the normal path.
-    if (!attachmentIds.length && isPrimaryGratitudeMessage(rawMessage)) {
+    // Skip when they also attached files or shared links; those still need the normal path.
+    if (
+      !attachmentIds.length &&
+      !sharedUrls.length &&
+      isPrimaryGratitudeMessage(rawMessage)
+    ) {
       const responseText = pickGratitudeReply(rawMessage);
       await this.conversationService.appendMessages(conversationId, [
         {
@@ -653,9 +685,13 @@ export class ChatService {
       provider: llm.id,
       mode,
       guidance,
-      attachmentWarnings: processedAttachments.errors.length
-        ? processedAttachments.errors
-        : undefined,
+      attachmentWarnings: (() => {
+        const warnings = [
+          ...processedAttachments.errors,
+          ...linkWarnings,
+        ];
+        return warnings.length ? warnings : undefined;
+      })(),
     };
   }
 
