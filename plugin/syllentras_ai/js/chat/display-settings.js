@@ -3,6 +3,7 @@
 
 var DISPLAY_THEME_KEY = 'syllentras_display_theme';
 var DISPLAY_FONT_SCALE_KEY = 'syllentras_display_font_scale';
+var DISPLAY_WALLPAPER_KEY = 'syllentras_display_wallpaper';
 
 var DISPLAY_THEMES = [
     { id: 'default', label: 'Default' },
@@ -24,12 +25,14 @@ var displayWrap = displayBtn ? displayBtn.closest('.syllentras-display-wrap') : 
 
 var selectedDisplayTheme = 'default';
 var selectedFontStep = 1;
+var wallpaperEnabled = true;
 var displayMenuBuilt = false;
 var displayFontValueEl = null;
 var displayFontSlider = null;
 var displaySpeechRateValueEl = null;
 var displaySpeechRateSlider = null;
 var displayDictationLangSelect = null;
+var displayWallpaperSwitch = null;
 
 function normalizeDisplayTheme(raw) {
     for (var i = 0; i < DISPLAY_THEMES.length; i++) {
@@ -53,6 +56,7 @@ function applyDisplaySettings() {
     var info = fontStepInfo(selectedFontStep);
     root.setAttribute('data-theme', selectedDisplayTheme);
     root.setAttribute('data-font-scale', String(info.step));
+    root.setAttribute('data-wallpaper', wallpaperEnabled ? 'on' : 'off');
     root.style.setProperty('--syll-font-scale', String(info.scale));
 }
 
@@ -60,22 +64,35 @@ function saveDisplaySettings() {
     try {
         localStorage.setItem(DISPLAY_THEME_KEY, selectedDisplayTheme);
         localStorage.setItem(DISPLAY_FONT_SCALE_KEY, String(selectedFontStep));
+        localStorage.setItem(DISPLAY_WALLPAPER_KEY, wallpaperEnabled ? '1' : '0');
     } catch (e) { /* ignore quota / private mode */ }
 }
 
 function loadDisplaySettings() {
     var themeRaw = null;
     var fontRaw = null;
+    var wallpaperRaw = null;
     try {
         themeRaw = localStorage.getItem(DISPLAY_THEME_KEY);
         fontRaw = localStorage.getItem(DISPLAY_FONT_SCALE_KEY);
+        wallpaperRaw = localStorage.getItem(DISPLAY_WALLPAPER_KEY);
     } catch (e) {
         themeRaw = null;
         fontRaw = null;
+        wallpaperRaw = null;
     }
     selectedDisplayTheme = normalizeDisplayTheme(themeRaw);
     selectedFontStep = normalizeFontStep(fontRaw);
+    // Missing key → on (default). Explicit "0" turns doodles off.
+    wallpaperEnabled = wallpaperRaw !== '0';
     applyDisplaySettings();
+}
+
+function setWallpaperEnabled(on) {
+    wallpaperEnabled = !!on;
+    applyDisplaySettings();
+    saveDisplaySettings();
+    syncDisplayMenuUi();
 }
 
 function setDisplayTheme(themeId) {
@@ -95,6 +112,7 @@ function setFontStep(step) {
 function resetDisplaySettings() {
     selectedDisplayTheme = 'default';
     selectedFontStep = 1;
+    wallpaperEnabled = true;
     if (typeof resetSpeechSettings === 'function') {
         resetSpeechSettings();
     }
@@ -144,6 +162,97 @@ function syncDisplayMenuUi() {
     if (displayDictationLangSelect && typeof getDictationLang === 'function') {
         displayDictationLangSelect.value = getDictationLang();
     }
+
+    if (displayWallpaperSwitch) {
+        displayWallpaperSwitch.setAttribute('aria-checked', wallpaperEnabled ? 'true' : 'false');
+        displayWallpaperSwitch.classList.toggle('is-on', wallpaperEnabled);
+    }
+}
+
+function bindWallpaperSwitch(switchEl) {
+    var dragActive = false;
+    var dragStartX = 0;
+    var dragMoved = false;
+    var dragStartOn = false;
+    var skipClick = false;
+
+    switchEl.addEventListener('click', function (e) {
+        e.stopPropagation();
+        if (skipClick) {
+            skipClick = false;
+            return;
+        }
+        setWallpaperEnabled(!wallpaperEnabled);
+    });
+
+    switchEl.addEventListener('pointerdown', function (e) {
+        if (e.button != null && e.button !== 0) return;
+        e.stopPropagation();
+        dragActive = true;
+        dragMoved = false;
+        dragStartX = e.clientX;
+        dragStartOn = wallpaperEnabled;
+        switchEl.classList.add('is-dragging');
+        try {
+            switchEl.setPointerCapture(e.pointerId);
+        } catch (err) { /* older browsers */ }
+    });
+
+    switchEl.addEventListener('pointermove', function (e) {
+        if (!dragActive) return;
+        e.stopPropagation();
+        var dx = e.clientX - dragStartX;
+        if (Math.abs(dx) >= 4) dragMoved = true;
+        // Live preview while dragging past the midpoint of the track.
+        if (dx >= 10) {
+            switchEl.classList.add('is-on');
+            switchEl.setAttribute('aria-checked', 'true');
+        } else if (dx <= -10) {
+            switchEl.classList.remove('is-on');
+            switchEl.setAttribute('aria-checked', 'false');
+        } else {
+            switchEl.classList.toggle('is-on', dragStartOn);
+            switchEl.setAttribute('aria-checked', dragStartOn ? 'true' : 'false');
+        }
+    });
+
+    switchEl.addEventListener('pointerup', function (e) {
+        if (!dragActive) return;
+        e.stopPropagation();
+        dragActive = false;
+        switchEl.classList.remove('is-dragging');
+        var dx = e.clientX - dragStartX;
+        if (dragMoved && Math.abs(dx) >= 12) {
+            skipClick = true;
+            setWallpaperEnabled(dx > 0);
+        } else if (dragMoved) {
+            // Tiny drag — snap UI back; click may still toggle if it fires.
+            syncDisplayMenuUi();
+        }
+        // Pure tap: leave skipClick false so the following click toggles.
+    });
+
+    switchEl.addEventListener('pointercancel', function () {
+        dragActive = false;
+        switchEl.classList.remove('is-dragging');
+        syncDisplayMenuUi();
+    });
+
+    switchEl.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            e.stopPropagation();
+            setWallpaperEnabled(!wallpaperEnabled);
+        } else if (e.key === 'ArrowRight') {
+            e.preventDefault();
+            e.stopPropagation();
+            setWallpaperEnabled(true);
+        } else if (e.key === 'ArrowLeft') {
+            e.preventDefault();
+            e.stopPropagation();
+            setWallpaperEnabled(false);
+        }
+    });
 }
 
 function buildDisplayMenu() {
@@ -326,6 +435,40 @@ function buildDisplayMenu() {
     });
     themeSection.appendChild(themeList);
     displayMenu.appendChild(themeSection);
+
+    var wallpaperSection = document.createElement('div');
+    wallpaperSection.className = 'syllentras-display-section';
+
+    var wallpaperRow = document.createElement('div');
+    wallpaperRow.className = 'syllentras-display-switch-row';
+
+    var wallpaperCopy = document.createElement('div');
+    wallpaperCopy.className = 'syllentras-display-switch-copy';
+    var wallpaperLabel = document.createElement('div');
+    wallpaperLabel.className = 'syllentras-display-label';
+    wallpaperLabel.id = 'syllentras-display-wallpaper-label';
+    wallpaperLabel.textContent = 'Background doodles';
+    wallpaperLabel.style.marginBottom = '0';
+    wallpaperCopy.appendChild(wallpaperLabel);
+
+    displayWallpaperSwitch = document.createElement('button');
+    displayWallpaperSwitch.type = 'button';
+    displayWallpaperSwitch.className = 'syllentras-display-switch';
+    displayWallpaperSwitch.setAttribute('role', 'switch');
+    displayWallpaperSwitch.setAttribute('aria-labelledby', 'syllentras-display-wallpaper-label');
+    var track = document.createElement('span');
+    track.className = 'syllentras-display-switch-track';
+    track.setAttribute('aria-hidden', 'true');
+    var thumb = document.createElement('span');
+    thumb.className = 'syllentras-display-switch-thumb';
+    track.appendChild(thumb);
+    displayWallpaperSwitch.appendChild(track);
+    bindWallpaperSwitch(displayWallpaperSwitch);
+
+    wallpaperRow.appendChild(wallpaperCopy);
+    wallpaperRow.appendChild(displayWallpaperSwitch);
+    wallpaperSection.appendChild(wallpaperRow);
+    displayMenu.appendChild(wallpaperSection);
 
     var resetSection = document.createElement('div');
     resetSection.className = 'syllentras-display-section';

@@ -222,8 +222,27 @@ function endMessageListSettle(options) {
             updateScrollBottomButton();
             resolve();
         }
+        function applyScrollTop(top) {
+            requestAnimationFrame(function () {
+                if (msgs) {
+                    var maxTop = Math.max(0, msgs.scrollHeight - msgs.clientHeight);
+                    msgs.scrollTop = Math.max(0, Math.min(top, maxTop));
+                }
+                // Second frame catches late layout from markdown / chips.
+                requestAnimationFrame(function () {
+                    if (msgs) {
+                        var maxTop2 = Math.max(0, msgs.scrollHeight - msgs.clientHeight);
+                        msgs.scrollTop = Math.max(0, Math.min(top, maxTop2));
+                        syncPinnedToBottomFromScroll();
+                    }
+                    finish();
+                });
+            });
+        }
         if (options.scrollToBottom) {
             scrollToBottom({ afterLayout: true, onDone: finish });
+        } else if (typeof options.scrollTop === 'number') {
+            applyScrollTop(options.scrollTop);
         } else {
             finish();
         }

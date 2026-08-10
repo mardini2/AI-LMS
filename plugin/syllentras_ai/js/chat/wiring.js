@@ -15,6 +15,9 @@ btn.addEventListener('click', function () {
 });
 
 close.addEventListener('click', function () {
+    if (typeof saveConversationScrollPosition === 'function' && conversationId) {
+        saveConversationScrollPosition(conversationId);
+    }
     panel.hidden = true;
     btn.hidden = false;
     if (typeof stopDictation === 'function') {
@@ -38,6 +41,9 @@ searchInput.addEventListener('input', function () {
 msgs.addEventListener('scroll', function () {
     if (typeof syncPinnedToBottomFromScroll === 'function') {
         syncPinnedToBottomFromScroll();
+    }
+    if (typeof saveConversationScrollPosition === 'function' && conversationId) {
+        saveConversationScrollPosition(conversationId);
     }
     if (msgs.scrollTop === 0 && hasMore && !loadingOlder) {
         loadOlderMessages();

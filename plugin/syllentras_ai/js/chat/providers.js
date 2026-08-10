@@ -29,10 +29,67 @@ var providerList = [];
 var selectedProviderId = null;
 var defaultProviderId = null;
 var providersLoaded = false;
+/** True when any local turn is in flight (or peer turn) — kept for older guards. */
 var isGeneratingResponse = false;
+/** Per-chat in-flight local turns so multiple chats can generate at once. */
+var generatingConversationIds = Object.create(null);
 
 function getSelectedProviderId() {
     return selectedProviderId || defaultProviderId || null;
+}
+
+function isConversationGenerating(id) {
+    return !!(id && generatingConversationIds[String(id)]);
+}
+
+function hasLocalGeneratingTurns() {
+    for (var key in generatingConversationIds) {
+        if (Object.prototype.hasOwnProperty.call(generatingConversationIds, key)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/** Lock the input only for the chat currently on screen. */
+function isActiveChatBusy() {
+    return isConversationGenerating(conversationId)
+        || (typeof peerTurnActive !== 'undefined' && peerTurnActive);
+}
+
+function updateComposerLock() {
+    var locked = isActiveChatBusy();
+    if (send) {
+        send.disabled = locked;
+    }
+    if (input) {
+        input.disabled = locked;
+        input.setAttribute('aria-busy', locked ? 'true' : 'false');
+    }
+}
+
+function refreshGeneratingChrome() {
+    var busy = isActiveChatBusy();
+    isGeneratingResponse = hasLocalGeneratingTurns()
+        || (typeof peerTurnActive !== 'undefined' && peerTurnActive);
+
+    if (providerBtn) {
+        providerBtn.disabled = busy;
+        providerBtn.setAttribute('aria-busy', busy ? 'true' : 'false');
+        if (busy) {
+            closeProviderMenu();
+        }
+    }
+    if (toolsBtn) {
+        toolsBtn.disabled = busy;
+    }
+    if (typeof modeBtn !== 'undefined' && modeBtn) {
+        modeBtn.disabled = busy;
+        if (busy && typeof closeModeMenu === 'function') {
+            closeModeMenu();
+        }
+    }
+    updateComposerLock();
 }
 
 function createProviderIcon(providerId, className) {
@@ -57,25 +114,29 @@ function createProviderIcon(providerId, className) {
     return svg;
 }
 
-function setGeneratingState(busy) {
-    isGeneratingResponse = !!busy;
-    if (providerBtn) {
-        providerBtn.disabled = isGeneratingResponse;
-        providerBtn.setAttribute('aria-busy', isGeneratingResponse ? 'true' : 'false');
-        if (isGeneratingResponse) {
-            closeProviderMenu();
+function setGeneratingState(busy, options) {
+    options = options || {};
+
+    // Peer turn only refreshes chrome; local per-chat map is untouched.
+    if (options.fromPeer) {
+        refreshGeneratingChrome();
+        if (!hasLocalGeneratingTurns()
+            && !(typeof peerTurnActive !== 'undefined' && peerTurnActive)
+            && typeof flushPeerSyncQueue === 'function') {
+            flushPeerSyncQueue();
         }
+        return;
     }
-    if (toolsBtn) {
-        toolsBtn.disabled = isGeneratingResponse;
+
+    var id = options.conversationId != null ? options.conversationId : conversationId;
+    if (busy) {
+        if (id) generatingConversationIds[String(id)] = true;
+    } else if (id) {
+        delete generatingConversationIds[String(id)];
     }
-    if (typeof modeBtn !== 'undefined' && modeBtn) {
-        modeBtn.disabled = isGeneratingResponse;
-        if (isGeneratingResponse && typeof closeModeMenu === 'function') {
-            closeModeMenu();
-        }
-    }
-    if (!isGeneratingResponse && typeof flushPeerSyncQueue === 'function') {
+
+    refreshGeneratingChrome();
+    if (!hasLocalGeneratingTurns() && typeof flushPeerSyncQueue === 'function') {
         flushPeerSyncQueue();
     }
 }
@@ -88,7 +149,7 @@ function closeProviderMenu() {
 }
 
 function openProviderMenu() {
-    if (!providerMenu || !providerBtn || isGeneratingResponse) return;
+    if (!providerMenu || !providerBtn || isActiveChatBusy()) return;
     // Close the tools menu if it is open so the two popovers do not overlap.
     if (typeof closeToolsMenu === 'function') {
         closeToolsMenu();
@@ -287,7 +348,7 @@ function loadProviders() {
 if (providerBtn) {
     providerBtn.addEventListener('click', function (e) {
         e.stopPropagation();
-        if (isGeneratingResponse) return;
+        if (isActiveChatBusy()) return;
         toggleProviderMenu();
     });
 }

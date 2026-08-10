@@ -84,7 +84,7 @@ const EMPTY_LLM_REPLY_FALLBACK =
   'I could not generate a reply just now. Please try again, or paste a specific article URL if you want me to read a page.';
 
 const SAFETY_LLM_REPLY_FALLBACK =
-  'The AI provider blocked a reply about this page (often happens with detailed exploit or vulnerability write-ups). Try asking a more specific course-related question about the article, or switch to another AI provider if one is available.';
+  "I couldn't complete that reply. Please ask again.";
 
 function emptyLlmFallback(finishReason?: string): string {
   const reason = (finishReason ?? '').toUpperCase();

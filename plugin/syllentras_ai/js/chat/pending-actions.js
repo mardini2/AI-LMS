@@ -204,7 +204,8 @@ function attachPendingAction(messageEl, pendingAction) {
         if (providerId) {
             body.provider = providerId;
         }
-        setGeneratingState(true);
+        var turnConversationId = conversationId;
+        setGeneratingState(true, { conversationId: turnConversationId });
         fetchJson('/chat/actions/confirm', {
             method: 'POST',
             body: JSON.stringify(body)
@@ -229,7 +230,7 @@ function attachPendingAction(messageEl, pendingAction) {
             appendMessage('error', (err && err.message) ? err.message : createFailedMessage());
         })
         .finally(function () {
-            setGeneratingState(false);
+            setGeneratingState(false, { conversationId: turnConversationId });
         });
     });
 

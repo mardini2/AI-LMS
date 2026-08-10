@@ -385,10 +385,67 @@ var providerList = [];
 var selectedProviderId = null;
 var defaultProviderId = null;
 var providersLoaded = false;
+/** True when any local turn is in flight (or peer turn) — kept for older guards. */
 var isGeneratingResponse = false;
+/** Per-chat in-flight local turns so multiple chats can generate at once. */
+var generatingConversationIds = Object.create(null);
 
 function getSelectedProviderId() {
     return selectedProviderId || defaultProviderId || null;
+}
+
+function isConversationGenerating(id) {
+    return !!(id && generatingConversationIds[String(id)]);
+}
+
+function hasLocalGeneratingTurns() {
+    for (var key in generatingConversationIds) {
+        if (Object.prototype.hasOwnProperty.call(generatingConversationIds, key)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/** Lock the input only for the chat currently on screen. */
+function isActiveChatBusy() {
+    return isConversationGenerating(conversationId)
+        || (typeof peerTurnActive !== 'undefined' && peerTurnActive);
+}
+
+function updateComposerLock() {
+    var locked = isActiveChatBusy();
+    if (send) {
+        send.disabled = locked;
+    }
+    if (input) {
+        input.disabled = locked;
+        input.setAttribute('aria-busy', locked ? 'true' : 'false');
+    }
+}
+
+function refreshGeneratingChrome() {
+    var busy = isActiveChatBusy();
+    isGeneratingResponse = hasLocalGeneratingTurns()
+        || (typeof peerTurnActive !== 'undefined' && peerTurnActive);
+
+    if (providerBtn) {
+        providerBtn.disabled = busy;
+        providerBtn.setAttribute('aria-busy', busy ? 'true' : 'false');
+        if (busy) {
+            closeProviderMenu();
+        }
+    }
+    if (toolsBtn) {
+        toolsBtn.disabled = busy;
+    }
+    if (typeof modeBtn !== 'undefined' && modeBtn) {
+        modeBtn.disabled = busy;
+        if (busy && typeof closeModeMenu === 'function') {
+            closeModeMenu();
+        }
+    }
+    updateComposerLock();
 }
 
 function createProviderIcon(providerId, className) {
@@ -413,25 +470,29 @@ function createProviderIcon(providerId, className) {
     return svg;
 }
 
-function setGeneratingState(busy) {
-    isGeneratingResponse = !!busy;
-    if (providerBtn) {
-        providerBtn.disabled = isGeneratingResponse;
-        providerBtn.setAttribute('aria-busy', isGeneratingResponse ? 'true' : 'false');
-        if (isGeneratingResponse) {
-            closeProviderMenu();
+function setGeneratingState(busy, options) {
+    options = options || {};
+
+    // Peer turn only refreshes chrome; local per-chat map is untouched.
+    if (options.fromPeer) {
+        refreshGeneratingChrome();
+        if (!hasLocalGeneratingTurns()
+            && !(typeof peerTurnActive !== 'undefined' && peerTurnActive)
+            && typeof flushPeerSyncQueue === 'function') {
+            flushPeerSyncQueue();
         }
+        return;
     }
-    if (toolsBtn) {
-        toolsBtn.disabled = isGeneratingResponse;
+
+    var id = options.conversationId != null ? options.conversationId : conversationId;
+    if (busy) {
+        if (id) generatingConversationIds[String(id)] = true;
+    } else if (id) {
+        delete generatingConversationIds[String(id)];
     }
-    if (typeof modeBtn !== 'undefined' && modeBtn) {
-        modeBtn.disabled = isGeneratingResponse;
-        if (isGeneratingResponse && typeof closeModeMenu === 'function') {
-            closeModeMenu();
-        }
-    }
-    if (!isGeneratingResponse && typeof flushPeerSyncQueue === 'function') {
+
+    refreshGeneratingChrome();
+    if (!hasLocalGeneratingTurns() && typeof flushPeerSyncQueue === 'function') {
         flushPeerSyncQueue();
     }
 }
@@ -444,7 +505,7 @@ function closeProviderMenu() {
 }
 
 function openProviderMenu() {
-    if (!providerMenu || !providerBtn || isGeneratingResponse) return;
+    if (!providerMenu || !providerBtn || isActiveChatBusy()) return;
     // Close the tools menu if it is open so the two popovers do not overlap.
     if (typeof closeToolsMenu === 'function') {
         closeToolsMenu();
@@ -643,7 +704,7 @@ function loadProviders() {
 if (providerBtn) {
     providerBtn.addEventListener('click', function (e) {
         e.stopPropagation();
-        if (isGeneratingResponse) return;
+        if (isActiveChatBusy()) return;
         toggleProviderMenu();
     });
 }
@@ -1300,7 +1361,8 @@ function attachPendingAction(messageEl, pendingAction) {
         if (providerId) {
             body.provider = providerId;
         }
-        setGeneratingState(true);
+        var turnConversationId = conversationId;
+        setGeneratingState(true, { conversationId: turnConversationId });
         fetchJson('/chat/actions/confirm', {
             method: 'POST',
             body: JSON.stringify(body)
@@ -1325,7 +1387,7 @@ function attachPendingAction(messageEl, pendingAction) {
             appendMessage('error', (err && err.message) ? err.message : createFailedMessage());
         })
         .finally(function () {
-            setGeneratingState(false);
+            setGeneratingState(false, { conversationId: turnConversationId });
         });
     });
 
@@ -1413,7 +1475,7 @@ function attachSuggestedLinks(messageEl, links) {
             ? String(link.title).replace(/\s+/g, ' ').trim() + '\n' + link.url
             : link.url;
         btn.addEventListener('click', function () {
-            if (typeof isGeneratingResponse !== 'undefined' && isGeneratingResponse) return;
+            if (typeof isActiveChatBusy === 'function' && isActiveChatBusy()) return;
             if (!input || input.disabled || (send && send.disabled)) return;
             input.value = SUGGESTED_LINK_OPEN_PREFIX + link.url;
             if (typeof sendMessage === 'function') {
@@ -1460,9 +1522,10 @@ function attachReviewOffer(messageEl, offer) {
     explainBtn.addEventListener('click', function () {
         explainBtn.disabled = true;
         explainBtn.textContent = 'Explaining...';
-        setGeneratingState(true);
+        var turnConversationId = conversationId;
+        setGeneratingState(true, { conversationId: turnConversationId });
         var body = {
-            conversationId: conversationId,
+            conversationId: turnConversationId,
             moodleUserId: moodleUserId
         };
         var providerId = typeof getSelectedProviderId === 'function' ? getSelectedProviderId() : null;
@@ -1490,7 +1553,7 @@ function attachReviewOffer(messageEl, offer) {
                 : 'Could not explain your wrong answers. Please try again.');
         })
         .finally(function () {
-            setGeneratingState(false);
+            setGeneratingState(false, { conversationId: turnConversationId });
         });
     });
 
@@ -4067,8 +4130,27 @@ function endMessageListSettle(options) {
             updateScrollBottomButton();
             resolve();
         }
+        function applyScrollTop(top) {
+            requestAnimationFrame(function () {
+                if (msgs) {
+                    var maxTop = Math.max(0, msgs.scrollHeight - msgs.clientHeight);
+                    msgs.scrollTop = Math.max(0, Math.min(top, maxTop));
+                }
+                // Second frame catches late layout from markdown / chips.
+                requestAnimationFrame(function () {
+                    if (msgs) {
+                        var maxTop2 = Math.max(0, msgs.scrollHeight - msgs.clientHeight);
+                        msgs.scrollTop = Math.max(0, Math.min(top, maxTop2));
+                        syncPinnedToBottomFromScroll();
+                    }
+                    finish();
+                });
+            });
+        }
         if (options.scrollToBottom) {
             scrollToBottom({ afterLayout: true, onDone: finish });
+        } else if (typeof options.scrollTop === 'number') {
+            applyScrollTop(options.scrollTop);
         } else {
             finish();
         }
@@ -4274,8 +4356,60 @@ function ensureMessageVisible(messageId, query) {
 // Part of the Syllentras chat widget.
 // Included inside the shared IIFE from before_footer.php — do not load standalone.
 
+// Per-chat scroll memory for the current page session (switch away → switch back).
+var conversationScrollPositions = Object.create(null);
+// Chats that finished a reply while the user was viewing another conversation.
+var unreadConversationIds = Object.create(null);
+
+function markConversationUnread(id) {
+    if (!id) return;
+    if (conversationId && String(conversationId) === String(id)) return;
+    unreadConversationIds[String(id)] = true;
+    syncConversationUnreadUi(id);
+}
+
+function clearConversationUnread(id) {
+    if (!id) return;
+    delete unreadConversationIds[String(id)];
+    syncConversationUnreadUi(id);
+}
+
+function conversationHasUnread(id) {
+    return !!(id && unreadConversationIds[String(id)]);
+}
+
+function syncConversationUnreadUi(id) {
+    if (!conversationsEl || !id) return;
+    var item = conversationsEl.querySelector(
+        '.syllentras-conversation-item[data-conversation-id="' + String(id).replace(/"/g, '') + '"]'
+    );
+    if (!item) return;
+    var unread = conversationHasUnread(id);
+    item.classList.toggle('has-unread', unread);
+    var dot = item.querySelector('.syllentras-conversation-unread-dot');
+    if (dot) dot.hidden = !unread;
+    if (unread) {
+        item.setAttribute('aria-description', 'Unread reply');
+    } else {
+        item.removeAttribute('aria-description');
+    }
+}
+
 function lastConversationStorageKey() {
     return 'syllentras_last_conversation_' + moodleUserId + '_' + courseId;
+}
+
+function saveConversationScrollPosition(id) {
+    if (!id || !msgs || historySettlePending) return;
+    conversationScrollPositions[id] = {
+        scrollTop: msgs.scrollTop,
+        pinnedToBottom: !!pinnedToBottom || (typeof isNearBottom === 'function' && isNearBottom())
+    };
+}
+
+function getConversationScrollPosition(id) {
+    if (!id) return null;
+    return conversationScrollPositions[id] || null;
 }
 
 function persistLastConversationId(id) {
@@ -4300,11 +4434,22 @@ function readLastConversationId() {
 
 function setActiveConversation(conversation, options) {
     options = options || {};
+    // Remember where the user left off before tearing down the thread.
+    if (conversationId && conversation && conversation.id !== conversationId) {
+        saveConversationScrollPosition(conversationId);
+    }
     activeConversation = conversation;
     if (activeConversation && Array.isArray(conversation.topicSuggestions)) {
         activeConversation.topicSuggestions = conversation.topicSuggestions;
     }
     conversationId = conversation.id;
+    clearConversationUnread(conversationId);
+    // Unlock/lock input for this chat (other chats may still be generating).
+    if (typeof refreshGeneratingChrome === 'function') {
+        refreshGeneratingChrome();
+    } else if (typeof updateComposerLock === 'function') {
+        updateComposerLock();
+    }
     persistLastConversationId(conversationId);
     activeTitle.textContent = displayConversationTitle(conversation);
     activeTag.textContent = displayConversationTag(conversation);
@@ -4326,6 +4471,11 @@ function loadCurrentHistory(options) {
     }
     loadingHistory = true;
 
+    var savedScroll = options.deferScroll ? null : getConversationScrollPosition(conversationId);
+    var restoreScrollTop = savedScroll && !savedScroll.pinnedToBottom
+        ? savedScroll.scrollTop
+        : null;
+
     return fetchJson('/conversations/' + encodeURIComponent(conversationId)
         + '/messages?moodleUserId=' + encodeURIComponent(moodleUserId)
         + '&limit=' + PAGE_SIZE)
@@ -4333,7 +4483,7 @@ function loadCurrentHistory(options) {
         if (page.messages && page.messages.length) {
             renderMessageBatch(page.messages, false);
             hasMore = !!page.hasMore;
-            if (options.deferScroll) {
+            if (options.deferScroll || restoreScrollTop !== null) {
                 pinnedToBottom = false;
             }
         }
@@ -4344,9 +4494,17 @@ function loadCurrentHistory(options) {
             .then(loadReviewOfferForConversation)
             .then(function () {
                 // One settle after content + pending/review UI — avoids reopen jumpiness.
-                return endMessageListSettle({
-                    scrollToBottom: !options.deferScroll
-                });
+                // Prefer the last scroll spot for this chat; otherwise land at bottom.
+                if (options.deferScroll) {
+                    return endMessageListSettle({ scrollToBottom: false });
+                }
+                if (restoreScrollTop !== null) {
+                    return endMessageListSettle({
+                        scrollToBottom: false,
+                        scrollTop: restoreScrollTop
+                    });
+                }
+                return endMessageListSettle({ scrollToBottom: true });
             });
     })
     .catch(function () {
@@ -4513,10 +4671,22 @@ function renderConversationItem(conversation) {
     item.setAttribute('role', 'button');
     item.className = 'syllentras-conversation-item';
     item.dataset.conversationId = conversation.id;
+    var hasUnread = conversationHasUnread(conversation.id);
+    if (hasUnread) {
+        item.classList.add('has-unread');
+    }
     item.innerHTML =
+        '<span class="syllentras-conversation-unread-dot" aria-hidden="true"></span>' +
         '<span class="syllentras-conversation-name"></span>' +
         '<span class="syllentras-conversation-tag"></span>' +
         '<button type="button" class="syllentras-conversation-menu-btn" aria-label="Conversation menu" aria-haspopup="menu">&#8942;</button>';
+    var dotEl = item.querySelector('.syllentras-conversation-unread-dot');
+    if (dotEl) {
+        dotEl.hidden = !hasUnread;
+        if (hasUnread) {
+            item.setAttribute('aria-description', 'Unread reply');
+        }
+    }
     var nameEl = item.querySelector('.syllentras-conversation-name');
     nameEl.textContent = displayConversationTitle(conversation);
     nameEl.classList.toggle('pinned', !!conversation.pinned);
@@ -4735,6 +4905,9 @@ function sendMessage() {
         : [];
     var hasAttachments = attachmentsPayload.length > 0;
     if ((!text && !hasAttachments) || !conversationId) return;
+    // Only block a second send in the same chat; other chats can generate in parallel.
+    if (typeof isConversationGenerating === 'function' && isConversationGenerating(conversationId)) return;
+    if (typeof peerTurnActive !== 'undefined' && peerTurnActive) return;
 
     if (typeof hasPendingAttachmentUploads === 'function' && hasPendingAttachmentUploads()) {
         if (typeof setAttachmentError === 'function') {
@@ -4768,8 +4941,9 @@ function sendMessage() {
     if (typeof clearPendingAttachments === 'function') {
         clearPendingAttachments();
     }
-    send.disabled = true;
-    setGeneratingState(true);
+
+    var turnConversationId = conversationId;
+    setGeneratingState(true, { conversationId: turnConversationId });
 
     var displayText = text || (hasAttachments ? 'Please review the attached file(s).' : '');
     var sentAt = new Date().toISOString();
@@ -4797,7 +4971,7 @@ function sendMessage() {
         moodleUserId: moodleUserId,
         userFirstName: userFirstName || undefined,
         message: text,
-        conversationId: conversationId
+        conversationId: turnConversationId
     };
     if (attachmentIds.length) {
         body.attachmentIds = attachmentIds;
@@ -4814,7 +4988,50 @@ function sendMessage() {
     }
 
     var turnStarted = false;
-    var turnConversationId = conversationId;
+
+    function isViewingTurn() {
+        return !!(conversationId && turnConversationId
+            && String(conversationId) === String(turnConversationId));
+    }
+
+    function applyAssistantToLiveBubble(data) {
+        renderAssistantContent(loadingEl, data.response);
+        applyModeChip(loadingEl, data.mode || body.mode);
+        if (typeof attachMessageSpeakButton === 'function') {
+            attachMessageSpeakButton(loadingEl);
+        }
+        loadingEl.dataset.createdAt = new Date().toISOString();
+        upsertMessageSearchEntry({
+            id: pendingAssistantId,
+            role: 'assistant',
+            content: data.response,
+            createdAt: loadingEl.dataset.createdAt
+        });
+        if (typeof rebuildChatTimeline === 'function') {
+            rebuildChatTimeline();
+        }
+        if (messageSearchOpen && msgSearchInput && msgSearchInput.value.trim()) {
+            runMessageSearch(msgSearchInput.value);
+        }
+        if (Array.isArray(data.topicSuggestions)) {
+            if (!activeConversation) activeConversation = { id: turnConversationId };
+            activeConversation.topicSuggestions = data.topicSuggestions;
+        }
+        if (data.pendingAction) {
+            attachPendingAction(loadingEl, data.pendingAction);
+        }
+        if (data.suggestedLinks && typeof attachSuggestedLinks === 'function') {
+            attachSuggestedLinks(loadingEl, data.suggestedLinks);
+        }
+        if (Array.isArray(data.attachmentWarnings) && data.attachmentWarnings.length) {
+            if (typeof appendSystemNotice === 'function') {
+                appendSystemNotice(data.attachmentWarnings.join(' '));
+            }
+        }
+        if (typeof stickToBottomIfNeeded === 'function') {
+            stickToBottomIfNeeded({ afterLayout: true });
+        }
+    }
 
     fetchJson('/chat/message/start', {
         method: 'POST',
@@ -4822,25 +5039,35 @@ function sendMessage() {
     })
     .then(function (started) {
         turnStarted = true;
-        conversationId = started.conversationId || conversationId;
-        turnConversationId = conversationId;
-        if (userEl && started.userMessageId) {
+        var previousTurnId = turnConversationId;
+        turnConversationId = started.conversationId || turnConversationId;
+        // Keep the in-flight map pointed at the server conversation id.
+        if (typeof setGeneratingState === 'function') {
+            if (previousTurnId && String(previousTurnId) !== String(turnConversationId)) {
+                setGeneratingState(false, { conversationId: previousTurnId });
+            }
+            setGeneratingState(true, { conversationId: turnConversationId });
+        }
+        // Only touch the optimistic bubbles if the user is still on this chat.
+        if (isViewingTurn() && userEl && userEl.parentNode && started.userMessageId) {
             userEl.dataset.messageId = String(started.userMessageId);
         }
-        if (Array.isArray(started.attachmentWarnings) && started.attachmentWarnings.length) {
+        if (isViewingTurn()
+            && Array.isArray(started.attachmentWarnings)
+            && started.attachmentWarnings.length) {
             if (typeof appendSystemNotice === 'function') {
                 appendSystemNotice(started.attachmentWarnings.join(' '));
             }
         }
         if (typeof broadcastChatSync === 'function') {
-            broadcastChatSync('turn-started', conversationId);
+            broadcastChatSync('turn-started', turnConversationId);
         }
         var completeBody = {
             courseId: courseId,
             courseName: courseName || undefined,
             moodleUserId: moodleUserId,
             userFirstName: userFirstName || undefined,
-            conversationId: conversationId,
+            conversationId: turnConversationId,
             userMessageId: started.userMessageId,
             message: text
         };
@@ -4860,61 +5087,45 @@ function sendMessage() {
         });
     })
     .then(function (data) {
-        renderAssistantContent(loadingEl, data.response);
-        applyModeChip(loadingEl, data.mode || body.mode);
-        if (typeof attachMessageSpeakButton === 'function') {
-            attachMessageSpeakButton(loadingEl);
+        turnConversationId = data.conversationId || turnConversationId;
+
+        var finishUi = Promise.resolve();
+        if (isViewingTurn()) {
+            if (loadingEl && loadingEl.parentNode) {
+                applyAssistantToLiveBubble(data);
+            } else {
+                // User left and came back mid-turn — pull the finished reply from history.
+                finishUi = loadCurrentHistory();
+            }
+        } else {
+            // Reply finished in the background — mark unread for the sidebar blue dot.
+            markConversationUnread(turnConversationId);
         }
-        loadingEl.dataset.createdAt = new Date().toISOString();
-        upsertMessageSearchEntry({
-            id: pendingAssistantId,
-            role: 'assistant',
-            content: data.response,
-            createdAt: loadingEl.dataset.createdAt
+
+        return finishUi.then(function () {
+            if (typeof broadcastChatSync === 'function') {
+                broadcastChatSync('messages-updated', turnConversationId);
+                if (data.pendingAction) {
+                    broadcastChatSync('pending-action-changed', turnConversationId);
+                }
+                broadcastChatSync('conversation-list-changed', turnConversationId);
+            }
+            return loadConversations();
         });
-        if (typeof rebuildChatTimeline === 'function') {
-            rebuildChatTimeline();
-        }
-        if (messageSearchOpen && msgSearchInput && msgSearchInput.value.trim()) {
-            runMessageSearch(msgSearchInput.value);
-        }
-        conversationId = data.conversationId || conversationId;
-        turnConversationId = conversationId;
-        if (Array.isArray(data.topicSuggestions)) {
-            if (!activeConversation) activeConversation = { id: conversationId };
-            activeConversation.topicSuggestions = data.topicSuggestions;
-        }
-        if (data.pendingAction) {
-            attachPendingAction(loadingEl, data.pendingAction);
-        }
-        if (data.suggestedLinks && typeof attachSuggestedLinks === 'function') {
-            attachSuggestedLinks(loadingEl, data.suggestedLinks);
-        }
-        if (Array.isArray(data.attachmentWarnings) && data.attachmentWarnings.length) {
-            if (typeof appendSystemNotice === 'function') {
-                appendSystemNotice(data.attachmentWarnings.join(' '));
-            }
-        }
-        if (typeof stickToBottomIfNeeded === 'function') {
-            stickToBottomIfNeeded({ afterLayout: true });
-        }
-        if (typeof broadcastChatSync === 'function') {
-            broadcastChatSync('messages-updated', conversationId);
-            if (data.pendingAction) {
-                broadcastChatSync('pending-action-changed', conversationId);
-            }
-            broadcastChatSync('conversation-list-changed', conversationId);
-        }
-        return loadConversations();
     })
     .catch(function (err) {
         if (!turnStarted) {
-            if (userEl && userEl.parentNode) userEl.remove();
-            if (loadingEl && loadingEl.parentNode) loadingEl.remove();
-            if (typeof rebuildChatTimeline === 'function') {
-                rebuildChatTimeline();
+            if (isViewingTurn()) {
+                if (userEl && userEl.parentNode) userEl.remove();
+                if (loadingEl && loadingEl.parentNode) loadingEl.remove();
+                if (typeof rebuildChatTimeline === 'function') {
+                    rebuildChatTimeline();
+                }
             }
-        } else {
+            return;
+        }
+
+        if (isViewingTurn() && loadingEl && loadingEl.parentNode) {
             loadingEl.className = 'syllentras-msg error';
             loadingEl.textContent = (err && err.message)
                 ? err.message
@@ -4922,15 +5133,21 @@ function sendMessage() {
             if (typeof stickToBottomIfNeeded === 'function') {
                 stickToBottomIfNeeded({ afterLayout: true });
             }
+        } else if (isViewingTurn()) {
+            return loadCurrentHistory();
+        } else {
+            markConversationUnread(turnConversationId);
+            return loadConversations();
         }
     })
     .finally(function () {
         if (turnStarted && typeof broadcastChatSync === 'function') {
             broadcastChatSync('turn-finished', turnConversationId);
         }
-        send.disabled = false;
-        setGeneratingState(false);
-        input.focus();
+        setGeneratingState(false, { conversationId: turnConversationId });
+        if (input && !input.disabled) {
+            try { input.focus(); } catch (e) { /* ignore */ }
+        }
     });
 }
 
@@ -6791,6 +7008,7 @@ setChatTab('chat');
 
 var DISPLAY_THEME_KEY = 'syllentras_display_theme';
 var DISPLAY_FONT_SCALE_KEY = 'syllentras_display_font_scale';
+var DISPLAY_WALLPAPER_KEY = 'syllentras_display_wallpaper';
 
 var DISPLAY_THEMES = [
     { id: 'default', label: 'Default' },
@@ -6812,12 +7030,14 @@ var displayWrap = displayBtn ? displayBtn.closest('.syllentras-display-wrap') : 
 
 var selectedDisplayTheme = 'default';
 var selectedFontStep = 1;
+var wallpaperEnabled = true;
 var displayMenuBuilt = false;
 var displayFontValueEl = null;
 var displayFontSlider = null;
 var displaySpeechRateValueEl = null;
 var displaySpeechRateSlider = null;
 var displayDictationLangSelect = null;
+var displayWallpaperSwitch = null;
 
 function normalizeDisplayTheme(raw) {
     for (var i = 0; i < DISPLAY_THEMES.length; i++) {
@@ -6841,6 +7061,7 @@ function applyDisplaySettings() {
     var info = fontStepInfo(selectedFontStep);
     root.setAttribute('data-theme', selectedDisplayTheme);
     root.setAttribute('data-font-scale', String(info.step));
+    root.setAttribute('data-wallpaper', wallpaperEnabled ? 'on' : 'off');
     root.style.setProperty('--syll-font-scale', String(info.scale));
 }
 
@@ -6848,22 +7069,35 @@ function saveDisplaySettings() {
     try {
         localStorage.setItem(DISPLAY_THEME_KEY, selectedDisplayTheme);
         localStorage.setItem(DISPLAY_FONT_SCALE_KEY, String(selectedFontStep));
+        localStorage.setItem(DISPLAY_WALLPAPER_KEY, wallpaperEnabled ? '1' : '0');
     } catch (e) { /* ignore quota / private mode */ }
 }
 
 function loadDisplaySettings() {
     var themeRaw = null;
     var fontRaw = null;
+    var wallpaperRaw = null;
     try {
         themeRaw = localStorage.getItem(DISPLAY_THEME_KEY);
         fontRaw = localStorage.getItem(DISPLAY_FONT_SCALE_KEY);
+        wallpaperRaw = localStorage.getItem(DISPLAY_WALLPAPER_KEY);
     } catch (e) {
         themeRaw = null;
         fontRaw = null;
+        wallpaperRaw = null;
     }
     selectedDisplayTheme = normalizeDisplayTheme(themeRaw);
     selectedFontStep = normalizeFontStep(fontRaw);
+    // Missing key → on (default). Explicit "0" turns doodles off.
+    wallpaperEnabled = wallpaperRaw !== '0';
     applyDisplaySettings();
+}
+
+function setWallpaperEnabled(on) {
+    wallpaperEnabled = !!on;
+    applyDisplaySettings();
+    saveDisplaySettings();
+    syncDisplayMenuUi();
 }
 
 function setDisplayTheme(themeId) {
@@ -6883,6 +7117,7 @@ function setFontStep(step) {
 function resetDisplaySettings() {
     selectedDisplayTheme = 'default';
     selectedFontStep = 1;
+    wallpaperEnabled = true;
     if (typeof resetSpeechSettings === 'function') {
         resetSpeechSettings();
     }
@@ -6932,6 +7167,97 @@ function syncDisplayMenuUi() {
     if (displayDictationLangSelect && typeof getDictationLang === 'function') {
         displayDictationLangSelect.value = getDictationLang();
     }
+
+    if (displayWallpaperSwitch) {
+        displayWallpaperSwitch.setAttribute('aria-checked', wallpaperEnabled ? 'true' : 'false');
+        displayWallpaperSwitch.classList.toggle('is-on', wallpaperEnabled);
+    }
+}
+
+function bindWallpaperSwitch(switchEl) {
+    var dragActive = false;
+    var dragStartX = 0;
+    var dragMoved = false;
+    var dragStartOn = false;
+    var skipClick = false;
+
+    switchEl.addEventListener('click', function (e) {
+        e.stopPropagation();
+        if (skipClick) {
+            skipClick = false;
+            return;
+        }
+        setWallpaperEnabled(!wallpaperEnabled);
+    });
+
+    switchEl.addEventListener('pointerdown', function (e) {
+        if (e.button != null && e.button !== 0) return;
+        e.stopPropagation();
+        dragActive = true;
+        dragMoved = false;
+        dragStartX = e.clientX;
+        dragStartOn = wallpaperEnabled;
+        switchEl.classList.add('is-dragging');
+        try {
+            switchEl.setPointerCapture(e.pointerId);
+        } catch (err) { /* older browsers */ }
+    });
+
+    switchEl.addEventListener('pointermove', function (e) {
+        if (!dragActive) return;
+        e.stopPropagation();
+        var dx = e.clientX - dragStartX;
+        if (Math.abs(dx) >= 4) dragMoved = true;
+        // Live preview while dragging past the midpoint of the track.
+        if (dx >= 10) {
+            switchEl.classList.add('is-on');
+            switchEl.setAttribute('aria-checked', 'true');
+        } else if (dx <= -10) {
+            switchEl.classList.remove('is-on');
+            switchEl.setAttribute('aria-checked', 'false');
+        } else {
+            switchEl.classList.toggle('is-on', dragStartOn);
+            switchEl.setAttribute('aria-checked', dragStartOn ? 'true' : 'false');
+        }
+    });
+
+    switchEl.addEventListener('pointerup', function (e) {
+        if (!dragActive) return;
+        e.stopPropagation();
+        dragActive = false;
+        switchEl.classList.remove('is-dragging');
+        var dx = e.clientX - dragStartX;
+        if (dragMoved && Math.abs(dx) >= 12) {
+            skipClick = true;
+            setWallpaperEnabled(dx > 0);
+        } else if (dragMoved) {
+            // Tiny drag — snap UI back; click may still toggle if it fires.
+            syncDisplayMenuUi();
+        }
+        // Pure tap: leave skipClick false so the following click toggles.
+    });
+
+    switchEl.addEventListener('pointercancel', function () {
+        dragActive = false;
+        switchEl.classList.remove('is-dragging');
+        syncDisplayMenuUi();
+    });
+
+    switchEl.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            e.stopPropagation();
+            setWallpaperEnabled(!wallpaperEnabled);
+        } else if (e.key === 'ArrowRight') {
+            e.preventDefault();
+            e.stopPropagation();
+            setWallpaperEnabled(true);
+        } else if (e.key === 'ArrowLeft') {
+            e.preventDefault();
+            e.stopPropagation();
+            setWallpaperEnabled(false);
+        }
+    });
 }
 
 function buildDisplayMenu() {
@@ -7115,6 +7441,40 @@ function buildDisplayMenu() {
     themeSection.appendChild(themeList);
     displayMenu.appendChild(themeSection);
 
+    var wallpaperSection = document.createElement('div');
+    wallpaperSection.className = 'syllentras-display-section';
+
+    var wallpaperRow = document.createElement('div');
+    wallpaperRow.className = 'syllentras-display-switch-row';
+
+    var wallpaperCopy = document.createElement('div');
+    wallpaperCopy.className = 'syllentras-display-switch-copy';
+    var wallpaperLabel = document.createElement('div');
+    wallpaperLabel.className = 'syllentras-display-label';
+    wallpaperLabel.id = 'syllentras-display-wallpaper-label';
+    wallpaperLabel.textContent = 'Background doodles';
+    wallpaperLabel.style.marginBottom = '0';
+    wallpaperCopy.appendChild(wallpaperLabel);
+
+    displayWallpaperSwitch = document.createElement('button');
+    displayWallpaperSwitch.type = 'button';
+    displayWallpaperSwitch.className = 'syllentras-display-switch';
+    displayWallpaperSwitch.setAttribute('role', 'switch');
+    displayWallpaperSwitch.setAttribute('aria-labelledby', 'syllentras-display-wallpaper-label');
+    var track = document.createElement('span');
+    track.className = 'syllentras-display-switch-track';
+    track.setAttribute('aria-hidden', 'true');
+    var thumb = document.createElement('span');
+    thumb.className = 'syllentras-display-switch-thumb';
+    track.appendChild(thumb);
+    displayWallpaperSwitch.appendChild(track);
+    bindWallpaperSwitch(displayWallpaperSwitch);
+
+    wallpaperRow.appendChild(wallpaperCopy);
+    wallpaperRow.appendChild(displayWallpaperSwitch);
+    wallpaperSection.appendChild(wallpaperRow);
+    displayMenu.appendChild(wallpaperSection);
+
     var resetSection = document.createElement('div');
     resetSection.className = 'syllentras-display-section';
     var resetBtn = document.createElement('button');
@@ -7260,12 +7620,20 @@ function refreshAiContentIfNeeded() {
 function setPeerTurnGenerating(busy) {
     peerTurnActive = !!busy;
     if (typeof setGeneratingState === 'function') {
-        setGeneratingState(peerTurnActive);
-    }
-    if (send) {
+        setGeneratingState(peerTurnActive, { fromPeer: true });
+    } else if (typeof refreshGeneratingChrome === 'function') {
+        refreshGeneratingChrome();
+    } else if (typeof updateComposerLock === 'function') {
+        updateComposerLock();
+    } else if (send) {
         send.disabled = peerTurnActive
-            || (typeof isGeneratingResponse !== 'undefined' && isGeneratingResponse);
+            || (typeof isConversationGenerating === 'function' && isConversationGenerating(conversationId));
     }
+}
+
+function isLocalTurnForActiveChat() {
+    return typeof isConversationGenerating === 'function'
+        && isConversationGenerating(conversationId);
 }
 
 function ensurePeerThinkingPlaceholder() {
@@ -7323,7 +7691,7 @@ function reloadActiveConversationFromPeer(options) {
 
 function queueOrReloadActiveConversationFromPeer(options) {
     // Local in-flight send already owns the optimistic UI — don't wipe it.
-    if (typeof isGeneratingResponse !== 'undefined' && isGeneratingResponse && !peerTurnActive) {
+    if (isLocalTurnForActiveChat() && !peerTurnActive) {
         peerRefreshQueued = true;
         return Promise.resolve();
     }
@@ -7332,7 +7700,7 @@ function queueOrReloadActiveConversationFromPeer(options) {
 
 function flushPeerSyncQueue() {
     if (!peerRefreshQueued) return;
-    if (typeof isGeneratingResponse !== 'undefined' && isGeneratingResponse && !peerTurnActive) {
+    if (isLocalTurnForActiveChat() && !peerTurnActive) {
         return;
     }
     peerRefreshQueued = false;
@@ -7350,7 +7718,7 @@ function applyPeerTurnStarted(eventConversationId) {
     }
     // This tab is already the sender — BroadcastChannel does not echo, but
     // guard anyway if generating locally without peerTurnActive.
-    if (typeof isGeneratingResponse !== 'undefined' && isGeneratingResponse && !peerTurnActive) {
+    if (isLocalTurnForActiveChat() && !peerTurnActive) {
         return;
     }
     setPeerTurnGenerating(true);
@@ -7369,7 +7737,7 @@ function applyPeerTurnFinished(eventConversationId) {
         }
         return;
     }
-    if (typeof isGeneratingResponse !== 'undefined' && isGeneratingResponse && !peerTurnActive) {
+    if (isLocalTurnForActiveChat() && !peerTurnActive) {
         peerRefreshQueued = true;
         return;
     }
@@ -7451,7 +7819,9 @@ function onChatSyncVisibilityChange() {
 /** After history load: if server says a turn is mid-flight, show thinking UI. */
 function applyGeneratingStateFromHistoryPage(page) {
     if (!page || !page.generatingStartedAt) return;
-    if (typeof isGeneratingResponse !== 'undefined' && isGeneratingResponse && !peerTurnActive) {
+    if (isLocalTurnForActiveChat() && !peerTurnActive) {
+        // Switched back to a chat that is still generating locally — restore "...".
+        ensurePeerThinkingPlaceholder();
         return;
     }
     setPeerTurnGenerating(true);
@@ -7490,6 +7860,9 @@ btn.addEventListener('click', function () {
 });
 
 close.addEventListener('click', function () {
+    if (typeof saveConversationScrollPosition === 'function' && conversationId) {
+        saveConversationScrollPosition(conversationId);
+    }
     panel.hidden = true;
     btn.hidden = false;
     if (typeof stopDictation === 'function') {
@@ -7513,6 +7886,9 @@ searchInput.addEventListener('input', function () {
 msgs.addEventListener('scroll', function () {
     if (typeof syncPinnedToBottomFromScroll === 'function') {
         syncPinnedToBottomFromScroll();
+    }
+    if (typeof saveConversationScrollPosition === 'function' && conversationId) {
+        saveConversationScrollPosition(conversationId);
     }
     if (msgs.scrollTop === 0 && hasMore && !loadingOlder) {
         loadOlderMessages();

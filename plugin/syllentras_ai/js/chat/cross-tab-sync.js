@@ -48,12 +48,20 @@ function refreshAiContentIfNeeded() {
 function setPeerTurnGenerating(busy) {
     peerTurnActive = !!busy;
     if (typeof setGeneratingState === 'function') {
-        setGeneratingState(peerTurnActive);
-    }
-    if (send) {
+        setGeneratingState(peerTurnActive, { fromPeer: true });
+    } else if (typeof refreshGeneratingChrome === 'function') {
+        refreshGeneratingChrome();
+    } else if (typeof updateComposerLock === 'function') {
+        updateComposerLock();
+    } else if (send) {
         send.disabled = peerTurnActive
-            || (typeof isGeneratingResponse !== 'undefined' && isGeneratingResponse);
+            || (typeof isConversationGenerating === 'function' && isConversationGenerating(conversationId));
     }
+}
+
+function isLocalTurnForActiveChat() {
+    return typeof isConversationGenerating === 'function'
+        && isConversationGenerating(conversationId);
 }
 
 function ensurePeerThinkingPlaceholder() {
@@ -111,7 +119,7 @@ function reloadActiveConversationFromPeer(options) {
 
 function queueOrReloadActiveConversationFromPeer(options) {
     // Local in-flight send already owns the optimistic UI — don't wipe it.
-    if (typeof isGeneratingResponse !== 'undefined' && isGeneratingResponse && !peerTurnActive) {
+    if (isLocalTurnForActiveChat() && !peerTurnActive) {
         peerRefreshQueued = true;
         return Promise.resolve();
     }
@@ -120,7 +128,7 @@ function queueOrReloadActiveConversationFromPeer(options) {
 
 function flushPeerSyncQueue() {
     if (!peerRefreshQueued) return;
-    if (typeof isGeneratingResponse !== 'undefined' && isGeneratingResponse && !peerTurnActive) {
+    if (isLocalTurnForActiveChat() && !peerTurnActive) {
         return;
     }
     peerRefreshQueued = false;
@@ -138,7 +146,7 @@ function applyPeerTurnStarted(eventConversationId) {
     }
     // This tab is already the sender — BroadcastChannel does not echo, but
     // guard anyway if generating locally without peerTurnActive.
-    if (typeof isGeneratingResponse !== 'undefined' && isGeneratingResponse && !peerTurnActive) {
+    if (isLocalTurnForActiveChat() && !peerTurnActive) {
         return;
     }
     setPeerTurnGenerating(true);
@@ -157,7 +165,7 @@ function applyPeerTurnFinished(eventConversationId) {
         }
         return;
     }
-    if (typeof isGeneratingResponse !== 'undefined' && isGeneratingResponse && !peerTurnActive) {
+    if (isLocalTurnForActiveChat() && !peerTurnActive) {
         peerRefreshQueued = true;
         return;
     }
@@ -239,7 +247,9 @@ function onChatSyncVisibilityChange() {
 /** After history load: if server says a turn is mid-flight, show thinking UI. */
 function applyGeneratingStateFromHistoryPage(page) {
     if (!page || !page.generatingStartedAt) return;
-    if (typeof isGeneratingResponse !== 'undefined' && isGeneratingResponse && !peerTurnActive) {
+    if (isLocalTurnForActiveChat() && !peerTurnActive) {
+        // Switched back to a chat that is still generating locally — restore "...".
+        ensurePeerThinkingPlaceholder();
         return;
     }
     setPeerTurnGenerating(true);

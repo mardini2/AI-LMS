@@ -1,8 +1,60 @@
 // Part of the Syllentras chat widget.
 // Included inside the shared IIFE from before_footer.php — do not load standalone.
 
+// Per-chat scroll memory for the current page session (switch away → switch back).
+var conversationScrollPositions = Object.create(null);
+// Chats that finished a reply while the user was viewing another conversation.
+var unreadConversationIds = Object.create(null);
+
+function markConversationUnread(id) {
+    if (!id) return;
+    if (conversationId && String(conversationId) === String(id)) return;
+    unreadConversationIds[String(id)] = true;
+    syncConversationUnreadUi(id);
+}
+
+function clearConversationUnread(id) {
+    if (!id) return;
+    delete unreadConversationIds[String(id)];
+    syncConversationUnreadUi(id);
+}
+
+function conversationHasUnread(id) {
+    return !!(id && unreadConversationIds[String(id)]);
+}
+
+function syncConversationUnreadUi(id) {
+    if (!conversationsEl || !id) return;
+    var item = conversationsEl.querySelector(
+        '.syllentras-conversation-item[data-conversation-id="' + String(id).replace(/"/g, '') + '"]'
+    );
+    if (!item) return;
+    var unread = conversationHasUnread(id);
+    item.classList.toggle('has-unread', unread);
+    var dot = item.querySelector('.syllentras-conversation-unread-dot');
+    if (dot) dot.hidden = !unread;
+    if (unread) {
+        item.setAttribute('aria-description', 'Unread reply');
+    } else {
+        item.removeAttribute('aria-description');
+    }
+}
+
 function lastConversationStorageKey() {
     return 'syllentras_last_conversation_' + moodleUserId + '_' + courseId;
+}
+
+function saveConversationScrollPosition(id) {
+    if (!id || !msgs || historySettlePending) return;
+    conversationScrollPositions[id] = {
+        scrollTop: msgs.scrollTop,
+        pinnedToBottom: !!pinnedToBottom || (typeof isNearBottom === 'function' && isNearBottom())
+    };
+}
+
+function getConversationScrollPosition(id) {
+    if (!id) return null;
+    return conversationScrollPositions[id] || null;
 }
 
 function persistLastConversationId(id) {
@@ -27,11 +79,22 @@ function readLastConversationId() {
 
 function setActiveConversation(conversation, options) {
     options = options || {};
+    // Remember where the user left off before tearing down the thread.
+    if (conversationId && conversation && conversation.id !== conversationId) {
+        saveConversationScrollPosition(conversationId);
+    }
     activeConversation = conversation;
     if (activeConversation && Array.isArray(conversation.topicSuggestions)) {
         activeConversation.topicSuggestions = conversation.topicSuggestions;
     }
     conversationId = conversation.id;
+    clearConversationUnread(conversationId);
+    // Unlock/lock input for this chat (other chats may still be generating).
+    if (typeof refreshGeneratingChrome === 'function') {
+        refreshGeneratingChrome();
+    } else if (typeof updateComposerLock === 'function') {
+        updateComposerLock();
+    }
     persistLastConversationId(conversationId);
     activeTitle.textContent = displayConversationTitle(conversation);
     activeTag.textContent = displayConversationTag(conversation);
@@ -53,6 +116,11 @@ function loadCurrentHistory(options) {
     }
     loadingHistory = true;
 
+    var savedScroll = options.deferScroll ? null : getConversationScrollPosition(conversationId);
+    var restoreScrollTop = savedScroll && !savedScroll.pinnedToBottom
+        ? savedScroll.scrollTop
+        : null;
+
     return fetchJson('/conversations/' + encodeURIComponent(conversationId)
         + '/messages?moodleUserId=' + encodeURIComponent(moodleUserId)
         + '&limit=' + PAGE_SIZE)
@@ -60,7 +128,7 @@ function loadCurrentHistory(options) {
         if (page.messages && page.messages.length) {
             renderMessageBatch(page.messages, false);
             hasMore = !!page.hasMore;
-            if (options.deferScroll) {
+            if (options.deferScroll || restoreScrollTop !== null) {
                 pinnedToBottom = false;
             }
         }
@@ -71,9 +139,17 @@ function loadCurrentHistory(options) {
             .then(loadReviewOfferForConversation)
             .then(function () {
                 // One settle after content + pending/review UI — avoids reopen jumpiness.
-                return endMessageListSettle({
-                    scrollToBottom: !options.deferScroll
-                });
+                // Prefer the last scroll spot for this chat; otherwise land at bottom.
+                if (options.deferScroll) {
+                    return endMessageListSettle({ scrollToBottom: false });
+                }
+                if (restoreScrollTop !== null) {
+                    return endMessageListSettle({
+                        scrollToBottom: false,
+                        scrollTop: restoreScrollTop
+                    });
+                }
+                return endMessageListSettle({ scrollToBottom: true });
             });
     })
     .catch(function () {
@@ -240,10 +316,22 @@ function renderConversationItem(conversation) {
     item.setAttribute('role', 'button');
     item.className = 'syllentras-conversation-item';
     item.dataset.conversationId = conversation.id;
+    var hasUnread = conversationHasUnread(conversation.id);
+    if (hasUnread) {
+        item.classList.add('has-unread');
+    }
     item.innerHTML =
+        '<span class="syllentras-conversation-unread-dot" aria-hidden="true"></span>' +
         '<span class="syllentras-conversation-name"></span>' +
         '<span class="syllentras-conversation-tag"></span>' +
         '<button type="button" class="syllentras-conversation-menu-btn" aria-label="Conversation menu" aria-haspopup="menu">&#8942;</button>';
+    var dotEl = item.querySelector('.syllentras-conversation-unread-dot');
+    if (dotEl) {
+        dotEl.hidden = !hasUnread;
+        if (hasUnread) {
+            item.setAttribute('aria-description', 'Unread reply');
+        }
+    }
     var nameEl = item.querySelector('.syllentras-conversation-name');
     nameEl.textContent = displayConversationTitle(conversation);
     nameEl.classList.toggle('pinned', !!conversation.pinned);
@@ -462,6 +550,9 @@ function sendMessage() {
         : [];
     var hasAttachments = attachmentsPayload.length > 0;
     if ((!text && !hasAttachments) || !conversationId) return;
+    // Only block a second send in the same chat; other chats can generate in parallel.
+    if (typeof isConversationGenerating === 'function' && isConversationGenerating(conversationId)) return;
+    if (typeof peerTurnActive !== 'undefined' && peerTurnActive) return;
 
     if (typeof hasPendingAttachmentUploads === 'function' && hasPendingAttachmentUploads()) {
         if (typeof setAttachmentError === 'function') {
@@ -495,8 +586,9 @@ function sendMessage() {
     if (typeof clearPendingAttachments === 'function') {
         clearPendingAttachments();
     }
-    send.disabled = true;
-    setGeneratingState(true);
+
+    var turnConversationId = conversationId;
+    setGeneratingState(true, { conversationId: turnConversationId });
 
     var displayText = text || (hasAttachments ? 'Please review the attached file(s).' : '');
     var sentAt = new Date().toISOString();
@@ -524,7 +616,7 @@ function sendMessage() {
         moodleUserId: moodleUserId,
         userFirstName: userFirstName || undefined,
         message: text,
-        conversationId: conversationId
+        conversationId: turnConversationId
     };
     if (attachmentIds.length) {
         body.attachmentIds = attachmentIds;
@@ -541,7 +633,50 @@ function sendMessage() {
     }
 
     var turnStarted = false;
-    var turnConversationId = conversationId;
+
+    function isViewingTurn() {
+        return !!(conversationId && turnConversationId
+            && String(conversationId) === String(turnConversationId));
+    }
+
+    function applyAssistantToLiveBubble(data) {
+        renderAssistantContent(loadingEl, data.response);
+        applyModeChip(loadingEl, data.mode || body.mode);
+        if (typeof attachMessageSpeakButton === 'function') {
+            attachMessageSpeakButton(loadingEl);
+        }
+        loadingEl.dataset.createdAt = new Date().toISOString();
+        upsertMessageSearchEntry({
+            id: pendingAssistantId,
+            role: 'assistant',
+            content: data.response,
+            createdAt: loadingEl.dataset.createdAt
+        });
+        if (typeof rebuildChatTimeline === 'function') {
+            rebuildChatTimeline();
+        }
+        if (messageSearchOpen && msgSearchInput && msgSearchInput.value.trim()) {
+            runMessageSearch(msgSearchInput.value);
+        }
+        if (Array.isArray(data.topicSuggestions)) {
+            if (!activeConversation) activeConversation = { id: turnConversationId };
+            activeConversation.topicSuggestions = data.topicSuggestions;
+        }
+        if (data.pendingAction) {
+            attachPendingAction(loadingEl, data.pendingAction);
+        }
+        if (data.suggestedLinks && typeof attachSuggestedLinks === 'function') {
+            attachSuggestedLinks(loadingEl, data.suggestedLinks);
+        }
+        if (Array.isArray(data.attachmentWarnings) && data.attachmentWarnings.length) {
+            if (typeof appendSystemNotice === 'function') {
+                appendSystemNotice(data.attachmentWarnings.join(' '));
+            }
+        }
+        if (typeof stickToBottomIfNeeded === 'function') {
+            stickToBottomIfNeeded({ afterLayout: true });
+        }
+    }
 
     fetchJson('/chat/message/start', {
         method: 'POST',
@@ -549,25 +684,35 @@ function sendMessage() {
     })
     .then(function (started) {
         turnStarted = true;
-        conversationId = started.conversationId || conversationId;
-        turnConversationId = conversationId;
-        if (userEl && started.userMessageId) {
+        var previousTurnId = turnConversationId;
+        turnConversationId = started.conversationId || turnConversationId;
+        // Keep the in-flight map pointed at the server conversation id.
+        if (typeof setGeneratingState === 'function') {
+            if (previousTurnId && String(previousTurnId) !== String(turnConversationId)) {
+                setGeneratingState(false, { conversationId: previousTurnId });
+            }
+            setGeneratingState(true, { conversationId: turnConversationId });
+        }
+        // Only touch the optimistic bubbles if the user is still on this chat.
+        if (isViewingTurn() && userEl && userEl.parentNode && started.userMessageId) {
             userEl.dataset.messageId = String(started.userMessageId);
         }
-        if (Array.isArray(started.attachmentWarnings) && started.attachmentWarnings.length) {
+        if (isViewingTurn()
+            && Array.isArray(started.attachmentWarnings)
+            && started.attachmentWarnings.length) {
             if (typeof appendSystemNotice === 'function') {
                 appendSystemNotice(started.attachmentWarnings.join(' '));
             }
         }
         if (typeof broadcastChatSync === 'function') {
-            broadcastChatSync('turn-started', conversationId);
+            broadcastChatSync('turn-started', turnConversationId);
         }
         var completeBody = {
             courseId: courseId,
             courseName: courseName || undefined,
             moodleUserId: moodleUserId,
             userFirstName: userFirstName || undefined,
-            conversationId: conversationId,
+            conversationId: turnConversationId,
             userMessageId: started.userMessageId,
             message: text
         };
@@ -587,61 +732,45 @@ function sendMessage() {
         });
     })
     .then(function (data) {
-        renderAssistantContent(loadingEl, data.response);
-        applyModeChip(loadingEl, data.mode || body.mode);
-        if (typeof attachMessageSpeakButton === 'function') {
-            attachMessageSpeakButton(loadingEl);
+        turnConversationId = data.conversationId || turnConversationId;
+
+        var finishUi = Promise.resolve();
+        if (isViewingTurn()) {
+            if (loadingEl && loadingEl.parentNode) {
+                applyAssistantToLiveBubble(data);
+            } else {
+                // User left and came back mid-turn — pull the finished reply from history.
+                finishUi = loadCurrentHistory();
+            }
+        } else {
+            // Reply finished in the background — mark unread for the sidebar blue dot.
+            markConversationUnread(turnConversationId);
         }
-        loadingEl.dataset.createdAt = new Date().toISOString();
-        upsertMessageSearchEntry({
-            id: pendingAssistantId,
-            role: 'assistant',
-            content: data.response,
-            createdAt: loadingEl.dataset.createdAt
+
+        return finishUi.then(function () {
+            if (typeof broadcastChatSync === 'function') {
+                broadcastChatSync('messages-updated', turnConversationId);
+                if (data.pendingAction) {
+                    broadcastChatSync('pending-action-changed', turnConversationId);
+                }
+                broadcastChatSync('conversation-list-changed', turnConversationId);
+            }
+            return loadConversations();
         });
-        if (typeof rebuildChatTimeline === 'function') {
-            rebuildChatTimeline();
-        }
-        if (messageSearchOpen && msgSearchInput && msgSearchInput.value.trim()) {
-            runMessageSearch(msgSearchInput.value);
-        }
-        conversationId = data.conversationId || conversationId;
-        turnConversationId = conversationId;
-        if (Array.isArray(data.topicSuggestions)) {
-            if (!activeConversation) activeConversation = { id: conversationId };
-            activeConversation.topicSuggestions = data.topicSuggestions;
-        }
-        if (data.pendingAction) {
-            attachPendingAction(loadingEl, data.pendingAction);
-        }
-        if (data.suggestedLinks && typeof attachSuggestedLinks === 'function') {
-            attachSuggestedLinks(loadingEl, data.suggestedLinks);
-        }
-        if (Array.isArray(data.attachmentWarnings) && data.attachmentWarnings.length) {
-            if (typeof appendSystemNotice === 'function') {
-                appendSystemNotice(data.attachmentWarnings.join(' '));
-            }
-        }
-        if (typeof stickToBottomIfNeeded === 'function') {
-            stickToBottomIfNeeded({ afterLayout: true });
-        }
-        if (typeof broadcastChatSync === 'function') {
-            broadcastChatSync('messages-updated', conversationId);
-            if (data.pendingAction) {
-                broadcastChatSync('pending-action-changed', conversationId);
-            }
-            broadcastChatSync('conversation-list-changed', conversationId);
-        }
-        return loadConversations();
     })
     .catch(function (err) {
         if (!turnStarted) {
-            if (userEl && userEl.parentNode) userEl.remove();
-            if (loadingEl && loadingEl.parentNode) loadingEl.remove();
-            if (typeof rebuildChatTimeline === 'function') {
-                rebuildChatTimeline();
+            if (isViewingTurn()) {
+                if (userEl && userEl.parentNode) userEl.remove();
+                if (loadingEl && loadingEl.parentNode) loadingEl.remove();
+                if (typeof rebuildChatTimeline === 'function') {
+                    rebuildChatTimeline();
+                }
             }
-        } else {
+            return;
+        }
+
+        if (isViewingTurn() && loadingEl && loadingEl.parentNode) {
             loadingEl.className = 'syllentras-msg error';
             loadingEl.textContent = (err && err.message)
                 ? err.message
@@ -649,15 +778,21 @@ function sendMessage() {
             if (typeof stickToBottomIfNeeded === 'function') {
                 stickToBottomIfNeeded({ afterLayout: true });
             }
+        } else if (isViewingTurn()) {
+            return loadCurrentHistory();
+        } else {
+            markConversationUnread(turnConversationId);
+            return loadConversations();
         }
     })
     .finally(function () {
         if (turnStarted && typeof broadcastChatSync === 'function') {
             broadcastChatSync('turn-finished', turnConversationId);
         }
-        send.disabled = false;
-        setGeneratingState(false);
-        input.focus();
+        setGeneratingState(false, { conversationId: turnConversationId });
+        if (input && !input.disabled) {
+            try { input.focus(); } catch (e) { /* ignore */ }
+        }
     });
 }
 

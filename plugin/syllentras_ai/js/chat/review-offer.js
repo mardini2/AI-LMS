@@ -30,9 +30,10 @@ function attachReviewOffer(messageEl, offer) {
     explainBtn.addEventListener('click', function () {
         explainBtn.disabled = true;
         explainBtn.textContent = 'Explaining...';
-        setGeneratingState(true);
+        var turnConversationId = conversationId;
+        setGeneratingState(true, { conversationId: turnConversationId });
         var body = {
-            conversationId: conversationId,
+            conversationId: turnConversationId,
             moodleUserId: moodleUserId
         };
         var providerId = typeof getSelectedProviderId === 'function' ? getSelectedProviderId() : null;
@@ -60,7 +61,7 @@ function attachReviewOffer(messageEl, offer) {
                 : 'Could not explain your wrong answers. Please try again.');
         })
         .finally(function () {
-            setGeneratingState(false);
+            setGeneratingState(false, { conversationId: turnConversationId });
         });
     });
 

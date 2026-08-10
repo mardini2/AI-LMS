@@ -29,7 +29,7 @@ function attachSuggestedLinks(messageEl, links) {
             ? String(link.title).replace(/\s+/g, ' ').trim() + '\n' + link.url
             : link.url;
         btn.addEventListener('click', function () {
-            if (typeof isGeneratingResponse !== 'undefined' && isGeneratingResponse) return;
+            if (typeof isActiveChatBusy === 'function' && isActiveChatBusy()) return;
             if (!input || input.disabled || (send && send.disabled)) return;
             input.value = SUGGESTED_LINK_OPEN_PREFIX + link.url;
             if (typeof sendMessage === 'function') {
