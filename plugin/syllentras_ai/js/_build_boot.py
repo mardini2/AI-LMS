@@ -30,6 +30,7 @@ ORDER = [
     "section-buttons.js",
     "ai-content-panel.js",
     "display-settings.js",
+    "cross-tab-sync.js",
     "wiring.js",
 ]
 

@@ -75,6 +75,9 @@ function setGeneratingState(busy) {
             closeModeMenu();
         }
     }
+    if (!isGeneratingResponse && typeof flushPeerSyncQueue === 'function') {
+        flushPeerSyncQueue();
+    }
 }
 
 function closeProviderMenu() {

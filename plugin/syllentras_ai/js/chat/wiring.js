@@ -259,6 +259,9 @@ loadProviders();
 loadAzureSpeechConfig();
 loadConversations();
 installSectionButtons();
+if (typeof initCrossTabSync === 'function') {
+    initCrossTabSync();
+}
 if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', installSectionButtons);
 }

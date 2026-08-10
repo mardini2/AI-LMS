@@ -217,6 +217,11 @@ function attachPendingAction(messageEl, pendingAction) {
             if (typeof refreshAiContentList === 'function' && typeof isAiContentTabActive === 'function' && isAiContentTabActive()) {
                 refreshAiContentList();
             }
+            if (typeof broadcastChatSync === 'function') {
+                broadcastChatSync('pending-action-changed', conversationId);
+                broadcastChatSync('messages-updated', conversationId);
+                broadcastChatSync('conversation-list-changed', conversationId);
+            }
             return loadConversations().then(loadReviewOfferForConversation);
         })
         .catch(function (err) {
@@ -241,6 +246,10 @@ function attachPendingAction(messageEl, pendingAction) {
             clearPendingActionUi(messageEl);
             if (data.response) {
                 appendMessage('assistant', data.response);
+            }
+            if (typeof broadcastChatSync === 'function') {
+                broadcastChatSync('pending-action-changed', conversationId);
+                broadcastChatSync('messages-updated', conversationId);
             }
         })
         .catch(function () {

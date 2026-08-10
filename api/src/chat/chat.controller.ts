@@ -9,6 +9,7 @@ import {
 } from '@nestjs/common';
 import { ChatService } from './chat.service';
 import { SendMessageDto } from './dto/send-message.dto';
+import { CompleteMessageDto } from './dto/complete-message.dto';
 import {
   CancelActionDto,
   ConfirmActionDto,
@@ -30,7 +31,26 @@ export class ChatController {
   }
 
   /**
+   * POST /chat/message/start
+   * Persist the user message and mark the conversation as generating.
+   */
+  @Post('message/start')
+  startMessage(@Body() dto: SendMessageDto) {
+    return this.chatService.startMessageTurn(dto);
+  }
+
+  /**
+   * POST /chat/message/complete
+   * Generate and persist the assistant reply for a started turn.
+   */
+  @Post('message/complete')
+  completeMessage(@Body() dto: CompleteMessageDto) {
+    return this.chatService.completeMessageTurn(dto);
+  }
+
+  /**
    * POST /chat/message
+   * Legacy single-call send (start + complete). Prefer start/complete for multi-tab sync.
    */
   @Post('message')
   sendMessage(@Body() dto: SendMessageDto) {

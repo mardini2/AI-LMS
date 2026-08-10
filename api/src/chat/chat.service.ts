@@ -12,9 +12,11 @@ import type {
   ChatResponse,
   PendingActionDto,
   ReviewOfferDto,
+  StartMessageTurnResponse,
 } from './chat.types';
 import { PendingActionService } from './pending-action.service';
 import { SendMessageDto } from './dto/send-message.dto';
+import { CompleteMessageDto } from './dto/complete-message.dto';
 import { PracticeQuizGenerationService } from './practice-quiz-generation.service';
 import { PracticeQuizReviewService } from './practice-quiz-review.service';
 import { StudyGuideGenerationService } from './study-guide-generation.service';
@@ -204,14 +206,15 @@ export class ChatService {
     };
   }
 
-  async sendMessage(dto: SendMessageDto): Promise<ChatResponse> {
+  /**
+   * Persist the user message immediately and mark the conversation as generating.
+   * Peers can refetch and show thinking UI before the LLM finishes.
+   */
+  async startMessageTurn(dto: SendMessageDto): Promise<StartMessageTurnResponse> {
     const {
       courseId,
-      courseName,
       moodleUserId,
-      userFirstName,
       conversationId: incomingConvId,
-      provider: requestedProvider,
     } = dto;
     const rawMessage = typeof dto.message === 'string' ? dto.message : '';
     const mode = dto.mode === 'coach' ? 'coach' : 'direct';
@@ -219,7 +222,6 @@ export class ChatService {
       mode === 'coach'
         ? Math.min(5, Math.max(1, Math.round(dto.guidance ?? 3)))
         : undefined;
-    const llm = this.providers.resolve(requestedProvider);
 
     let conversationId = incomingConvId;
     if (conversationId) {
@@ -249,9 +251,6 @@ export class ChatService {
         : await this.conversationService.create(courseId, moodleUserId);
       conversationId = conversation.id;
     }
-
-    const conversation =
-      await this.conversationService.findById(conversationId);
 
     const attachmentIds = dto.attachmentIds || [];
     if (attachmentIds.length && !moodleUserId) {
@@ -289,428 +288,12 @@ export class ChatService {
       throw new BadRequestException('Message cannot be empty.');
     }
 
-    let messageForLlm = this.chatAttachments.buildLlmMessage(
-      rawMessage,
-      processedAttachments.promptBlock,
-    );
     const messageForStorage = this.chatAttachments.buildStorageMessage(
       rawMessage,
       processedAttachments.storagePrefix,
     );
-    // Keep retrieval / topic scoring keyed off the student text (+ filenames).
-    const message = rawMessage.trim()
-      ? rawMessage.trim()
-      : processedAttachments.usableFilenames.join(', ') || messageForStorage;
 
-    // Student pasted http(s) links — fetch readable text for the model only
-    // (not saved into chat history). SSRF-checked inside link-fetch.
-    const sharedUrls = extractHttpUrls(rawMessage);
-    let linkWarnings: string[] = [];
-    let linkBatch: LinkFetchBatch | null = null;
-    if (sharedUrls.length) {
-      linkBatch = await fetchLinkedPagesFromMessage(rawMessage);
-      const linkBlock = buildLinkFetchPromptBlock(linkBatch);
-      if (linkBlock) {
-        messageForLlm = messageForLlm
-          ? `${messageForLlm}\n\n${linkBlock}`
-          : linkBlock;
-      }
-      linkWarnings = linkFetchWarningMessages(linkBatch);
-      this.logger.log(
-        `Link fetch for conversation ${conversationId}: opened ${linkBatch.results.length}/${linkBatch.totalUrls}` +
-          (linkBatch.skippedUrls ? ` (skipped ${linkBatch.skippedUrls})` : '') +
-          ` — ${linkBatch.results
-            .map((r) => (r.ok ? `ok:${r.url}` : `fail:${r.url}`))
-            .join(', ')}`,
-      );
-    }
-
-    // Pure "thanks" / "appreciate it" — short reply, don't re-run the last answer.
-    // Skip when they also attached files or shared links; those still need the normal path.
-    if (
-      !attachmentIds.length &&
-      !sharedUrls.length &&
-      isPrimaryGratitudeMessage(rawMessage)
-    ) {
-      const responseText = pickGratitudeReply(rawMessage);
-      await this.conversationService.appendMessages(conversationId, [
-        {
-          role: 'user',
-          content: messageForStorage,
-          mode,
-          guidance: guidance ?? null,
-        },
-        {
-          role: 'assistant',
-          content: responseText,
-          mode,
-          guidance: guidance ?? null,
-        },
-      ]);
-      const topicSuggestions = normalizeReturnedTopics(
-        conversation.topicSuggestions,
-      );
-      this.logger.log(
-        `Gratitude acknowledgment for conversation ${conversationId} (skipped LLM)`,
-      );
-      return {
-        response: responseText,
-        conversationId,
-        topicSuggestions,
-        provider: llm.id,
-        mode,
-        guidance,
-      };
-    }
-
-    const [
-      courseMaterial,
-      resolvedCourseName,
-      enrolledCourses,
-      conversationStarted,
-      dbHistory,
-    ] = await Promise.all([
-      this.contextService.getContext(courseId, message, {
-        sectionId: conversation.sectionId,
-        sectionNumber: conversation.sectionNumber,
-        sectionName: conversation.sectionName,
-      }),
-      this.contextService.resolveCourseName(courseId, courseName),
-      moodleUserId
-        ? this.contextService.getEnrolledCourseNames(moodleUserId)
-        : Promise.resolve([]),
-      this.conversationService.hasUserMessages(conversationId),
-      this.conversationService.getRecentHistory(conversationId, 20),
-    ]);
-
-    const canProposeContent =
-      Boolean(moodleUserId) && courseId > 1 && Boolean(courseMaterial);
-    // Section chats already show "What would you like to know about …?" — never re-greet.
-    const mayGreet =
-      !conversationStarted && (conversation.type ?? 'general') === 'general';
-    const priorUserTurns = dbHistory.filter((m) => m.role === 'user').length;
-    const systemInstruction = buildSystemPrompt({
-      courseId,
-      courseName: resolvedCourseName,
-      userFirstName,
-      enrolledCourses,
-      conversationTitle: conversation.title,
-      conversationType: conversation.type ?? 'general',
-      sectionName: conversation.sectionName,
-      courseMaterial,
-      canProposeContent,
-      mode,
-      guidance,
-      conversationStarted,
-    });
-    // Provider-only view: do not persist or return this to the UI.
-    const providerHistory = normalizeHistoryForLlm(dbHistory, userFirstName);
-    const debugSecondTurn = shouldLogGreetingDebug(priorUserTurns);
-
-    if (debugSecondTurn) {
-      logGreetingDebug(
-        'REQUEST',
-        [
-          `conversationId: ${conversationId}`,
-          `conversationType: ${conversation.type ?? 'general'}`,
-          `priorUserTurns: ${priorUserTurns}`,
-          `allowGreeting: ${mayGreet}`,
-          `providerId: ${llm.id}`,
-          '',
-          '----- SYSTEM PROMPT -----',
-          systemInstruction,
-          '',
-          '----- HISTORY (DB, unchanged) -----',
-          formatHistoryForLog(dbHistory),
-          '',
-          '----- HISTORY (SENT TO PROVIDER, normalized) -----',
-          formatHistoryForLog(providerHistory),
-          '',
-          '----- USER MESSAGE -----',
-          messageForLlm,
-        ].join('\n'),
-      );
-    }
-
-    this.logger.log(
-      `Sending message for conversation ${conversationId} via ${llm.id}`,
-    );
-    const tools: LlmTool[] = [];
-    if (canProposeContent) {
-      tools.push(...STUDY_PROPOSAL_TOOLS);
-    }
-    if (linkBatch?.results.some((r) => r.ok)) {
-      tools.push(SUGGEST_OPENABLE_LINKS_TOOL);
-    }
-    const hasLinkedPageContent = Boolean(linkBatch?.results.some((r) => r.ok));
-    const result = await llm.chat({
-      systemInstruction,
-      history: providerHistory,
-      message: messageForLlm,
-      tools: tools.length ? tools : undefined,
-      relaxDangerousContentSafety: hasLinkedPageContent,
-    });
-
-    if (debugSecondTurn) {
-      logGreetingDebug(
-        'RAW PROVIDER RESPONSE',
-        [
-          `conversationId: ${conversationId}`,
-          `providerId: ${llm.id}`,
-          `toolCalls: ${JSON.stringify(result.toolCalls ?? [])}`,
-          '',
-          '----- RAW PROVIDER RESPONSE -----',
-          result.text ?? '(empty text)',
-        ].join('\n'),
-      );
-    }
-
-    const functionCalls = result.toolCalls ?? [];
-
-    let responseText = '';
-    let pendingAction: PendingActionDto | undefined;
-    let suggestedLinks: SuggestedLink[] = [];
-
-    const proposeQuizCall = functionCalls.find(
-      (call) => call.name === 'propose_practice_quiz',
-    );
-    const proposeGuideCall = functionCalls.find(
-      (call) => call.name === 'propose_study_guide',
-    );
-    const proposeFlashcardsCall = functionCalls.find(
-      (call) => call.name === 'propose_flashcards',
-    );
-    const suggestLinksCall = functionCalls.find(
-      (call) => call.name === 'suggest_openable_links',
-    );
-
-    const suggestToolArgs = (suggestLinksCall?.args ?? null) as {
-      links?: Array<{ title?: unknown; url?: unknown; teaser?: unknown }>;
-    } | null;
-
-    if (proposeQuizCall && moodleUserId && courseId > 1) {
-      const args = (proposeQuizCall.args ?? {}) as {
-        title?: string;
-        scopeSummary?: string;
-        questionCount?: number;
-        countSpecifiedByStudent?: boolean;
-        difficulty?: string;
-      };
-      const requestedCount =
-        typeof args.questionCount === 'number'
-          ? args.questionCount
-          : Number(args.questionCount);
-      const countSpecifiedByStudent = args.countSpecifiedByStudent === true;
-      const questionCount = clampQuestionCount(
-        requestedCount,
-        countSpecifiedByStudent,
-      );
-      const exceededMax =
-        countSpecifiedByStudent &&
-        Number.isFinite(requestedCount) &&
-        Math.round(requestedCount) > QUIZ_QUESTION_COUNT_EXPLICIT_MAX;
-      const title =
-        stripKindTitlePrefix((args.title ?? '').trim()) || 'Practice topics';
-      const scopeSummary =
-        (args.scopeSummary ?? '').trim() ||
-        'Course material from the current conversation';
-      const difficulty = normalizeQuizDifficulty(args.difficulty);
-
-      const action = await this.pendingActionService.createPracticeQuizProposal({
-        conversationId,
-        courseId,
-        moodleUserId,
-        payload: {
-          title,
-          scopeSummary,
-          questionCount,
-          difficulty,
-          sectionId: conversation.sectionId,
-          sectionNumber: conversation.sectionNumber,
-          sectionName: conversation.sectionName,
-        },
-      });
-
-      pendingAction = {
-        id: action.id,
-        type: 'practice_quiz',
-        title,
-        questionCount,
-        difficulty,
-        scopeSummary,
-      };
-
-      responseText = buildProposalMessage({
-        title,
-        questionCount,
-        scopeSummary,
-        difficulty,
-        requestedCount: exceededMax ? Math.round(requestedCount) : undefined,
-      });
-    } else if (proposeGuideCall && moodleUserId && courseId > 1) {
-      const args = (proposeGuideCall.args ?? {}) as {
-        title?: string;
-        scopeSummary?: string;
-      };
-      const title =
-        stripKindTitlePrefix((args.title ?? '').trim()) || 'Course review';
-      const scopeSummary =
-        (args.scopeSummary ?? '').trim() ||
-        'Course material from the current conversation';
-
-      const action = await this.pendingActionService.createStudyGuideProposal({
-        conversationId,
-        courseId,
-        moodleUserId,
-        payload: {
-          title,
-          scopeSummary,
-          sectionId: conversation.sectionId,
-          sectionNumber: conversation.sectionNumber,
-          sectionName: conversation.sectionName,
-        },
-      });
-
-      pendingAction = {
-        id: action.id,
-        type: 'study_guide',
-        title,
-        scopeSummary,
-      };
-
-      responseText = buildStudyGuideProposalMessage({ title, scopeSummary });
-    } else if (proposeFlashcardsCall && moodleUserId && courseId > 1) {
-      const args = (proposeFlashcardsCall.args ?? {}) as {
-        title?: string;
-        scopeSummary?: string;
-        cardCount?: number;
-        countSpecifiedByStudent?: boolean;
-      };
-      const requestedCount =
-        typeof args.cardCount === 'number'
-          ? args.cardCount
-          : Number(args.cardCount);
-      const countSpecifiedByStudent = args.countSpecifiedByStudent === true;
-      const cardCount = clampCardCount(
-        requestedCount,
-        countSpecifiedByStudent,
-      );
-      const exceededMax =
-        countSpecifiedByStudent &&
-        Number.isFinite(requestedCount) &&
-        Math.round(requestedCount) > FLASHCARD_COUNT_EXPLICIT_MAX;
-      const title =
-        stripKindTitlePrefix((args.title ?? '').trim()) || 'Key terms';
-      const scopeSummary =
-        (args.scopeSummary ?? '').trim() ||
-        'Course material from the current conversation';
-
-      const action = await this.pendingActionService.createFlashcardsProposal({
-        conversationId,
-        courseId,
-        moodleUserId,
-        payload: {
-          title,
-          scopeSummary,
-          cardCount,
-          sectionId: conversation.sectionId,
-          sectionNumber: conversation.sectionNumber,
-          sectionName: conversation.sectionName,
-        },
-      });
-
-      pendingAction = {
-        id: action.id,
-        type: 'flashcards',
-        title,
-        cardCount,
-        scopeSummary,
-      };
-
-      responseText = buildFlashcardsProposalMessage({
-        title,
-        scopeSummary,
-        cardCount,
-        requestedCount: exceededMax ? Math.round(requestedCount) : undefined,
-      });
-    } else {
-      let modelText = result.text?.trim() ?? '';
-      if (linkBatch?.results.some((r) => r.ok)) {
-        suggestedLinks = await buildSuggestedLinks({
-          batch: linkBatch,
-          toolArgs: suggestToolArgs,
-          responseText: modelText,
-        });
-      }
-
-      if (!modelText && suggestedLinks.length) {
-        modelText = buildSuggestedLinksReply(suggestedLinks, linkBatch ?? undefined);
-        this.logger.log(
-          `Synthesized link-recommendation reply for conversation ${conversationId} from suggest_openable_links (${suggestedLinks.length} links)`,
-        );
-      } else if (!modelText && linkBatch?.results.some((r) => r.ok)) {
-        // SAFETY / empty model: still offer headlines from the fetched page.
-        suggestedLinks = await pickOutboundSuggestedLinks(linkBatch);
-        if (suggestedLinks.length) {
-          modelText = buildSuggestedLinksReply(suggestedLinks, linkBatch, {
-            degraded: true,
-          });
-          this.logger.log(
-            `Degraded outbound-link reply for conversation ${conversationId}` +
-              ` after empty LLM (finishReason=${result.finishReason ?? 'n/a'}, ${suggestedLinks.length} links)`,
-          );
-        } else {
-          this.logger.warn(
-            `Empty LLM text for conversation ${conversationId} via ${llm.id}` +
-              ` (finishReason=${result.finishReason ?? 'n/a'}, toolCalls=${JSON.stringify(
-                functionCalls.map((c) => c.name),
-              )})`,
-          );
-          modelText = emptyLlmFallback(result.finishReason);
-        }
-      } else if (!modelText) {
-        this.logger.warn(
-          `Empty LLM text for conversation ${conversationId} via ${llm.id}` +
-            ` (finishReason=${result.finishReason ?? 'n/a'}, toolCalls=${JSON.stringify(
-              functionCalls.map((c) => c.name),
-            )})`,
-        );
-        modelText = emptyLlmFallback(result.finishReason);
-      }
-
-      responseText = preventRepeatedGreeting(
-        modelText,
-        !mayGreet,
-        userFirstName,
-      );
-      if (debugSecondTurn) {
-        logGreetingDebug(
-          'POST-PROCESS',
-          [
-            `conversationId: ${conversationId}`,
-            `allowGreeting: ${mayGreet}`,
-            `preventRepeatedGreetingApplied: ${!mayGreet}`,
-            `suggestedLinks: ${suggestedLinks.length}`,
-            '',
-            '----- FINAL RESPONSE AFTER PROCESSING -----',
-            responseText,
-          ].join('\n'),
-        );
-      }
-    }
-
-    if (
-      !suggestedLinks.length &&
-      linkBatch?.results.some((r) => r.ok)
-    ) {
-      suggestedLinks = await buildSuggestedLinks({
-        batch: linkBatch,
-        toolArgs: suggestToolArgs,
-        responseText,
-      });
-    }
-
-    const savedMessages = await this.conversationService.appendMessages(
+    const [userMessage] = await this.conversationService.appendMessages(
       conversationId,
       [
         {
@@ -719,21 +302,10 @@ export class ChatService {
           mode,
           guidance: guidance ?? null,
         },
-        {
-          role: 'assistant',
-          content: responseText,
-          mode,
-          guidance: guidance ?? null,
-        },
       ],
     );
 
-    const userMessage = savedMessages.find((m) => m.role === 'user');
-    if (
-      userMessage &&
-      moodleUserId &&
-      processedAttachments.attachmentIds.length
-    ) {
+    if (moodleUserId && processedAttachments.attachmentIds.length) {
       await this.chatAttachments.linkToMessage(
         processedAttachments.attachmentIds,
         userMessage.id,
@@ -742,48 +314,569 @@ export class ChatService {
       );
     }
 
-    let topicSuggestions = normalizeReturnedTopics(conversation.topicSuggestions);
-
-    if (courseId > 1 && message.trim()) {
-      const historyForTopics = [
-        ...dbHistory.slice(-6),
-        { role: 'user' as const, content: message },
-        { role: 'assistant' as const, content: responseText },
-      ];
-      const refreshed = await this.topicSuggestions.suggestTopics(
-        {
-          courseName: resolvedCourseName,
-          sectionName: conversation.sectionName,
-          recentTurns: historyForTopics,
-        },
-        llm,
-      );
-      if (refreshed.length) {
-        topicSuggestions =
-          await this.conversationService.updateTopicSuggestions(
-            conversationId,
-            refreshed,
-          );
-      }
-    }
+    const generatingStartedAt = new Date();
+    await this.conversationService.setGeneratingStartedAt(
+      conversationId,
+      generatingStartedAt,
+    );
 
     return {
-      response: responseText,
       conversationId,
-      pendingAction,
-      suggestedLinks: suggestedLinks.length ? suggestedLinks : undefined,
-      topicSuggestions,
-      provider: llm.id,
-      mode,
-      guidance,
-      attachmentWarnings: (() => {
-        const warnings = [
-          ...processedAttachments.errors,
-          ...linkWarnings,
-        ];
-        return warnings.length ? warnings : undefined;
-      })(),
+      userMessageId: userMessage.id,
+      generatingStartedAt: generatingStartedAt.toISOString(),
+      attachmentWarnings: processedAttachments.errors.length
+        ? processedAttachments.errors
+        : undefined,
     };
+  }
+
+  /**
+   * Generate and persist the assistant reply for a user message already saved
+   * by startMessageTurn.
+   */
+  async completeMessageTurn(dto: CompleteMessageDto): Promise<ChatResponse> {
+    const {
+      courseId,
+      courseName,
+      moodleUserId,
+      userFirstName,
+      conversationId,
+      userMessageId,
+      provider: requestedProvider,
+    } = dto;
+    const rawMessage = typeof dto.message === 'string' ? dto.message : '';
+    const mode = dto.mode === 'coach' ? 'coach' : 'direct';
+    const guidance =
+      mode === 'coach'
+        ? Math.min(5, Math.max(1, Math.round(dto.guidance ?? 3)))
+        : undefined;
+    const llm = this.providers.resolve(requestedProvider);
+
+    try {
+      if (moodleUserId) {
+        await this.conversationService.assertOwner(conversationId, moodleUserId);
+      } else {
+        await this.conversationService.findById(conversationId);
+      }
+
+      const userMessage = await this.conversationService.findMessage(
+        conversationId,
+        userMessageId,
+      );
+      if (userMessage.role !== 'user') {
+        throw new BadRequestException('userMessageId must refer to a user message.');
+      }
+
+      const conversation =
+        await this.conversationService.findById(conversationId);
+
+      const attachmentIds = dto.attachmentIds || [];
+      if (attachmentIds.length && !moodleUserId) {
+        throw new BadRequestException(
+          'Signing in is required to use file attachments.',
+        );
+      }
+
+      const processedAttachments = moodleUserId
+        ? await this.chatAttachments.resolveByIds({
+            attachmentIds,
+            moodleUserId,
+            conversationId,
+            query: rawMessage,
+          })
+        : {
+            promptBlock: '',
+            storagePrefix: '',
+            usableFilenames: [] as string[],
+            errors: [] as string[],
+            attachmentIds: [] as string[],
+          };
+
+      let messageForLlm = this.chatAttachments.buildLlmMessage(
+        rawMessage,
+        processedAttachments.promptBlock,
+      );
+      const messageForStorage = userMessage.content;
+      const message = rawMessage.trim()
+        ? rawMessage.trim()
+        : processedAttachments.usableFilenames.join(', ') || messageForStorage;
+
+      const sharedUrls = extractHttpUrls(rawMessage);
+      let linkWarnings: string[] = [];
+      let linkBatch: LinkFetchBatch | null = null;
+      if (sharedUrls.length) {
+        linkBatch = await fetchLinkedPagesFromMessage(rawMessage);
+        const linkBlock = buildLinkFetchPromptBlock(linkBatch);
+        if (linkBlock) {
+          messageForLlm = messageForLlm
+            ? `${messageForLlm}\n\n${linkBlock}`
+            : linkBlock;
+        }
+        linkWarnings = linkFetchWarningMessages(linkBatch);
+        this.logger.log(
+          `Link fetch for conversation ${conversationId}: opened ${linkBatch.results.length}/${linkBatch.totalUrls}` +
+            (linkBatch.skippedUrls ? ` (skipped ${linkBatch.skippedUrls})` : '') +
+            ` — ${linkBatch.results
+              .map((r) => (r.ok ? `ok:${r.url}` : `fail:${r.url}`))
+              .join(', ')}`,
+        );
+      }
+
+      if (
+        !attachmentIds.length &&
+        !sharedUrls.length &&
+        isPrimaryGratitudeMessage(rawMessage)
+      ) {
+        const responseText = pickGratitudeReply(rawMessage);
+        await this.conversationService.appendMessages(conversationId, [
+          {
+            role: 'assistant',
+            content: responseText,
+            mode,
+            guidance: guidance ?? null,
+          },
+        ]);
+        const topicSuggestions = normalizeReturnedTopics(
+          conversation.topicSuggestions,
+        );
+        this.logger.log(
+          `Gratitude acknowledgment for conversation ${conversationId} (skipped LLM)`,
+        );
+        return {
+          response: responseText,
+          conversationId,
+          topicSuggestions,
+          provider: llm.id,
+          mode,
+          guidance,
+        };
+      }
+
+      const [
+        courseMaterial,
+        resolvedCourseName,
+        enrolledCourses,
+        userMessageCount,
+        dbHistoryIncludingCurrent,
+      ] = await Promise.all([
+        this.contextService.getContext(courseId, message, {
+          sectionId: conversation.sectionId,
+          sectionNumber: conversation.sectionNumber,
+          sectionName: conversation.sectionName,
+        }),
+        this.contextService.resolveCourseName(courseId, courseName),
+        moodleUserId
+          ? this.contextService.getEnrolledCourseNames(moodleUserId)
+          : Promise.resolve([]),
+        this.conversationService.countUserMessages(conversationId),
+        this.conversationService.getRecentHistory(conversationId, 20),
+      ]);
+
+      // Current user message is already persisted — exclude it from LLM history
+      // and from "conversation started" / greeting gating.
+      const dbHistory =
+        dbHistoryIncludingCurrent.length &&
+        dbHistoryIncludingCurrent[dbHistoryIncludingCurrent.length - 1].role ===
+          'user'
+          ? dbHistoryIncludingCurrent.slice(0, -1)
+          : dbHistoryIncludingCurrent;
+      const conversationStarted = userMessageCount > 1;
+      const canProposeContent =
+        Boolean(moodleUserId) && courseId > 1 && Boolean(courseMaterial);
+      const mayGreet =
+        !conversationStarted && (conversation.type ?? 'general') === 'general';
+      const priorUserTurns = Math.max(0, userMessageCount - 1);
+      const systemInstruction = buildSystemPrompt({
+        courseId,
+        courseName: resolvedCourseName,
+        userFirstName,
+        enrolledCourses,
+        conversationTitle: conversation.title,
+        conversationType: conversation.type ?? 'general',
+        sectionName: conversation.sectionName,
+        courseMaterial,
+        canProposeContent,
+        mode,
+        guidance,
+        conversationStarted,
+      });
+      const providerHistory = normalizeHistoryForLlm(dbHistory, userFirstName);
+      const debugSecondTurn = shouldLogGreetingDebug(priorUserTurns);
+
+      if (debugSecondTurn) {
+        logGreetingDebug(
+          'REQUEST',
+          [
+            `conversationId: ${conversationId}`,
+            `conversationType: ${conversation.type ?? 'general'}`,
+            `priorUserTurns: ${priorUserTurns}`,
+            `allowGreeting: ${mayGreet}`,
+            `providerId: ${llm.id}`,
+            '',
+            '----- SYSTEM PROMPT -----',
+            systemInstruction,
+            '',
+            '----- HISTORY (DB, unchanged) -----',
+            formatHistoryForLog(dbHistory),
+            '',
+            '----- HISTORY (SENT TO PROVIDER, normalized) -----',
+            formatHistoryForLog(providerHistory),
+            '',
+            '----- USER MESSAGE -----',
+            messageForLlm,
+          ].join('\n'),
+        );
+      }
+
+      this.logger.log(
+        `Sending message for conversation ${conversationId} via ${llm.id}`,
+      );
+      const tools: LlmTool[] = [];
+      if (canProposeContent) {
+        tools.push(...STUDY_PROPOSAL_TOOLS);
+      }
+      if (linkBatch?.results.some((r) => r.ok)) {
+        tools.push(SUGGEST_OPENABLE_LINKS_TOOL);
+      }
+      const hasLinkedPageContent = Boolean(linkBatch?.results.some((r) => r.ok));
+      const result = await llm.chat({
+        systemInstruction,
+        history: providerHistory,
+        message: messageForLlm,
+        tools: tools.length ? tools : undefined,
+        relaxDangerousContentSafety: hasLinkedPageContent,
+      });
+
+      if (debugSecondTurn) {
+        logGreetingDebug(
+          'RAW PROVIDER RESPONSE',
+          [
+            `conversationId: ${conversationId}`,
+            `providerId: ${llm.id}`,
+            `toolCalls: ${JSON.stringify(result.toolCalls ?? [])}`,
+            '',
+            '----- RAW PROVIDER RESPONSE -----',
+            result.text ?? '(empty text)',
+          ].join('\n'),
+        );
+      }
+
+      const functionCalls = result.toolCalls ?? [];
+
+      let responseText = '';
+      let pendingAction: PendingActionDto | undefined;
+      let suggestedLinks: SuggestedLink[] = [];
+
+      const proposeQuizCall = functionCalls.find(
+        (call) => call.name === 'propose_practice_quiz',
+      );
+      const proposeGuideCall = functionCalls.find(
+        (call) => call.name === 'propose_study_guide',
+      );
+      const proposeFlashcardsCall = functionCalls.find(
+        (call) => call.name === 'propose_flashcards',
+      );
+      const suggestLinksCall = functionCalls.find(
+        (call) => call.name === 'suggest_openable_links',
+      );
+
+      const suggestToolArgs = (suggestLinksCall?.args ?? null) as {
+        links?: Array<{ title?: unknown; url?: unknown; teaser?: unknown }>;
+      } | null;
+
+      if (proposeQuizCall && moodleUserId && courseId > 1) {
+        const args = (proposeQuizCall.args ?? {}) as {
+          title?: string;
+          scopeSummary?: string;
+          questionCount?: number;
+          countSpecifiedByStudent?: boolean;
+          difficulty?: string;
+        };
+        const requestedCount =
+          typeof args.questionCount === 'number'
+            ? args.questionCount
+            : Number(args.questionCount);
+        const countSpecifiedByStudent = args.countSpecifiedByStudent === true;
+        const questionCount = clampQuestionCount(
+          requestedCount,
+          countSpecifiedByStudent,
+        );
+        const exceededMax =
+          countSpecifiedByStudent &&
+          Number.isFinite(requestedCount) &&
+          Math.round(requestedCount) > QUIZ_QUESTION_COUNT_EXPLICIT_MAX;
+        const title =
+          stripKindTitlePrefix((args.title ?? '').trim()) || 'Practice topics';
+        const scopeSummary =
+          (args.scopeSummary ?? '').trim() ||
+          'Course material from the current conversation';
+        const difficulty = normalizeQuizDifficulty(args.difficulty);
+
+        const action = await this.pendingActionService.createPracticeQuizProposal({
+          conversationId,
+          courseId,
+          moodleUserId,
+          payload: {
+            title,
+            scopeSummary,
+            questionCount,
+            difficulty,
+            sectionId: conversation.sectionId,
+            sectionNumber: conversation.sectionNumber,
+            sectionName: conversation.sectionName,
+          },
+        });
+
+        pendingAction = {
+          id: action.id,
+          type: 'practice_quiz',
+          title,
+          questionCount,
+          difficulty,
+          scopeSummary,
+        };
+
+        responseText = buildProposalMessage({
+          title,
+          questionCount,
+          scopeSummary,
+          difficulty,
+          requestedCount: exceededMax ? Math.round(requestedCount) : undefined,
+        });
+      } else if (proposeGuideCall && moodleUserId && courseId > 1) {
+        const args = (proposeGuideCall.args ?? {}) as {
+          title?: string;
+          scopeSummary?: string;
+        };
+        const title =
+          stripKindTitlePrefix((args.title ?? '').trim()) || 'Course review';
+        const scopeSummary =
+          (args.scopeSummary ?? '').trim() ||
+          'Course material from the current conversation';
+
+        const action = await this.pendingActionService.createStudyGuideProposal({
+          conversationId,
+          courseId,
+          moodleUserId,
+          payload: {
+            title,
+            scopeSummary,
+            sectionId: conversation.sectionId,
+            sectionNumber: conversation.sectionNumber,
+            sectionName: conversation.sectionName,
+          },
+        });
+
+        pendingAction = {
+          id: action.id,
+          type: 'study_guide',
+          title,
+          scopeSummary,
+        };
+
+        responseText = buildStudyGuideProposalMessage({ title, scopeSummary });
+      } else if (proposeFlashcardsCall && moodleUserId && courseId > 1) {
+        const args = (proposeFlashcardsCall.args ?? {}) as {
+          title?: string;
+          scopeSummary?: string;
+          cardCount?: number;
+          countSpecifiedByStudent?: boolean;
+        };
+        const requestedCount =
+          typeof args.cardCount === 'number'
+            ? args.cardCount
+            : Number(args.cardCount);
+        const countSpecifiedByStudent = args.countSpecifiedByStudent === true;
+        const cardCount = clampCardCount(
+          requestedCount,
+          countSpecifiedByStudent,
+        );
+        const exceededMax =
+          countSpecifiedByStudent &&
+          Number.isFinite(requestedCount) &&
+          Math.round(requestedCount) > FLASHCARD_COUNT_EXPLICIT_MAX;
+        const title =
+          stripKindTitlePrefix((args.title ?? '').trim()) || 'Key terms';
+        const scopeSummary =
+          (args.scopeSummary ?? '').trim() ||
+          'Course material from the current conversation';
+
+        const action = await this.pendingActionService.createFlashcardsProposal({
+          conversationId,
+          courseId,
+          moodleUserId,
+          payload: {
+            title,
+            scopeSummary,
+            cardCount,
+            sectionId: conversation.sectionId,
+            sectionNumber: conversation.sectionNumber,
+            sectionName: conversation.sectionName,
+          },
+        });
+
+        pendingAction = {
+          id: action.id,
+          type: 'flashcards',
+          title,
+          cardCount,
+          scopeSummary,
+        };
+
+        responseText = buildFlashcardsProposalMessage({
+          title,
+          scopeSummary,
+          cardCount,
+          requestedCount: exceededMax ? Math.round(requestedCount) : undefined,
+        });
+      } else {
+        let modelText = result.text?.trim() ?? '';
+        if (linkBatch?.results.some((r) => r.ok)) {
+          suggestedLinks = await buildSuggestedLinks({
+            batch: linkBatch,
+            toolArgs: suggestToolArgs,
+            responseText: modelText,
+          });
+        }
+
+        if (!modelText && suggestedLinks.length) {
+          modelText = buildSuggestedLinksReply(suggestedLinks, linkBatch ?? undefined);
+          this.logger.log(
+            `Synthesized link-recommendation reply for conversation ${conversationId} from suggest_openable_links (${suggestedLinks.length} links)`,
+          );
+        } else if (!modelText && linkBatch?.results.some((r) => r.ok)) {
+          suggestedLinks = await pickOutboundSuggestedLinks(linkBatch);
+          if (suggestedLinks.length) {
+            modelText = buildSuggestedLinksReply(suggestedLinks, linkBatch, {
+              degraded: true,
+            });
+            this.logger.log(
+              `Degraded outbound-link reply for conversation ${conversationId}` +
+                ` after empty LLM (finishReason=${result.finishReason ?? 'n/a'}, ${suggestedLinks.length} links)`,
+            );
+          } else {
+            this.logger.warn(
+              `Empty LLM text for conversation ${conversationId} via ${llm.id}` +
+                ` (finishReason=${result.finishReason ?? 'n/a'}, toolCalls=${JSON.stringify(
+                  functionCalls.map((c) => c.name),
+                )})`,
+            );
+            modelText = emptyLlmFallback(result.finishReason);
+          }
+        } else if (!modelText) {
+          this.logger.warn(
+            `Empty LLM text for conversation ${conversationId} via ${llm.id}` +
+              ` (finishReason=${result.finishReason ?? 'n/a'}, toolCalls=${JSON.stringify(
+                functionCalls.map((c) => c.name),
+              )})`,
+          );
+          modelText = emptyLlmFallback(result.finishReason);
+        }
+
+        responseText = preventRepeatedGreeting(
+          modelText,
+          !mayGreet,
+          userFirstName,
+        );
+        if (debugSecondTurn) {
+          logGreetingDebug(
+            'POST-PROCESS',
+            [
+              `conversationId: ${conversationId}`,
+              `allowGreeting: ${mayGreet}`,
+              `preventRepeatedGreetingApplied: ${!mayGreet}`,
+              `suggestedLinks: ${suggestedLinks.length}`,
+              '',
+              '----- FINAL RESPONSE AFTER PROCESSING -----',
+              responseText,
+            ].join('\n'),
+          );
+        }
+      }
+
+      if (
+        !suggestedLinks.length &&
+        linkBatch?.results.some((r) => r.ok)
+      ) {
+        suggestedLinks = await buildSuggestedLinks({
+          batch: linkBatch,
+          toolArgs: suggestToolArgs,
+          responseText,
+        });
+      }
+
+      await this.conversationService.appendMessages(conversationId, [
+        {
+          role: 'assistant',
+          content: responseText,
+          mode,
+          guidance: guidance ?? null,
+        },
+      ]);
+
+      let topicSuggestions = normalizeReturnedTopics(conversation.topicSuggestions);
+
+      if (courseId > 1 && message.trim()) {
+        const historyForTopics = [
+          ...dbHistory.slice(-6),
+          { role: 'user' as const, content: message },
+          { role: 'assistant' as const, content: responseText },
+        ];
+        const refreshed = await this.topicSuggestions.suggestTopics(
+          {
+            courseName: resolvedCourseName,
+            sectionName: conversation.sectionName,
+            recentTurns: historyForTopics,
+          },
+          llm,
+        );
+        if (refreshed.length) {
+          topicSuggestions =
+            await this.conversationService.updateTopicSuggestions(
+              conversationId,
+              refreshed,
+            );
+        }
+      }
+
+      return {
+        response: responseText,
+        conversationId,
+        pendingAction,
+        suggestedLinks: suggestedLinks.length ? suggestedLinks : undefined,
+        topicSuggestions,
+        provider: llm.id,
+        mode,
+        guidance,
+        attachmentWarnings: (() => {
+          const warnings = [
+            ...processedAttachments.errors,
+            ...linkWarnings,
+          ];
+          return warnings.length ? warnings : undefined;
+        })(),
+      };
+    } finally {
+      await this.conversationService.setGeneratingStartedAt(conversationId, null);
+    }
+  }
+
+  /** Legacy single-call send: start then complete (tests / older clients). */
+  async sendMessage(dto: SendMessageDto): Promise<ChatResponse> {
+    const started = await this.startMessageTurn(dto);
+    return this.completeMessageTurn({
+      courseId: dto.courseId,
+      courseName: dto.courseName,
+      moodleUserId: dto.moodleUserId,
+      userFirstName: dto.userFirstName,
+      conversationId: started.conversationId,
+      userMessageId: started.userMessageId,
+      message: typeof dto.message === 'string' ? dto.message : '',
+      attachmentIds: dto.attachmentIds,
+      provider: dto.provider,
+      mode: dto.mode,
+      guidance: dto.guidance,
+    });
   }
 
   async confirmAction(

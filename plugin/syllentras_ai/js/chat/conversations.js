@@ -64,6 +64,9 @@ function loadCurrentHistory(options) {
                 pinnedToBottom = false;
             }
         }
+        if (typeof applyGeneratingStateFromHistoryPage === 'function') {
+            applyGeneratingStateFromHistoryPage(page);
+        }
         return loadPendingActionForConversation()
             .then(loadReviewOfferForConversation)
             .then(function () {
@@ -79,6 +82,9 @@ function loadCurrentHistory(options) {
     })
     .finally(function () {
         loadingHistory = false;
+        if (typeof flushPeerSyncQueue === 'function') {
+            flushPeerSyncQueue();
+        }
     });
 }
 
@@ -440,7 +446,12 @@ function createManualConversation(title) {
     })
     .then(function (conversation) {
         cancelNewConversation();
-        return setActiveConversation(conversation).then(loadConversations);
+        return setActiveConversation(conversation).then(function () {
+            if (typeof broadcastChatSync === 'function') {
+                broadcastChatSync('conversation-list-changed', conversation.id);
+            }
+            return loadConversations();
+        });
     });
 }
 
@@ -489,7 +500,7 @@ function sendMessage() {
 
     var displayText = text || (hasAttachments ? 'Please review the attached file(s).' : '');
     var sentAt = new Date().toISOString();
-    appendMessage('user', displayText, {
+    var userEl = appendMessage('user', displayText, {
         attachmentNames: attachmentNames,
         createdAt: sentAt,
         forceScroll: true,
@@ -529,9 +540,51 @@ function sendMessage() {
         body.guidance = getSelectedGuidance();
     }
 
-    fetchJson('/chat/message', {
+    var turnStarted = false;
+    var turnConversationId = conversationId;
+
+    fetchJson('/chat/message/start', {
         method: 'POST',
         body: JSON.stringify(body)
+    })
+    .then(function (started) {
+        turnStarted = true;
+        conversationId = started.conversationId || conversationId;
+        turnConversationId = conversationId;
+        if (userEl && started.userMessageId) {
+            userEl.dataset.messageId = String(started.userMessageId);
+        }
+        if (Array.isArray(started.attachmentWarnings) && started.attachmentWarnings.length) {
+            if (typeof appendSystemNotice === 'function') {
+                appendSystemNotice(started.attachmentWarnings.join(' '));
+            }
+        }
+        if (typeof broadcastChatSync === 'function') {
+            broadcastChatSync('turn-started', conversationId);
+        }
+        var completeBody = {
+            courseId: courseId,
+            courseName: courseName || undefined,
+            moodleUserId: moodleUserId,
+            userFirstName: userFirstName || undefined,
+            conversationId: conversationId,
+            userMessageId: started.userMessageId,
+            message: text
+        };
+        if (attachmentIds.length) {
+            completeBody.attachmentIds = attachmentIds;
+        }
+        if (providerId) {
+            completeBody.provider = providerId;
+        }
+        completeBody.mode = body.mode;
+        if (body.mode === 'coach' && body.guidance != null) {
+            completeBody.guidance = body.guidance;
+        }
+        return fetchJson('/chat/message/complete', {
+            method: 'POST',
+            body: JSON.stringify(completeBody)
+        });
     })
     .then(function (data) {
         renderAssistantContent(loadingEl, data.response);
@@ -553,6 +606,7 @@ function sendMessage() {
             runMessageSearch(msgSearchInput.value);
         }
         conversationId = data.conversationId || conversationId;
+        turnConversationId = conversationId;
         if (Array.isArray(data.topicSuggestions)) {
             if (!activeConversation) activeConversation = { id: conversationId };
             activeConversation.topicSuggestions = data.topicSuggestions;
@@ -571,18 +625,36 @@ function sendMessage() {
         if (typeof stickToBottomIfNeeded === 'function') {
             stickToBottomIfNeeded({ afterLayout: true });
         }
+        if (typeof broadcastChatSync === 'function') {
+            broadcastChatSync('messages-updated', conversationId);
+            if (data.pendingAction) {
+                broadcastChatSync('pending-action-changed', conversationId);
+            }
+            broadcastChatSync('conversation-list-changed', conversationId);
+        }
         return loadConversations();
     })
     .catch(function (err) {
-        loadingEl.className = 'syllentras-msg error';
-        loadingEl.textContent = (err && err.message)
-            ? err.message
-            : 'Something went wrong. Please try again.';
-        if (typeof stickToBottomIfNeeded === 'function') {
-            stickToBottomIfNeeded({ afterLayout: true });
+        if (!turnStarted) {
+            if (userEl && userEl.parentNode) userEl.remove();
+            if (loadingEl && loadingEl.parentNode) loadingEl.remove();
+            if (typeof rebuildChatTimeline === 'function') {
+                rebuildChatTimeline();
+            }
+        } else {
+            loadingEl.className = 'syllentras-msg error';
+            loadingEl.textContent = (err && err.message)
+                ? err.message
+                : 'Something went wrong. Please try again.';
+            if (typeof stickToBottomIfNeeded === 'function') {
+                stickToBottomIfNeeded({ afterLayout: true });
+            }
         }
     })
     .finally(function () {
+        if (turnStarted && typeof broadcastChatSync === 'function') {
+            broadcastChatSync('turn-finished', turnConversationId);
+        }
         send.disabled = false;
         setGeneratingState(false);
         input.focus();

@@ -137,7 +137,16 @@ function confirmDeleteConversation() {
             // Reload history so the fresh welcome bubble shows up after clear.
             if (conversation.id === conversationId) {
                 return setActiveConversation(result.conversation || conversation)
-                    .then(loadConversations);
+                    .then(function () {
+                        if (typeof broadcastChatSync === 'function') {
+                            broadcastChatSync('messages-updated', conversation.id);
+                            broadcastChatSync('conversation-list-changed', conversation.id);
+                        }
+                        return loadConversations();
+                    });
+            }
+            if (typeof broadcastChatSync === 'function') {
+                broadcastChatSync('conversation-list-changed', conversation.id);
             }
             return loadConversations();
         }
@@ -147,7 +156,15 @@ function confirmDeleteConversation() {
             conversationId = null;
             activeConversation = null;
             persistLastConversationId(null);
-            return openConversation({ type: 'general', title: generalChatTitle() });
+            return openConversation({ type: 'general', title: generalChatTitle() })
+                .then(function () {
+                    if (typeof broadcastChatSync === 'function') {
+                        broadcastChatSync('conversation-list-changed', conversation.id);
+                    }
+                });
+        }
+        if (typeof broadcastChatSync === 'function') {
+            broadcastChatSync('conversation-list-changed', conversation.id);
         }
         return loadConversations();
     });
@@ -183,6 +200,9 @@ function showRenameModal(conversation) {
                     .then(function (updated) {
                         closeModal();
                         if (conversation.id === conversationId) setActiveConversation(updated);
+                        if (typeof broadcastChatSync === 'function') {
+                            broadcastChatSync('conversation-list-changed', conversation.id);
+                        }
                         return loadConversations();
                     })
                     .catch(function () {
@@ -200,6 +220,9 @@ function togglePinConversation(conversation) {
     updateConversation(conversation.id, { pinned: !conversation.pinned })
         .then(function (updated) {
             if (conversation.id === conversationId) activeConversation = updated;
+            if (typeof broadcastChatSync === 'function') {
+                broadcastChatSync('conversation-list-changed', conversation.id);
+            }
             return loadConversations();
         })
         .catch(function () {

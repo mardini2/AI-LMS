@@ -61,3 +61,11 @@ export interface ChatResponse {
   /** Non-fatal per-file upload/parse issues (unsupported, empty, etc.). */
   attachmentWarnings?: string[];
 }
+
+/** Response from POST /chat/message/start (user message persisted). */
+export interface StartMessageTurnResponse {
+  conversationId: string;
+  userMessageId: string;
+  generatingStartedAt: string;
+  attachmentWarnings?: string[];
+}

@@ -34,6 +34,8 @@ export interface MessagePageItem {
 export interface MessagesPageResult {
   messages: MessagePageItem[];
   hasMore: boolean;
+  /** Present when a persist-first turn is mid-flight. */
+  generatingStartedAt?: Date | null;
 }
 
 export interface ConversationOpenOptions {
@@ -61,6 +63,8 @@ export interface ConversationSummary {
   updatedAt: Date;
   /** Last student message — null until they type (welcome alone doesn't count). */
   lastUserMessageAt?: Date | null;
+  /** Present when a persist-first turn is mid-flight. */
+  generatingStartedAt?: Date | null;
 }
 
 export interface ConversationSearchResult {
@@ -504,6 +508,7 @@ export class ConversationService {
         attachments: attachmentMap.get(m.id) || [],
       })),
       hasMore,
+      generatingStartedAt: conversation.generatingStartedAt ?? null,
     };
   }
 
@@ -547,10 +552,39 @@ export class ConversationService {
 
   /** True once the student has sent at least one message in this conversation. */
   async hasUserMessages(conversationId: string): Promise<boolean> {
-    const count = await this.messageRepo.count({
+    const count = await this.countUserMessages(conversationId);
+    return count > 0;
+  }
+
+  async countUserMessages(conversationId: string): Promise<number> {
+    return this.messageRepo.count({
       where: { conversationId, role: 'user' },
     });
-    return count > 0;
+  }
+
+  async findMessage(
+    conversationId: string,
+    messageId: string,
+  ): Promise<Message> {
+    const message = await this.messageRepo.findOne({
+      where: { id: messageId, conversationId },
+    });
+    if (!message) {
+      throw new NotFoundException(
+        `Message ${messageId} not found in conversation ${conversationId}`,
+      );
+    }
+    return message;
+  }
+
+  async setGeneratingStartedAt(
+    conversationId: string,
+    at: Date | null,
+  ): Promise<void> {
+    await this.conversationRepo.update(
+      { id: conversationId },
+      { generatingStartedAt: at },
+    );
   }
 
   async appendMessages(
@@ -658,6 +692,7 @@ function toSummary(conversation: Conversation): ConversationSummary {
     createdAt: conversation.createdAt,
     updatedAt: conversation.updatedAt,
     lastUserMessageAt: null,
+    generatingStartedAt: conversation.generatingStartedAt ?? null,
   };
 }
 

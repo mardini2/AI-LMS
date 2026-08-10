@@ -48,6 +48,9 @@ function attachReviewOffer(messageEl, offer) {
             if (data.response) {
                 appendMessage('assistant', data.response);
             }
+            if (typeof broadcastChatSync === 'function') {
+                broadcastChatSync('messages-updated', conversationId);
+            }
         })
         .catch(function (err) {
             explainBtn.disabled = false;
