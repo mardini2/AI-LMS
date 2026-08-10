@@ -11,7 +11,7 @@ expandBtn.addEventListener('click', function () {
 resetBtn.addEventListener('click', resetPanelLayout);
 
 btn.addEventListener('click', function () {
-    openConversation({ type: 'general', title: generalChatTitle() });
+    openLastOrGeneralConversation();
 });
 
 close.addEventListener('click', function () {

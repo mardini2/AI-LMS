@@ -1,6 +1,30 @@
 // Part of the Syllentras chat widget.
 // Included inside the shared IIFE from before_footer.php — do not load standalone.
 
+function lastConversationStorageKey() {
+    return 'syllentras_last_conversation_' + moodleUserId + '_' + courseId;
+}
+
+function persistLastConversationId(id) {
+    try {
+        if (id) {
+            localStorage.setItem(lastConversationStorageKey(), String(id));
+        } else {
+            localStorage.removeItem(lastConversationStorageKey());
+        }
+    } catch (e) {
+        // Ignore quota / private-mode failures.
+    }
+}
+
+function readLastConversationId() {
+    try {
+        return localStorage.getItem(lastConversationStorageKey()) || null;
+    } catch (e) {
+        return null;
+    }
+}
+
 function setActiveConversation(conversation, options) {
     options = options || {};
     activeConversation = conversation;
@@ -8,6 +32,7 @@ function setActiveConversation(conversation, options) {
         activeConversation.topicSuggestions = conversation.topicSuggestions;
     }
     conversationId = conversation.id;
+    persistLastConversationId(conversationId);
     activeTitle.textContent = displayConversationTitle(conversation);
     activeTag.textContent = displayConversationTag(conversation);
     if (typeof closeMessageSearch === 'function') {
@@ -128,6 +153,25 @@ function openConversation(options) {
         appendMessage('error', 'Could not open the conversation.', { scroll: false });
         return endMessageListSettle({ scrollToBottom: false });
     });
+}
+
+/** Reopen the last viewed chat, or Main/Home if none is available. */
+function openLastOrGeneralConversation() {
+    if (conversationId) {
+        showPanel();
+        input.focus();
+        return Promise.resolve();
+    }
+
+    var lastId = readLastConversationId();
+    if (lastId) {
+        return openConversationById(lastId).catch(function () {
+            persistLastConversationId(null);
+            return openConversation({ type: 'general', title: generalChatTitle() });
+        });
+    }
+
+    return openConversation({ type: 'general', title: generalChatTitle() });
 }
 
 function openConversationById(id, options) {

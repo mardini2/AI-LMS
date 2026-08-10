@@ -146,6 +146,7 @@ function confirmDeleteConversation() {
             clearMessages();
             conversationId = null;
             activeConversation = null;
+            persistLastConversationId(null);
             return openConversation({ type: 'general', title: generalChatTitle() });
         }
         return loadConversations();
