@@ -38,6 +38,7 @@ var input     = document.getElementById('syllentras-chat-input');
 var send      = document.getElementById('syllentras-chat-send');
 var toolsBtn  = document.getElementById('syllentras-chat-tools-btn');
 var msgs      = document.getElementById('syllentras-chat-messages');
+var scrollBottomBtn = document.getElementById('syllentras-scroll-bottom-btn');
 var loadMore  = document.getElementById('syllentras-chat-load-more');
 var courseEl  = document.getElementById('syllentras-chat-course');
 var header    = document.getElementById('syllentras-chat-header');
@@ -1345,7 +1346,11 @@ function attachPendingAction(messageEl, pendingAction) {
     actions.appendChild(cancelBtn);
     wrap.appendChild(actions);
     messageEl.appendChild(wrap);
-    msgs.scrollTop = msgs.scrollHeight;
+    if (typeof stickToBottomIfNeeded === 'function') {
+        stickToBottomIfNeeded({ afterLayout: true });
+    } else {
+        msgs.scrollTop = msgs.scrollHeight;
+    }
 }
 
 function loadPendingActionForConversation() {
@@ -1476,7 +1481,11 @@ function attachReviewOffer(messageEl, offer) {
 
     wrap.appendChild(explainBtn);
     messageEl.appendChild(wrap);
-    msgs.scrollTop = msgs.scrollHeight;
+    if (typeof stickToBottomIfNeeded === 'function') {
+        stickToBottomIfNeeded({ afterLayout: true });
+    } else {
+        msgs.scrollTop = msgs.scrollHeight;
+    }
 }
 
 function loadReviewOfferForConversation() {
@@ -3493,6 +3502,12 @@ function rebuildChatTimeline() {
 
 var messageFlashTimer = null;
 var messageMarkFadeTimer = null;
+var STICK_BOTTOM_THRESHOLD_PX = 80;
+// Track whether the viewer is pinned to the latest messages so content growth
+// can follow along without yanking someone who scrolled up to read history.
+var pinnedToBottom = true;
+// While history is painting, hide the list and defer stick-scrolls until one settle.
+var historySettlePending = false;
 
 function normalizeMessageMode(mode) {
     if (mode === 'coach') return 'coach';
@@ -3519,7 +3534,15 @@ function appendSystemNotice(text, options) {
     div.className = 'syllentras-msg system';
     div.textContent = text;
     msgs.appendChild(div);
-    if (options.scroll !== false) msgs.scrollTop = msgs.scrollHeight;
+    if (options.scroll !== false) {
+        if (options.forceScroll) {
+            scrollToBottom();
+        } else {
+            stickToBottomIfNeeded();
+        }
+    } else {
+        updateScrollBottomButton();
+    }
     return div;
 }
 
@@ -3564,7 +3587,15 @@ function appendMessage(role, text, options) {
     if (options.skipTimeline !== true && typeof rebuildChatTimeline === 'function') {
         rebuildChatTimeline();
     }
-    if (options.scroll !== false) msgs.scrollTop = msgs.scrollHeight;
+    if (options.scroll !== false) {
+        if (options.forceScroll) {
+            scrollToBottom();
+        } else {
+            stickToBottomIfNeeded();
+        }
+    } else {
+        updateScrollBottomButton();
+    }
     return div;
 }
 
@@ -3602,6 +3633,8 @@ function clearMessages() {
     if (typeof updateMessageSearchCount === 'function') {
         updateMessageSearchCount();
     }
+    pinnedToBottom = true;
+    updateScrollBottomButton();
 }
 
 function getOldestMessageCreatedAt() {
@@ -3609,8 +3642,91 @@ function getOldestMessageCreatedAt() {
     return nodes.length ? nodes[0].dataset.createdAt : null;
 }
 
-function scrollToBottom() {
-    msgs.scrollTop = msgs.scrollHeight;
+function isNearBottom() {
+    if (!msgs) return true;
+    return msgs.scrollHeight - msgs.scrollTop - msgs.clientHeight <= STICK_BOTTOM_THRESHOLD_PX;
+}
+
+function updateScrollBottomButton() {
+    if (!scrollBottomBtn || !msgs) return;
+    var canScroll = msgs.scrollHeight > msgs.clientHeight + 4;
+    var show = canScroll && !isNearBottom();
+    scrollBottomBtn.hidden = !show;
+}
+
+function syncPinnedToBottomFromScroll() {
+    pinnedToBottom = isNearBottom();
+    updateScrollBottomButton();
+}
+
+function scrollToBottom(options) {
+    options = options || {};
+    if (!msgs) return;
+    pinnedToBottom = true;
+    var apply = function () {
+        if (options.smooth && typeof msgs.scrollTo === 'function') {
+            msgs.scrollTo({ top: msgs.scrollHeight, behavior: 'smooth' });
+        } else {
+            msgs.scrollTop = msgs.scrollHeight;
+        }
+        updateScrollBottomButton();
+    };
+    if (options.afterLayout) {
+        requestAnimationFrame(function () {
+            apply();
+            // Second frame catches late layout from markdown / chips.
+            requestAnimationFrame(function () {
+                apply();
+                if (typeof options.onDone === 'function') {
+                    options.onDone();
+                }
+            });
+        });
+    } else {
+        apply();
+        if (typeof options.onDone === 'function') {
+            options.onDone();
+        }
+    }
+}
+
+function stickToBottomIfNeeded(options) {
+    // History open settles once at the end — skip intermediate jumps.
+    if (historySettlePending) return;
+    if (pinnedToBottom || isNearBottom()) {
+        scrollToBottom(options);
+    } else {
+        updateScrollBottomButton();
+    }
+}
+
+function beginMessageListSettle() {
+    historySettlePending = true;
+    if (msgs) {
+        msgs.classList.add('syllentras-messages-settling');
+    }
+    if (scrollBottomBtn) {
+        scrollBottomBtn.hidden = true;
+    }
+}
+
+function endMessageListSettle(options) {
+    options = options || {};
+    return new Promise(function (resolve) {
+        function finish() {
+            historySettlePending = false;
+            if (msgs) {
+                msgs.classList.remove('syllentras-messages-settling');
+            }
+            updateScrollBottomButton();
+            resolve();
+        }
+        if (options.scrollToBottom) {
+            scrollToBottom({ afterLayout: true, onDone: finish });
+        } else {
+            finish();
+        }
+    });
 }
 
 function renderMessageBatch(messages, prepend) {
@@ -3825,6 +3941,7 @@ function setActiveConversation(conversation, options) {
         closeMessageSearch();
     }
     clearMessages();
+    beginMessageListSettle();
     hasMore = false;
     loadingHistory = false;
     updateActiveConversationButtons();
@@ -3833,7 +3950,9 @@ function setActiveConversation(conversation, options) {
 
 function loadCurrentHistory(options) {
     options = options || {};
-    if (!conversationId || loadingHistory) return Promise.resolve();
+    if (!conversationId || loadingHistory) {
+        return endMessageListSettle({ scrollToBottom: false });
+    }
     loadingHistory = true;
 
     return fetchJson('/conversations/' + encodeURIComponent(conversationId)
@@ -3843,15 +3962,22 @@ function loadCurrentHistory(options) {
         if (page.messages && page.messages.length) {
             renderMessageBatch(page.messages, false);
             hasMore = !!page.hasMore;
-            // Skip jumping to the bottom when a search hit is about to scroll us elsewhere.
-            if (!options.deferScroll) {
-                scrollToBottom();
+            if (options.deferScroll) {
+                pinnedToBottom = false;
             }
         }
-        return loadPendingActionForConversation().then(loadReviewOfferForConversation);
+        return loadPendingActionForConversation()
+            .then(loadReviewOfferForConversation)
+            .then(function () {
+                // One settle after content + pending/review UI — avoids reopen jumpiness.
+                return endMessageListSettle({
+                    scrollToBottom: !options.deferScroll
+                });
+            });
     })
     .catch(function () {
         appendMessage('error', 'Could not load chat history.', { scroll: false });
+        return endMessageListSettle({ scrollToBottom: false });
     })
     .finally(function () {
         loadingHistory = false;
@@ -3900,6 +4026,9 @@ function loadOlderMessages() {
         loadingOlder = false;
         loadMore.hidden = true;
         loadOlderMessagesInFlight = null;
+        if (typeof syncPinnedToBottomFromScroll === 'function') {
+            syncPinnedToBottomFromScroll();
+        }
     });
 
     return loadOlderMessagesInFlight;
@@ -3924,6 +4053,7 @@ function openConversation(options) {
     })
     .catch(function () {
         appendMessage('error', 'Could not open the conversation.', { scroll: false });
+        return endMessageListSettle({ scrollToBottom: false });
     });
 }
 
@@ -4245,11 +4375,13 @@ function sendMessage() {
     appendMessage('user', displayText, {
         attachmentNames: attachmentNames,
         createdAt: sentAt,
+        forceScroll: true,
         // Wait for the assistant placeholder so we only rebuild the timeline once.
         skipTimeline: true
     });
 
     var loadingEl = appendMessage('assistant', '...', {
+        forceScroll: true,
         skipTimeline: true
     });
     var pendingAssistantId = loadingEl.dataset.messageId || nextLocalMessageId();
@@ -4319,6 +4451,9 @@ function sendMessage() {
                 appendSystemNotice(data.attachmentWarnings.join(' '));
             }
         }
+        if (typeof stickToBottomIfNeeded === 'function') {
+            stickToBottomIfNeeded({ afterLayout: true });
+        }
         return loadConversations();
     })
     .catch(function (err) {
@@ -4326,6 +4461,9 @@ function sendMessage() {
         loadingEl.textContent = (err && err.message)
             ? err.message
             : 'Something went wrong. Please try again.';
+        if (typeof stickToBottomIfNeeded === 'function') {
+            stickToBottomIfNeeded({ afterLayout: true });
+        }
     })
     .finally(function () {
         send.disabled = false;
@@ -6624,10 +6762,19 @@ searchInput.addEventListener('input', function () {
 });
 
 msgs.addEventListener('scroll', function () {
+    if (typeof syncPinnedToBottomFromScroll === 'function') {
+        syncPinnedToBottomFromScroll();
+    }
     if (msgs.scrollTop === 0 && hasMore && !loadingOlder) {
         loadOlderMessages();
     }
 });
+
+if (scrollBottomBtn) {
+    scrollBottomBtn.addEventListener('click', function () {
+        scrollToBottom({ smooth: true });
+    });
+}
 
 header.addEventListener('pointerdown', function (e) {
     if (isMobileLayout() || e.button !== 0 || e.target.closest('button') || e.target.closest('.syllentras-display-wrap') || e.target.closest('.syllentras-panel-resize-handle')) return;

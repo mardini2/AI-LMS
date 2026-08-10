@@ -63,7 +63,11 @@ function attachReviewOffer(messageEl, offer) {
 
     wrap.appendChild(explainBtn);
     messageEl.appendChild(wrap);
-    msgs.scrollTop = msgs.scrollHeight;
+    if (typeof stickToBottomIfNeeded === 'function') {
+        stickToBottomIfNeeded({ afterLayout: true });
+    } else {
+        msgs.scrollTop = msgs.scrollHeight;
+    }
 }
 
 function loadReviewOfferForConversation() {

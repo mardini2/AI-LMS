@@ -23,6 +23,7 @@ var input     = document.getElementById('syllentras-chat-input');
 var send      = document.getElementById('syllentras-chat-send');
 var toolsBtn  = document.getElementById('syllentras-chat-tools-btn');
 var msgs      = document.getElementById('syllentras-chat-messages');
+var scrollBottomBtn = document.getElementById('syllentras-scroll-bottom-btn');
 var loadMore  = document.getElementById('syllentras-chat-load-more');
 var courseEl  = document.getElementById('syllentras-chat-course');
 var header    = document.getElementById('syllentras-chat-header');

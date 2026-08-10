@@ -253,7 +253,11 @@ function attachPendingAction(messageEl, pendingAction) {
     actions.appendChild(cancelBtn);
     wrap.appendChild(actions);
     messageEl.appendChild(wrap);
-    msgs.scrollTop = msgs.scrollHeight;
+    if (typeof stickToBottomIfNeeded === 'function') {
+        stickToBottomIfNeeded({ afterLayout: true });
+    } else {
+        msgs.scrollTop = msgs.scrollHeight;
+    }
 }
 
 function loadPendingActionForConversation() {

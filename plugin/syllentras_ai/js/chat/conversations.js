@@ -14,6 +14,7 @@ function setActiveConversation(conversation, options) {
         closeMessageSearch();
     }
     clearMessages();
+    beginMessageListSettle();
     hasMore = false;
     loadingHistory = false;
     updateActiveConversationButtons();
@@ -22,7 +23,9 @@ function setActiveConversation(conversation, options) {
 
 function loadCurrentHistory(options) {
     options = options || {};
-    if (!conversationId || loadingHistory) return Promise.resolve();
+    if (!conversationId || loadingHistory) {
+        return endMessageListSettle({ scrollToBottom: false });
+    }
     loadingHistory = true;
 
     return fetchJson('/conversations/' + encodeURIComponent(conversationId)
@@ -32,15 +35,22 @@ function loadCurrentHistory(options) {
         if (page.messages && page.messages.length) {
             renderMessageBatch(page.messages, false);
             hasMore = !!page.hasMore;
-            // Skip jumping to the bottom when a search hit is about to scroll us elsewhere.
-            if (!options.deferScroll) {
-                scrollToBottom();
+            if (options.deferScroll) {
+                pinnedToBottom = false;
             }
         }
-        return loadPendingActionForConversation().then(loadReviewOfferForConversation);
+        return loadPendingActionForConversation()
+            .then(loadReviewOfferForConversation)
+            .then(function () {
+                // One settle after content + pending/review UI — avoids reopen jumpiness.
+                return endMessageListSettle({
+                    scrollToBottom: !options.deferScroll
+                });
+            });
     })
     .catch(function () {
         appendMessage('error', 'Could not load chat history.', { scroll: false });
+        return endMessageListSettle({ scrollToBottom: false });
     })
     .finally(function () {
         loadingHistory = false;
@@ -89,6 +99,9 @@ function loadOlderMessages() {
         loadingOlder = false;
         loadMore.hidden = true;
         loadOlderMessagesInFlight = null;
+        if (typeof syncPinnedToBottomFromScroll === 'function') {
+            syncPinnedToBottomFromScroll();
+        }
     });
 
     return loadOlderMessagesInFlight;
@@ -113,6 +126,7 @@ function openConversation(options) {
     })
     .catch(function () {
         appendMessage('error', 'Could not open the conversation.', { scroll: false });
+        return endMessageListSettle({ scrollToBottom: false });
     });
 }
 
@@ -434,11 +448,13 @@ function sendMessage() {
     appendMessage('user', displayText, {
         attachmentNames: attachmentNames,
         createdAt: sentAt,
+        forceScroll: true,
         // Wait for the assistant placeholder so we only rebuild the timeline once.
         skipTimeline: true
     });
 
     var loadingEl = appendMessage('assistant', '...', {
+        forceScroll: true,
         skipTimeline: true
     });
     var pendingAssistantId = loadingEl.dataset.messageId || nextLocalMessageId();
@@ -508,6 +524,9 @@ function sendMessage() {
                 appendSystemNotice(data.attachmentWarnings.join(' '));
             }
         }
+        if (typeof stickToBottomIfNeeded === 'function') {
+            stickToBottomIfNeeded({ afterLayout: true });
+        }
         return loadConversations();
     })
     .catch(function (err) {
@@ -515,6 +534,9 @@ function sendMessage() {
         loadingEl.textContent = (err && err.message)
             ? err.message
             : 'Something went wrong. Please try again.';
+        if (typeof stickToBottomIfNeeded === 'function') {
+            stickToBottomIfNeeded({ afterLayout: true });
+        }
     })
     .finally(function () {
         send.disabled = false;

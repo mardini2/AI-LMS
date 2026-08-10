@@ -1341,6 +1341,14 @@
         box-shadow: inset 0 0 0 999px rgba(255, 214, 102, 0);
     }
 }
+.syllentras-chat-messages-wrap {
+    position: relative;
+    flex: 1;
+    min-height: 120px;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+}
 #syllentras-chat-messages {
     flex: 1;
     overflow-y: auto;
@@ -1349,12 +1357,46 @@
     flex-direction: column;
     /* Tight base gap; group-start / separators add the breathing room. */
     gap: 2px;
-    min-height: 120px;
+    min-height: 0;
     background:
         radial-gradient(120% 80% at 100% 0%, color-mix(in srgb, var(--syll-accent) 7%, transparent), transparent 55%),
         var(--syll-panel-bg);
     scrollbar-width: thin;
     scrollbar-color: var(--syll-border) transparent;
+}
+#syllentras-chat-messages.syllentras-messages-settling {
+    /* Keep layout (so scrollHeight is real) but hide the mid-load jump. */
+    visibility: hidden;
+}
+.syllentras-scroll-bottom-btn {
+    position: absolute;
+    right: 14px;
+    bottom: 12px;
+    z-index: 6;
+    width: 36px;
+    height: 36px;
+    padding: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 999px;
+    border: 1px solid var(--syll-border);
+    background: var(--syll-panel-bg, var(--syll-input-bg));
+    color: var(--syll-text);
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.14);
+    cursor: pointer;
+}
+.syllentras-scroll-bottom-btn[hidden] {
+    display: none !important;
+}
+.syllentras-scroll-bottom-btn:hover,
+.syllentras-scroll-bottom-btn:focus-visible {
+    border-color: var(--syll-surface-active-border, var(--syll-accent));
+    color: var(--syll-accent);
+    outline: none;
+}
+.syllentras-scroll-bottom-btn svg {
+    display: block;
 }
 #syllentras-chat-load-more {
     align-self: center;

@@ -112,8 +112,22 @@ defined('MOODLE_INTERNAL') || die();
                             aria-label="Matching messages"
                         ></div>
                     </div>
-                    <div id="syllentras-chat-messages" role="log" aria-live="polite">
-                        <div id="syllentras-chat-load-more" hidden>Loading...</div>
+                    <div class="syllentras-chat-messages-wrap">
+                        <div id="syllentras-chat-messages" role="log" aria-live="polite">
+                            <div id="syllentras-chat-load-more" hidden>Loading...</div>
+                        </div>
+                        <button
+                            type="button"
+                            id="syllentras-scroll-bottom-btn"
+                            class="syllentras-scroll-bottom-btn"
+                            hidden
+                            aria-label="Jump to latest messages"
+                            title="Jump to latest"
+                        >
+                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false">
+                                <path fill="currentColor" d="M12 16.5l-6-6 1.4-1.4L12 13.7l4.6-4.6L18 10.5l-6 6z"/>
+                            </svg>
+                        </button>
                     </div>
                     <div id="syllentras-chat-input-resizer" role="separator" aria-label="Resize message input" aria-orientation="horizontal"></div>
                     <div id="syllentras-chat-attachments" class="syllentras-chat-attachments" hidden>

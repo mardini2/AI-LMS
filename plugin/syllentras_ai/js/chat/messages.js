@@ -3,6 +3,12 @@
 
 var messageFlashTimer = null;
 var messageMarkFadeTimer = null;
+var STICK_BOTTOM_THRESHOLD_PX = 80;
+// Track whether the viewer is pinned to the latest messages so content growth
+// can follow along without yanking someone who scrolled up to read history.
+var pinnedToBottom = true;
+// While history is painting, hide the list and defer stick-scrolls until one settle.
+var historySettlePending = false;
 
 function normalizeMessageMode(mode) {
     if (mode === 'coach') return 'coach';
@@ -29,7 +35,15 @@ function appendSystemNotice(text, options) {
     div.className = 'syllentras-msg system';
     div.textContent = text;
     msgs.appendChild(div);
-    if (options.scroll !== false) msgs.scrollTop = msgs.scrollHeight;
+    if (options.scroll !== false) {
+        if (options.forceScroll) {
+            scrollToBottom();
+        } else {
+            stickToBottomIfNeeded();
+        }
+    } else {
+        updateScrollBottomButton();
+    }
     return div;
 }
 
@@ -74,7 +88,15 @@ function appendMessage(role, text, options) {
     if (options.skipTimeline !== true && typeof rebuildChatTimeline === 'function') {
         rebuildChatTimeline();
     }
-    if (options.scroll !== false) msgs.scrollTop = msgs.scrollHeight;
+    if (options.scroll !== false) {
+        if (options.forceScroll) {
+            scrollToBottom();
+        } else {
+            stickToBottomIfNeeded();
+        }
+    } else {
+        updateScrollBottomButton();
+    }
     return div;
 }
 
@@ -112,6 +134,8 @@ function clearMessages() {
     if (typeof updateMessageSearchCount === 'function') {
         updateMessageSearchCount();
     }
+    pinnedToBottom = true;
+    updateScrollBottomButton();
 }
 
 function getOldestMessageCreatedAt() {
@@ -119,8 +143,91 @@ function getOldestMessageCreatedAt() {
     return nodes.length ? nodes[0].dataset.createdAt : null;
 }
 
-function scrollToBottom() {
-    msgs.scrollTop = msgs.scrollHeight;
+function isNearBottom() {
+    if (!msgs) return true;
+    return msgs.scrollHeight - msgs.scrollTop - msgs.clientHeight <= STICK_BOTTOM_THRESHOLD_PX;
+}
+
+function updateScrollBottomButton() {
+    if (!scrollBottomBtn || !msgs) return;
+    var canScroll = msgs.scrollHeight > msgs.clientHeight + 4;
+    var show = canScroll && !isNearBottom();
+    scrollBottomBtn.hidden = !show;
+}
+
+function syncPinnedToBottomFromScroll() {
+    pinnedToBottom = isNearBottom();
+    updateScrollBottomButton();
+}
+
+function scrollToBottom(options) {
+    options = options || {};
+    if (!msgs) return;
+    pinnedToBottom = true;
+    var apply = function () {
+        if (options.smooth && typeof msgs.scrollTo === 'function') {
+            msgs.scrollTo({ top: msgs.scrollHeight, behavior: 'smooth' });
+        } else {
+            msgs.scrollTop = msgs.scrollHeight;
+        }
+        updateScrollBottomButton();
+    };
+    if (options.afterLayout) {
+        requestAnimationFrame(function () {
+            apply();
+            // Second frame catches late layout from markdown / chips.
+            requestAnimationFrame(function () {
+                apply();
+                if (typeof options.onDone === 'function') {
+                    options.onDone();
+                }
+            });
+        });
+    } else {
+        apply();
+        if (typeof options.onDone === 'function') {
+            options.onDone();
+        }
+    }
+}
+
+function stickToBottomIfNeeded(options) {
+    // History open settles once at the end — skip intermediate jumps.
+    if (historySettlePending) return;
+    if (pinnedToBottom || isNearBottom()) {
+        scrollToBottom(options);
+    } else {
+        updateScrollBottomButton();
+    }
+}
+
+function beginMessageListSettle() {
+    historySettlePending = true;
+    if (msgs) {
+        msgs.classList.add('syllentras-messages-settling');
+    }
+    if (scrollBottomBtn) {
+        scrollBottomBtn.hidden = true;
+    }
+}
+
+function endMessageListSettle(options) {
+    options = options || {};
+    return new Promise(function (resolve) {
+        function finish() {
+            historySettlePending = false;
+            if (msgs) {
+                msgs.classList.remove('syllentras-messages-settling');
+            }
+            updateScrollBottomButton();
+            resolve();
+        }
+        if (options.scrollToBottom) {
+            scrollToBottom({ afterLayout: true, onDone: finish });
+        } else {
+            finish();
+        }
+    });
 }
 
 function renderMessageBatch(messages, prepend) {

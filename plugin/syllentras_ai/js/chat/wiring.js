@@ -36,10 +36,19 @@ searchInput.addEventListener('input', function () {
 });
 
 msgs.addEventListener('scroll', function () {
+    if (typeof syncPinnedToBottomFromScroll === 'function') {
+        syncPinnedToBottomFromScroll();
+    }
     if (msgs.scrollTop === 0 && hasMore && !loadingOlder) {
         loadOlderMessages();
     }
 });
+
+if (scrollBottomBtn) {
+    scrollBottomBtn.addEventListener('click', function () {
+        scrollToBottom({ smooth: true });
+    });
+}
 
 header.addEventListener('pointerdown', function (e) {
     if (isMobileLayout() || e.button !== 0 || e.target.closest('button') || e.target.closest('.syllentras-display-wrap') || e.target.closest('.syllentras-panel-resize-handle')) return;
