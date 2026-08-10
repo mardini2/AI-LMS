@@ -455,6 +455,11 @@ function startMessageSpeech(el) {
         window.speechSynthesis.cancel();
     }
 
+    // Only one bubble can look "active" — clear the previous button if we switched.
+    if (speakingMessageEl && speakingMessageEl !== el) {
+        setSpeakButtonPlaying(speakingMessageEl, false);
+    }
+
     speakingMessageEl = el;
     setSpeakButtonPlaying(el, true);
 
