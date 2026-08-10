@@ -10,6 +10,7 @@ import { SynthesizeSpeechDto } from './dto/synthesize-speech.dto';
 import {
   AZURE_TTS_CONTENT_TYPE,
   AZURE_TTS_MAX_CHARS,
+  AZURE_TTS_VOICE_BY_LANG,
   AZURE_TTS_VOICE_FEMALE,
   AZURE_TTS_VOICE_MALE,
 } from './speech.constants';
@@ -47,6 +48,7 @@ describe('SpeechService / Azure TTS', () => {
     expect(client.synthesize).toHaveBeenCalledWith({
       text: 'Hello class',
       voiceName: AZURE_TTS_VOICE_FEMALE,
+      xmlLang: 'en-CA',
       speechKey: 'test-key',
       region: 'canadacentral',
     });
@@ -61,7 +63,58 @@ describe('SpeechService / Azure TTS', () => {
 
     await service.synthesize('Hi', 'ben');
     expect(client.synthesize).toHaveBeenCalledWith(
-      expect.objectContaining({ voiceName: AZURE_TTS_VOICE_MALE }),
+      expect.objectContaining({
+        voiceName: AZURE_TTS_VOICE_MALE,
+        xmlLang: 'en-CA',
+      }),
+    );
+  });
+
+  it('Azure enabled: French lang selects Denise/Henri and fr-FR SSML', async () => {
+    const { service, client } = buildService({
+      AZURE_TTS_ENABLED: true,
+      AZURE_SPEECH_KEY: 'test-key',
+      AZURE_SPEECH_REGION: 'canadacentral',
+    });
+
+    await service.synthesize('Bonjour la classe', 'grace', 'fr-FR');
+    expect(client.synthesize).toHaveBeenCalledWith(
+      expect.objectContaining({
+        voiceName: AZURE_TTS_VOICE_BY_LANG['fr-FR'].grace,
+        xmlLang: 'fr-FR',
+      }),
+    );
+
+    await service.synthesize('Bonjour', 'ben', 'fr-FR');
+    expect(client.synthesize).toHaveBeenCalledWith(
+      expect.objectContaining({
+        voiceName: AZURE_TTS_VOICE_BY_LANG['fr-FR'].ben,
+        xmlLang: 'fr-FR',
+      }),
+    );
+  });
+
+  it('Azure enabled: omitted or unknown lang falls back to English voices', async () => {
+    const { service, client } = buildService({
+      AZURE_TTS_ENABLED: true,
+      AZURE_SPEECH_KEY: 'test-key',
+      AZURE_SPEECH_REGION: 'canadacentral',
+    });
+
+    await service.synthesize('Hello', 'grace');
+    expect(client.synthesize).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        voiceName: AZURE_TTS_VOICE_FEMALE,
+        xmlLang: 'en-CA',
+      }),
+    );
+
+    await service.synthesize('Hello', 'grace', 'xx-YY');
+    expect(client.synthesize).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        voiceName: AZURE_TTS_VOICE_FEMALE,
+        xmlLang: 'en-CA',
+      }),
     );
   });
 
@@ -196,5 +249,20 @@ describe('SpeechService / Azure TTS', () => {
     });
     const hugeErrors = await validate(huge);
     expect(hugeErrors.length).toBeGreaterThan(0);
+  });
+
+  it('DTO accepts optional curated lang and rejects unknown lang', async () => {
+    const ok = plainToInstance(SynthesizeSpeechDto, {
+      text: 'Bonjour',
+      voice: 'grace',
+      lang: 'fr-FR',
+    });
+    expect(await validate(ok)).toHaveLength(0);
+
+    const bad = plainToInstance(SynthesizeSpeechDto, {
+      text: 'Hello',
+      lang: 'xx-YY',
+    });
+    expect((await validate(bad)).length).toBeGreaterThan(0);
   });
 });

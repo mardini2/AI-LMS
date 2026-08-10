@@ -1,5 +1,8 @@
 import { IsIn, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
-import { AZURE_TTS_MAX_CHARS } from '../speech.constants';
+import {
+  AZURE_TTS_MAX_CHARS,
+  AZURE_TTS_SUPPORTED_LANGS,
+} from '../speech.constants';
 
 export class SynthesizeSpeechDto {
   @IsString()
@@ -11,4 +14,10 @@ export class SynthesizeSpeechDto {
   @IsOptional()
   @IsIn(['grace', 'ben'])
   voice?: 'grace' | 'ben';
+
+  /** BCP-47 locale from per-message detection (or mic fallback). */
+  @IsOptional()
+  @IsString()
+  @IsIn([...AZURE_TTS_SUPPORTED_LANGS])
+  lang?: (typeof AZURE_TTS_SUPPORTED_LANGS)[number];
 }

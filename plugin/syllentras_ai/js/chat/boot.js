@@ -1827,16 +1827,240 @@ function refreshSpeechVoiceCache() {
     return cachedSpeechVoices;
 }
 
-function scoreSpeechVoice(voice, wantFemale) {
+// Curated BCP-47 ids — keep in sync with DICTATION_LANGUAGES / API allowlist.
+var SPEECH_LANG_DEFAULT = 'en-US';
+var SPEECH_LANG_MIN_LETTERS = 16;
+
+// Compact stopword lists for Latin-script scoring (dominant language wins).
+var SPEECH_LATIN_WORD_LISTS = {
+    'en-US': ['the', 'and', 'you', 'that', 'for', 'with', 'this', 'have', 'are', 'not', 'your', 'from', 'what', 'about', 'would', 'could', 'should', 'which', 'there', 'their', 'will', 'can', 'how', 'into', 'more'],
+    'en-GB': ['the', 'and', 'you', 'that', 'for', 'with', 'this', 'have', 'are', 'not', 'your', 'from', 'what', 'about', 'would', 'could', 'should', 'which', 'there', 'their', 'will', 'can', 'how', 'into', 'more'],
+    'fr-FR': ['le', 'la', 'les', 'des', 'une', 'est', 'que', 'pour', 'dans', 'pas', 'qui', 'avec', 'sur', 'vous', 'nous', 'sont', 'cette', 'être', 'mais', 'comme', 'aussi', 'fait', 'plus', 'tout', 'votre'],
+    'es-ES': ['que', 'los', 'las', 'del', 'una', 'para', 'con', 'por', 'como', 'más', 'esta', 'este', 'está', 'pero', 'sus', 'hay', 'sobre', 'cuando', 'también', 'puede', 'entre', 'tiene', 'ser', 'son', 'usted'],
+    'es-MX': ['que', 'los', 'las', 'del', 'una', 'para', 'con', 'por', 'como', 'más', 'esta', 'este', 'está', 'pero', 'sus', 'hay', 'sobre', 'cuando', 'también', 'puede', 'usted', 'ustedes', 'pues', 'muy', 'aquí'],
+    'de-DE': ['der', 'die', 'das', 'und', 'ist', 'nicht', 'ein', 'eine', 'sich', 'mit', 'auf', 'für', 'den', 'von', 'dem', 'auch', 'sind', 'oder', 'wie', 'noch', 'nach', 'wird', 'werden', 'haben', 'kann'],
+    'it-IT': ['che', 'del', 'la', 'il', 'di', 'per', 'una', 'con', 'non', 'sono', 'come', 'più', 'della', 'questo', 'questa', 'anche', 'essere', 'hanno', 'delle', 'nel', 'alla', 'dei', 'può', 'tutti', 'quando'],
+    'pt-BR': ['que', 'não', 'uma', 'para', 'com', 'os', 'as', 'por', 'mais', 'como', 'mas', 'foi', 'ele', 'ela', 'são', 'dos', 'das', 'também', 'seu', 'sua', 'quando', 'muito', 'está', 'pelo', 'pela'],
+    'pt-PT': ['que', 'não', 'uma', 'para', 'com', 'os', 'as', 'por', 'mais', 'como', 'mas', 'foi', 'ele', 'ela', 'são', 'dos', 'das', 'também', 'seu', 'sua', 'quando', 'muito', 'está', 'pelo', 'pela'],
+    'nl-NL': ['de', 'het', 'een', 'van', 'en', 'in', 'is', 'op', 'te', 'dat', 'die', 'voor', 'niet', 'met', 'zijn', 'er', 'aan', 'om', 'ook', 'als', 'maar', 'nog', 'worden', 'kan', 'wordt'],
+    'pl-PL': ['nie', 'się', 'to', 'jest', 'na', 'do', 'że', 'jak', 'ale', 'czy', 'od', 'po', 'za', 'już', 'tylko', 'może', 'tego', 'przez', 'także', 'oraz', 'będzie', 'który', 'które', 'więc', 'bardzo'],
+    'cs-CZ': ['je', 'na', 'se', 'to', 'že', 'pro', 'jsou', 'ale', 'jako', 'od', 'po', 'za', 'tak', 'už', 'také', 'když', 'nebo', 'jen', 'který', 'které', 'bylo', 'bude', 'jsem', 'máte', 'může'],
+    'ro-RO': ['și', 'de', 'la', 'în', 'cu', 'nu', 'pe', 'care', 'este', 'pentru', 'o', 'din', 'mai', 'sau', 'că', 'sunt', 'ce', 'ca', 'lui', 'unei', 'acest', 'aceasta', 'poate', 'când', 'foarte'],
+    'hu-HU': ['nem', 'hogy', 'egy', 'van', 'az', 'és', 'el', 'meg', 'mint', 'vagy', 'de', 'csak', 'már', 'ki', 'ez', 'aki', 'amit', 'volt', 'lesz', 'kell', 'még', 'igen', 'nincs', 'amikor', 'miért'],
+    'sv-SE': ['och', 'att', 'det', 'som', 'för', 'med', 'är', 'på', 'av', 'den', 'ett', 'har', 'inte', 'om', 'till', 'kan', 'från', 'när', 'också', 'var', 'ska', 'eller', 'men', 'detta', 'vara'],
+    'da-DK': ['og', 'at', 'det', 'er', 'en', 'til', 'på', 'af', 'den', 'med', 'for', 'ikke', 'som', 'der', 'har', 'de', 'om', 'kan', 'fra', 'eller', 'men', 'også', 'når', 'være', 'dette'],
+    'nb-NO': ['og', 'at', 'det', 'er', 'en', 'til', 'på', 'av', 'den', 'med', 'for', 'ikke', 'som', 'der', 'har', 'de', 'om', 'kan', 'fra', 'eller', 'men', 'også', 'når', 'være', 'dette'],
+    'fi-FI': ['ja', 'on', 'ei', 'että', 'se', 'oli', 'kun', 'tai', 'jos', 'niin', 'mutta', 'ovat', 'myös', 'kuin', 'tämä', 'olen', 'voidaan', 'olla', 'jotka', 'hänen', 'meidän', 'teidän', 'kaikki', 'hyvin', 'koska'],
+    'tr-TR': ['ve', 'bir', 'bu', 'için', 'ile', 'de', 'da', 'ne', 'ama', 'gibi', 'daha', 'çok', 'olarak', 'var', 'kadar', 'sonra', 'olan', 'veya', 'her', 'nasıl', 'neden', 'şimdi', 'şu', 'ben', 'sen'],
+    'id-ID': ['yang', 'dan', 'dari', 'untuk', 'dengan', 'ini', 'itu', 'tidak', 'ada', 'adalah', 'pada', 'akan', 'juga', 'atau', 'sebagai', 'dalam', 'bisa', 'sudah', 'mereka', 'kami', 'kita', 'anda', 'lebih', 'karena', 'saat'],
+    'vi-VN': ['của', 'và', 'các', 'có', 'là', 'được', 'trong', 'cho', 'không', 'một', 'những', 'để', 'với', 'này', 'đã', 'khi', 'về', 'như', 'từ', 'người', 'bạn', 'cũng', 'nhưng', 'rất', 'đang']
+};
+
+function normalizeSpeechLang(raw) {
+    var id = String(raw || '').trim();
+    if (!id) return SPEECH_LANG_DEFAULT;
+    if (typeof DICTATION_LANGUAGES !== 'undefined' && Array.isArray(DICTATION_LANGUAGES)) {
+        for (var i = 0; i < DICTATION_LANGUAGES.length; i++) {
+            if (DICTATION_LANGUAGES[i].id === id) return id;
+        }
+    }
+    var lower = id.toLowerCase().replace(/_/g, '-');
+    var known = [
+        'en-US', 'en-GB', 'ar-SA', 'zh-CN', 'zh-TW', 'cs-CZ', 'da-DK', 'nl-NL',
+        'fi-FI', 'fr-FR', 'de-DE', 'el-GR', 'he-IL', 'hi-IN', 'hu-HU', 'id-ID',
+        'it-IT', 'ja-JP', 'ko-KR', 'nb-NO', 'pl-PL', 'pt-BR', 'pt-PT', 'ro-RO',
+        'ru-RU', 'es-ES', 'es-MX', 'sv-SE', 'th-TH', 'tr-TR', 'uk-UA', 'vi-VN'
+    ];
+    for (var j = 0; j < known.length; j++) {
+        if (known[j].toLowerCase() === lower) return known[j];
+    }
+    var prefix = lower.split('-')[0];
+    var prefixMap = {
+        en: 'en-US', ar: 'ar-SA', zh: 'zh-CN', cs: 'cs-CZ', da: 'da-DK', nl: 'nl-NL',
+        fi: 'fi-FI', fr: 'fr-FR', de: 'de-DE', el: 'el-GR', he: 'he-IL', hi: 'hi-IN',
+        hu: 'hu-HU', id: 'id-ID', it: 'it-IT', ja: 'ja-JP', ko: 'ko-KR', nb: 'nb-NO',
+        no: 'nb-NO', pl: 'pl-PL', pt: 'pt-BR', ro: 'ro-RO', ru: 'ru-RU', es: 'es-ES',
+        sv: 'sv-SE', th: 'th-TH', tr: 'tr-TR', uk: 'uk-UA', vi: 'vi-VN'
+    };
+    if (prefixMap[prefix]) return prefixMap[prefix];
+    return SPEECH_LANG_DEFAULT;
+}
+
+function speechFallbackLang() {
+    if (typeof getDictationLang === 'function') {
+        try {
+            return normalizeSpeechLang(getDictationLang());
+        } catch (e) { /* ignore */ }
+    }
+    return SPEECH_LANG_DEFAULT;
+}
+
+function countLetters(text) {
+    // Count letters across Latin + common non-Latin scripts (Arabic block, CJK, etc.).
+    // Regex ranges miss a lot of Arabic (diacritics / extended letters), so walk code points.
+    var s = String(text || '');
+    var n = 0;
+    for (var i = 0; i < s.length; i++) {
+        var c = s.charCodeAt(i);
+        if ((c >= 0x0041 && c <= 0x005A) || (c >= 0x0061 && c <= 0x007A)) n++; // A-Z a-z
+        else if (c >= 0x00C0 && c <= 0x024F) n++; // Latin extended
+        else if (c >= 0x1E00 && c <= 0x1EFF) n++;
+        else if (c >= 0x0370 && c <= 0x03FF) n++; // Greek
+        else if (c >= 0x0400 && c <= 0x04FF) n++; // Cyrillic
+        else if (c >= 0x0590 && c <= 0x05FF) n++; // Hebrew
+        else if (c >= 0x0600 && c <= 0x06FF) n++; // Arabic
+        else if (c >= 0x0750 && c <= 0x077F) n++; // Arabic Supplement
+        else if (c >= 0x08A0 && c <= 0x08FF) n++; // Arabic Extended-A
+        else if (c >= 0x0900 && c <= 0x097F) n++; // Devanagari
+        else if (c >= 0x0E00 && c <= 0x0E7F) n++; // Thai
+        else if (c >= 0x3040 && c <= 0x30FF) n++; // Hiragana / Katakana
+        else if (c >= 0x3400 && c <= 0x4DBF) n++; // CJK extension A
+        else if (c >= 0x4E00 && c <= 0x9FFF) n++; // CJK
+        else if (c >= 0xAC00 && c <= 0xD7AF) n++; // Hangul
+        else if (c >= 0xFB50 && c <= 0xFDFF) n++; // Arabic presentation forms-A
+        else if (c >= 0xFE70 && c <= 0xFEFF) n++; // Arabic presentation forms-B
+    }
+    return n;
+}
+
+function detectScriptLocale(text) {
+    var s = String(text || '');
+    var counts = {
+        arabic: 0, hebrew: 0, cyrillic: 0, greek: 0, thai: 0,
+        hangul: 0, kana: 0, cjk: 0, latin: 0
+    };
+    for (var i = 0; i < s.length; i++) {
+        var c = s.charCodeAt(i);
+        if (c >= 0x0600 && c <= 0x06FF) counts.arabic++;
+        else if (c >= 0x0590 && c <= 0x05FF) counts.hebrew++;
+        else if ((c >= 0x0400 && c <= 0x04FF) || c === 0x0401 || c === 0x0451) counts.cyrillic++;
+        else if (c >= 0x0370 && c <= 0x03FF) counts.greek++;
+        else if (c >= 0x0E00 && c <= 0x0E7F) counts.thai++;
+        else if (c >= 0xAC00 && c <= 0xD7AF) counts.hangul++;
+        else if ((c >= 0x3040 && c <= 0x309F) || (c >= 0x30A0 && c <= 0x30FF)) counts.kana++;
+        else if ((c >= 0x4E00 && c <= 0x9FFF) || (c >= 0x3400 && c <= 0x4DBF)) counts.cjk++;
+        else if ((c >= 0x0041 && c <= 0x007A) || (c >= 0x00C0 && c <= 0x024F) || (c >= 0x1E00 && c <= 0x1EFF)) counts.latin++;
+    }
+    var totalScript = counts.arabic + counts.hebrew + counts.cyrillic + counts.greek
+        + counts.thai + counts.hangul + counts.kana + counts.cjk;
+    if (totalScript < 3 && counts.latin < 8) return null;
+
+    if (counts.arabic >= 3 && counts.arabic >= totalScript * 0.4) return 'ar-SA';
+    if (counts.hebrew >= 3 && counts.hebrew >= totalScript * 0.4) return 'he-IL';
+    if (counts.thai >= 3 && counts.thai >= totalScript * 0.4) return 'th-TH';
+    if (counts.hangul >= 3 && counts.hangul >= totalScript * 0.4) return 'ko-KR';
+    if (counts.greek >= 3 && counts.greek >= totalScript * 0.4) return 'el-GR';
+    if (counts.kana >= 2) return 'ja-JP';
+    if (counts.cjk >= 3) {
+        // Traditional markers (common TW/HK forms) vs default Simplified.
+        if (/[國學語體後門開對東車來時書長門]/g.test(s)) return 'zh-TW';
+        return 'zh-CN';
+    }
+    if (counts.cyrillic >= 3 && counts.cyrillic >= totalScript * 0.4) {
+        if (/[іїєґІЇЄҐ]/.test(s)) return 'uk-UA';
+        return 'ru-RU';
+    }
+    // Devanagari → Hindi
+    if (/[\u0900-\u097F]/.test(s)) return 'hi-IN';
+    return null;
+}
+
+function scoreLatinLocale(words, localeId) {
+    var list = SPEECH_LATIN_WORD_LISTS[localeId];
+    if (!list || !words.length) return 0;
+    var set = {};
+    for (var i = 0; i < list.length; i++) set[list[i]] = true;
+    var hits = 0;
+    for (var j = 0; j < words.length; j++) {
+        if (set[words[j]]) hits++;
+    }
+    return hits;
+}
+
+function detectLatinLocale(text) {
+    var lower = String(text || '').toLowerCase();
+    var words = lower.match(/[a-zà-öø-ÿā-žăâîșț]+/gi) || [];
+    if (words.length < 3) return null;
+    var normalized = [];
+    for (var i = 0; i < words.length; i++) {
+        normalized.push(words[i].toLowerCase());
+    }
+
+    var bestId = null;
+    var bestScore = 0;
+    var second = 0;
+    var locales = Object.keys(SPEECH_LATIN_WORD_LISTS);
+    for (var j = 0; j < locales.length; j++) {
+        var id = locales[j];
+        var score = scoreLatinLocale(normalized, id);
+        // Mild regional cues.
+        if (id === 'pt-BR' && /\b(você|vocês|né|aí)\b/.test(lower)) score += 2;
+        if (id === 'pt-PT' && /\b(vocês|está|estáis)\b/.test(lower)) score += 1;
+        if (id === 'es-MX' && /\b(ustedes|pues|órale|aquí)\b/.test(lower)) score += 2;
+        if (id === 'es-ES' && /\b(vosotros|vosotras|estáis)\b/.test(lower)) score += 2;
+        if (id === 'en-GB' && /\b(colour|favourite|organise|whilst|whilst)\b/.test(lower)) score += 2;
+
+        if (score > bestScore) {
+            second = bestScore;
+            bestScore = score;
+            bestId = id;
+        } else if (score > second) {
+            second = score;
+        }
+    }
+
+    if (!bestId || bestScore < 2) return null;
+    // Ambiguous English vs others: need a clear lead, or enough hits.
+    if (bestScore < second + 1 && bestScore < 4) return null;
+    return bestId;
+}
+
+/**
+ * Guess BCP-47 locale for TTS from message text.
+ * Short / low-confidence text falls back to mic language, then en-US.
+ */
+function detectSpeechLang(text) {
+    var cleaned = String(text || '').replace(/\s+/g, ' ').trim();
+    if (!cleaned) return speechFallbackLang();
+
+    var letters = countLetters(cleaned);
+    if (letters < SPEECH_LANG_MIN_LETTERS) return speechFallbackLang();
+
+    var scriptHit = detectScriptLocale(cleaned);
+    if (scriptHit) return normalizeSpeechLang(scriptHit);
+
+    var latinHit = detectLatinLocale(cleaned);
+    if (latinHit) return normalizeSpeechLang(latinHit);
+
+    return speechFallbackLang();
+}
+
+function speechLangPrefix(locale) {
+    return String(locale || SPEECH_LANG_DEFAULT).toLowerCase().replace(/_/g, '-').split('-')[0];
+}
+
+function scoreSpeechVoice(voice, wantFemale, targetLocale) {
     if (!voice) return -1000;
     var name = String(voice.name || '');
-    var lang = String(voice.lang || '').toLowerCase();
+    var lang = String(voice.lang || '').toLowerCase().replace(/_/g, '-');
+    var target = normalizeSpeechLang(targetLocale || SPEECH_LANG_DEFAULT).toLowerCase();
+    var targetPrefix = speechLangPrefix(target);
     var score = 0;
 
-    // Stick to English when we can — course chat is in English.
-    if (lang.indexOf('en') === 0) score += 40;
-    else if (lang.indexOf('en') !== -1) score += 20;
-    else score -= 30;
+    var exact = lang === target || lang.replace('_', '-') === target;
+    var prefixMatch = speechLangPrefix(lang) === targetPrefix;
+    if (exact) score += 80;
+    else if (prefixMatch) score += 55;
+    else if (targetPrefix === 'en') {
+        // English target: still prefer English voices.
+        if (lang.indexOf('en') === 0) score += 40;
+        else if (lang.indexOf('en') !== -1) score += 20;
+        else score -= 30;
+    } else {
+        // Non-English target: demote mismatched voices hard.
+        if (lang.indexOf('en') === 0) score -= 10;
+        else score -= 40;
+    }
 
     // Neural / natural voices sound way less "GPS lady" than the old defaults.
     if (/neural|natural|premium|enhanced|online|wave|studio/i.test(name)) score += 35;
@@ -1858,28 +2082,54 @@ function scoreSpeechVoice(voice, wantFemale) {
         }
     }
 
-    // Mild preference for US/UK/AU/CA English.
-    if (/en-us|en_us/.test(lang)) score += 6;
-    if (/en-gb|en_gb|en-au|en_au|en-ca|en_ca/.test(lang)) score += 4;
+    // Mild preference among English variants when English is the target.
+    if (targetPrefix === 'en') {
+        if (target === 'en-gb' && /en-gb|en_gb/.test(lang)) score += 8;
+        else if (target === 'en-us' && /en-us|en_us/.test(lang)) score += 8;
+        else if (/en-us|en_us/.test(lang)) score += 6;
+        else if (/en-gb|en_gb|en-au|en_au|en-ca|en_ca/.test(lang)) score += 4;
+    }
 
     return score;
 }
 
-function pickSpeechVoice(preference) {
+function pickSpeechVoice(preference, targetLocale) {
     var voices = cachedSpeechVoices.length ? cachedSpeechVoices : refreshSpeechVoiceCache();
     if (!voices.length) return null;
 
     var wantFemale = normalizeSpeechVoice(preference) !== 'ben';
+    var locale = normalizeSpeechLang(targetLocale || SPEECH_LANG_DEFAULT);
     var best = null;
     var bestScore = -Infinity;
     for (var i = 0; i < voices.length; i++) {
-        var score = scoreSpeechVoice(voices[i], wantFemale);
+        var score = scoreSpeechVoice(voices[i], wantFemale, locale);
         if (score > bestScore) {
             bestScore = score;
             best = voices[i];
         }
     }
     return best;
+}
+
+/**
+ * True when the browser has at least one voice whose lang matches the locale
+ * (exact or same language prefix, e.g. ar-EG for ar-SA).
+ * Without this, Chrome "succeeds" reading Arabic with an English voice and
+ * never falls through to Azure.
+ */
+function hasBrowserVoiceForLang(targetLocale) {
+    if (!browserSpeechSupported()) return false;
+    var voices = cachedSpeechVoices.length ? cachedSpeechVoices : refreshSpeechVoiceCache();
+    if (!voices.length) return false;
+
+    var locale = normalizeSpeechLang(targetLocale || SPEECH_LANG_DEFAULT).toLowerCase();
+    var prefix = speechLangPrefix(locale);
+    for (var i = 0; i < voices.length; i++) {
+        var lang = String(voices[i].lang || '').toLowerCase().replace(/_/g, '-');
+        if (!lang) continue;
+        if (lang === locale || speechLangPrefix(lang) === prefix) return true;
+    }
+    return false;
 }
 
 function loadSpeechSettings() {
@@ -2021,7 +2271,7 @@ function clearSpeakingUi(el) {
     }
 }
 
-function startBrowserMessageSpeech(el, text, generation, onFail) {
+function startBrowserMessageSpeech(el, text, generation, lang, onFail) {
     if (!browserSpeechSupported()) {
         if (typeof onFail === 'function') {
             onFail();
@@ -2034,8 +2284,10 @@ function startBrowserMessageSpeech(el, text, generation, onFail) {
 
     refreshSpeechVoiceCache();
 
+    var locale = normalizeSpeechLang(lang || SPEECH_LANG_DEFAULT);
     var utterance = new SpeechSynthesisUtterance(text);
-    var voice = pickSpeechVoice(selectedSpeechVoice);
+    utterance.lang = locale;
+    var voice = pickSpeechVoice(selectedSpeechVoice, locale);
     if (voice) {
         utterance.voice = voice;
         // Some engines ignore voice.lang unless we set it too.
@@ -2077,14 +2329,15 @@ function startBrowserMessageSpeech(el, text, generation, onFail) {
  * @param {boolean} [allowBrowserFallback=true] — set false when browser already
  *   failed and Azure is the last resort (avoids a pointless second browser try).
  */
-function startAzureMessageSpeech(el, text, generation, allowBrowserFallback) {
+function startAzureMessageSpeech(el, text, generation, lang, allowBrowserFallback) {
     var canFallback = allowBrowserFallback !== false;
+    var locale = normalizeSpeechLang(lang || SPEECH_LANG_DEFAULT);
 
     function fallbackOrStop() {
         markAzureSpeechUnavailableTemporarily();
         if (generation !== speechPlayGeneration || speakingMessageEl !== el) return;
         if (canFallback && browserSpeechSupported()) {
-            startBrowserMessageSpeech(el, text, generation);
+            startBrowserMessageSpeech(el, text, generation, locale);
         } else {
             clearSpeakingUi(el);
         }
@@ -2098,7 +2351,8 @@ function startAzureMessageSpeech(el, text, generation, allowBrowserFallback) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
             text: clipped,
-            voice: selectedSpeechVoice
+            voice: selectedSpeechVoice,
+            lang: locale
         })
     }).then(function (res) {
         if (!res.ok) {
@@ -2148,6 +2402,8 @@ function startMessageSpeech(el) {
     var text = getMessageSpeakText(el);
     if (!text || text === '...') return;
 
+    var speakLang = detectSpeechLang(text);
+
     // Drop whatever was mid-sentence before starting fresh.
     speechPlayGeneration += 1;
     var generation = speechPlayGeneration;
@@ -2168,15 +2424,20 @@ function startMessageSpeech(el) {
         if (generation !== speechPlayGeneration || speakingMessageEl !== el) return;
 
         var azureOk = azureTtsIsAvailable();
-        var nativeFirst = prefersNativeBrowserTts() && browserSpeechSupported();
+        var hasMatchingVoice = hasBrowserVoiceForLang(speakLang);
+        // Only prefer native when a voice actually speaks this language.
+        // Otherwise Chrome "succeeds" with English on Arabic and Azure never runs.
+        var nativeFirst = prefersNativeBrowserTts()
+            && browserSpeechSupported()
+            && hasMatchingVoice;
 
-        // Chrome / Edge / Safari — their own voice first.
+        // Chrome / Edge / Safari — matching local voice first.
         if (nativeFirst) {
-            startBrowserMessageSpeech(el, text, generation, function () {
+            startBrowserMessageSpeech(el, text, generation, speakLang, function () {
                 if (generation !== speechPlayGeneration || speakingMessageEl !== el) return;
                 if (azureOk) {
                     // Native choked; Azure is the backup. Don't bounce back to browser.
-                    startAzureMessageSpeech(el, text, generation, false);
+                    startAzureMessageSpeech(el, text, generation, speakLang, false);
                 } else {
                     clearSpeakingUi(el);
                 }
@@ -2184,14 +2445,15 @@ function startMessageSpeech(el) {
             return;
         }
 
-        // Firefox / Brave / others — Azure when it's up, browser otherwise.
+        // No matching browser voice (e.g. Arabic on many Windows installs),
+        // or Firefox / Brave — Azure when it's up, browser otherwise.
         if (azureOk) {
-            startAzureMessageSpeech(el, text, generation, true);
+            startAzureMessageSpeech(el, text, generation, speakLang, true);
             return;
         }
 
         if (browserSpeechSupported()) {
-            startBrowserMessageSpeech(el, text, generation);
+            startBrowserMessageSpeech(el, text, generation, speakLang);
             return;
         }
 

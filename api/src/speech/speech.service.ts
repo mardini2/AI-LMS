@@ -9,8 +9,7 @@ import { AzureTtsClient } from './azure-tts.client';
 import {
   AZURE_TTS_CONTENT_TYPE,
   AZURE_TTS_MAX_CHARS,
-  AZURE_TTS_VOICE_FEMALE,
-  AZURE_TTS_VOICE_MALE,
+  resolveAzureTtsVoice,
 } from './speech.constants';
 
 export interface SpeechConfigDto {
@@ -43,7 +42,11 @@ export class SpeechService {
    * Turn text into an mp3 buffer via Azure.
    * Browser-native TTS stays in the Moodle plugin; this is the cloud path.
    */
-  async synthesize(text: string, voice: 'grace' | 'ben' = 'grace'): Promise<Buffer> {
+  async synthesize(
+    text: string,
+    voice: 'grace' | 'ben' = 'grace',
+    lang?: string,
+  ): Promise<Buffer> {
     const cleaned = String(text ?? '').trim();
     if (!cleaned) {
       throw new BadRequestException('Text to speak cannot be empty.');
@@ -68,13 +71,13 @@ export class SpeechService {
       );
     }
 
-    const voiceName =
-      voice === 'ben' ? AZURE_TTS_VOICE_MALE : AZURE_TTS_VOICE_FEMALE;
+    const { voiceName, xmlLang } = resolveAzureTtsVoice(lang, voice);
 
     try {
       return await this.azure.synthesize({
         text: cleaned,
         voiceName,
+        xmlLang,
         speechKey,
         region,
       });

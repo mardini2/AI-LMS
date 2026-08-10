@@ -4,6 +4,8 @@ import { AZURE_TTS_OUTPUT_FORMAT } from './speech.constants';
 export interface AzureTtsRequest {
   text: string;
   voiceName: string;
+  /** BCP-47 for the SSML speak root (e.g. fr-FR). */
+  xmlLang: string;
   speechKey: string;
   region: string;
 }
@@ -17,9 +19,9 @@ export class AzureTtsClient {
   private readonly logger = new Logger(AzureTtsClient.name);
 
   async synthesize(params: AzureTtsRequest): Promise<Buffer> {
-    const { text, voiceName, speechKey, region } = params;
+    const { text, voiceName, xmlLang, speechKey, region } = params;
     const url = `https://${region}.tts.speech.microsoft.com/cognitiveservices/v1`;
-    const ssml = buildSsml(text, voiceName);
+    const ssml = buildSsml(text, voiceName, xmlLang);
 
     const response = await fetch(url, {
       method: 'POST',
@@ -49,7 +51,7 @@ export class AzureTtsClient {
   }
 }
 
-function buildSsml(text: string, voiceName: string): string {
+function buildSsml(text: string, voiceName: string, xmlLang: string): string {
   // Escape so random chat text can't break the SSML / inject tags.
   const safe = text
     .replace(/&/g, '&amp;')
@@ -58,8 +60,10 @@ function buildSsml(text: string, voiceName: string): string {
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&apos;');
 
+  const lang = String(xmlLang || 'en-CA').replace(/[^\w-]/g, '');
+
   return (
-    `<speak version="1.0" xml:lang="en-CA">` +
+    `<speak version="1.0" xml:lang="${lang}">` +
     `<voice name="${voiceName}">${safe}</voice>` +
     `</speak>`
   );

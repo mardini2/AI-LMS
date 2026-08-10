@@ -18,13 +18,17 @@ export class SpeechController {
 
   /**
    * POST /speech/synthesize
-   * Body: { text, voice? } -> mp3 bytes.
+   * Body: { text, voice?, lang? } -> mp3 bytes.
    * If Azure is off or misconfigured, the plugin should keep using browser TTS.
    */
   @Post('synthesize')
   @Header('Content-Type', AZURE_TTS_CONTENT_TYPE)
   async synthesize(@Body() dto: SynthesizeSpeechDto): Promise<StreamableFile> {
-    const audio = await this.speechService.synthesize(dto.text, dto.voice ?? 'grace');
+    const audio = await this.speechService.synthesize(
+      dto.text,
+      dto.voice ?? 'grace',
+      dto.lang,
+    );
     return new StreamableFile(audio, {
       type: AZURE_TTS_CONTENT_TYPE,
       disposition: 'inline; filename="speech.mp3"',
