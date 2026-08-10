@@ -295,7 +295,7 @@ function getMessageSpeakText(el) {
     if (!el) return '';
     var clone = el.cloneNode(true);
     Array.from(clone.querySelectorAll(
-        '.syllentras-msg-speak, .syllentras-msg-mode, .syllentras-pending-action, .syllentras-content-open-btn, .syllentras-review-toolbar'
+        '.syllentras-msg-speak, .syllentras-msg-mode, .syllentras-pending-action, .syllentras-suggested-links, .syllentras-content-open-btn, .syllentras-review-toolbar'
     )).forEach(function (node) {
         node.remove();
     });

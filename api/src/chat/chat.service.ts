@@ -52,6 +52,7 @@ import {
 import {
   AiProviderRegistry,
   STUDY_PROPOSAL_TOOLS,
+  SUGGEST_OPENABLE_LINKS_TOOL,
   type LlmProvider,
 } from './providers';
 import {
@@ -66,16 +67,35 @@ import {
 } from './chat-gratitude';
 import {
   buildLinkFetchPromptBlock,
+  buildSuggestedLinks,
+  buildSuggestedLinksReply,
   extractHttpUrls,
   fetchLinkedPagesFromMessage,
   linkFetchWarningMessages,
+  pickOutboundSuggestedLinks,
+  type LinkFetchBatch,
+  type SuggestedLink,
 } from './link-fetch';
+import type { LlmTool } from './providers/provider.types';
+
+const EMPTY_LLM_REPLY_FALLBACK =
+  'I could not generate a reply just now. Please try again, or paste a specific article URL if you want me to read a page.';
+
+const SAFETY_LLM_REPLY_FALLBACK =
+  'The AI provider blocked a reply about this page (often happens with detailed exploit or vulnerability write-ups). Try asking a more specific course-related question about the article, or switch to another AI provider if one is available.';
+
+function emptyLlmFallback(finishReason?: string): string {
+  const reason = (finishReason ?? '').toUpperCase();
+  if (reason.includes('SAFETY')) return SAFETY_LLM_REPLY_FALLBACK;
+  return EMPTY_LLM_REPLY_FALLBACK;
+}
 
 export type {
   ChatResponse,
   PendingActionDto,
   ReviewBlockDto,
   ReviewOfferDto,
+  SuggestedLinkDto,
 } from './chat.types';
 
 /**
@@ -286,8 +306,9 @@ export class ChatService {
     // (not saved into chat history). SSRF-checked inside link-fetch.
     const sharedUrls = extractHttpUrls(rawMessage);
     let linkWarnings: string[] = [];
+    let linkBatch: LinkFetchBatch | null = null;
     if (sharedUrls.length) {
-      const linkBatch = await fetchLinkedPagesFromMessage(rawMessage);
+      linkBatch = await fetchLinkedPagesFromMessage(rawMessage);
       const linkBlock = buildLinkFetchPromptBlock(linkBatch);
       if (linkBlock) {
         messageForLlm = messageForLlm
@@ -414,11 +435,20 @@ export class ChatService {
     this.logger.log(
       `Sending message for conversation ${conversationId} via ${llm.id}`,
     );
+    const tools: LlmTool[] = [];
+    if (canProposeContent) {
+      tools.push(...STUDY_PROPOSAL_TOOLS);
+    }
+    if (linkBatch?.results.some((r) => r.ok)) {
+      tools.push(SUGGEST_OPENABLE_LINKS_TOOL);
+    }
+    const hasLinkedPageContent = Boolean(linkBatch?.results.some((r) => r.ok));
     const result = await llm.chat({
       systemInstruction,
       history: providerHistory,
       message: messageForLlm,
-      tools: canProposeContent ? STUDY_PROPOSAL_TOOLS : undefined,
+      tools: tools.length ? tools : undefined,
+      relaxDangerousContentSafety: hasLinkedPageContent,
     });
 
     if (debugSecondTurn) {
@@ -439,6 +469,7 @@ export class ChatService {
 
     let responseText = '';
     let pendingAction: PendingActionDto | undefined;
+    let suggestedLinks: SuggestedLink[] = [];
 
     const proposeQuizCall = functionCalls.find(
       (call) => call.name === 'propose_practice_quiz',
@@ -449,6 +480,13 @@ export class ChatService {
     const proposeFlashcardsCall = functionCalls.find(
       (call) => call.name === 'propose_flashcards',
     );
+    const suggestLinksCall = functionCalls.find(
+      (call) => call.name === 'suggest_openable_links',
+    );
+
+    const suggestToolArgs = (suggestLinksCall?.args ?? null) as {
+      links?: Array<{ title?: unknown; url?: unknown; teaser?: unknown }>;
+    } | null;
 
     if (proposeQuizCall && moodleUserId && courseId > 1) {
       const args = (proposeQuizCall.args ?? {}) as {
@@ -596,11 +634,52 @@ export class ChatService {
         requestedCount: exceededMax ? Math.round(requestedCount) : undefined,
       });
     } else {
-      const rawText =
-        result.text?.trim() ||
-        'I can help with course questions, or create a private study guide, flashcards, or practice quiz in Moodle when you ask for one.';
+      let modelText = result.text?.trim() ?? '';
+      if (linkBatch?.results.some((r) => r.ok)) {
+        suggestedLinks = await buildSuggestedLinks({
+          batch: linkBatch,
+          toolArgs: suggestToolArgs,
+          responseText: modelText,
+        });
+      }
+
+      if (!modelText && suggestedLinks.length) {
+        modelText = buildSuggestedLinksReply(suggestedLinks, linkBatch ?? undefined);
+        this.logger.log(
+          `Synthesized link-recommendation reply for conversation ${conversationId} from suggest_openable_links (${suggestedLinks.length} links)`,
+        );
+      } else if (!modelText && linkBatch?.results.some((r) => r.ok)) {
+        // SAFETY / empty model: still offer headlines from the fetched page.
+        suggestedLinks = await pickOutboundSuggestedLinks(linkBatch);
+        if (suggestedLinks.length) {
+          modelText = buildSuggestedLinksReply(suggestedLinks, linkBatch, {
+            degraded: true,
+          });
+          this.logger.log(
+            `Degraded outbound-link reply for conversation ${conversationId}` +
+              ` after empty LLM (finishReason=${result.finishReason ?? 'n/a'}, ${suggestedLinks.length} links)`,
+          );
+        } else {
+          this.logger.warn(
+            `Empty LLM text for conversation ${conversationId} via ${llm.id}` +
+              ` (finishReason=${result.finishReason ?? 'n/a'}, toolCalls=${JSON.stringify(
+                functionCalls.map((c) => c.name),
+              )})`,
+          );
+          modelText = emptyLlmFallback(result.finishReason);
+        }
+      } else if (!modelText) {
+        this.logger.warn(
+          `Empty LLM text for conversation ${conversationId} via ${llm.id}` +
+            ` (finishReason=${result.finishReason ?? 'n/a'}, toolCalls=${JSON.stringify(
+              functionCalls.map((c) => c.name),
+            )})`,
+        );
+        modelText = emptyLlmFallback(result.finishReason);
+      }
+
       responseText = preventRepeatedGreeting(
-        rawText,
+        modelText,
         !mayGreet,
         userFirstName,
       );
@@ -611,13 +690,24 @@ export class ChatService {
             `conversationId: ${conversationId}`,
             `allowGreeting: ${mayGreet}`,
             `preventRepeatedGreetingApplied: ${!mayGreet}`,
-            `rawEqualsFinal: ${rawText === responseText}`,
+            `suggestedLinks: ${suggestedLinks.length}`,
             '',
             '----- FINAL RESPONSE AFTER PROCESSING -----',
             responseText,
           ].join('\n'),
         );
       }
+    }
+
+    if (
+      !suggestedLinks.length &&
+      linkBatch?.results.some((r) => r.ok)
+    ) {
+      suggestedLinks = await buildSuggestedLinks({
+        batch: linkBatch,
+        toolArgs: suggestToolArgs,
+        responseText,
+      });
     }
 
     const savedMessages = await this.conversationService.appendMessages(
@@ -681,6 +771,7 @@ export class ChatService {
       response: responseText,
       conversationId,
       pendingAction,
+      suggestedLinks: suggestedLinks.length ? suggestedLinks : undefined,
       topicSuggestions,
       provider: llm.id,
       mode,

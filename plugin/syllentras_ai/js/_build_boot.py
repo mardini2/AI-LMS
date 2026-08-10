@@ -15,6 +15,7 @@ ORDER = [
     "mode-selector.js",
     "markdown.js",
     "pending-actions.js",
+    "suggested-links.js",
     "review-offer.js",
     "message-search.js",
     "message-speech.js",

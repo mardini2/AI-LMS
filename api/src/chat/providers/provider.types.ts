@@ -64,11 +64,19 @@ export interface LlmChatRequest {
   history: LlmChatMessage[];
   message: string;
   tools?: LlmTool[];
+  /**
+   * Gemini only: relax DANGEROUS_CONTENT for this turn (e.g. when linked
+   * vulnerability/news pages are in the prompt). Default stays stricter so
+   * normal multi-course Q&A is not wide open.
+   */
+  relaxDangerousContentSafety?: boolean;
 }
 
 export interface LlmChatResult {
   text: string;
   toolCalls: LlmToolCall[];
+  /** Provider finish / stop reason when available (e.g. Gemini STOP, SAFETY). */
+  finishReason?: string;
 }
 
 export interface LlmJsonRequest {

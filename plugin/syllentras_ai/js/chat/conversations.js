@@ -500,6 +500,9 @@ function sendMessage() {
         if (data.pendingAction) {
             attachPendingAction(loadingEl, data.pendingAction);
         }
+        if (data.suggestedLinks && typeof attachSuggestedLinks === 'function') {
+            attachSuggestedLinks(loadingEl, data.suggestedLinks);
+        }
         if (Array.isArray(data.attachmentWarnings) && data.attachmentWarnings.length) {
             if (typeof appendSystemNotice === 'function') {
                 appendSystemNotice(data.attachmentWarnings.join(' '));

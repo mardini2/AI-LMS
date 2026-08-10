@@ -31,7 +31,7 @@ export const PROPOSE_PRACTICE_QUIZ_TOOL: LlmTool = {
       scopeSummary: {
         type: 'string',
         description:
-          'What the quiz covers, e.g. "Weeks 1–4: variables, loops, and arrays"',
+          'Course-topic scope only (e.g. "Weeks 1–4: variables, loops, and arrays" or "command and control and backdoors from course material"). Must be grounded in the course syllabus/material — never name a news article, website, or facts that appear only in linked pages.',
       },
       questionCount: {
         type: 'integer',
@@ -73,7 +73,7 @@ export const PROPOSE_STUDY_GUIDE_TOOL: LlmTool = {
       scopeSummary: {
         type: 'string',
         description:
-          'What the guide covers, e.g. "Weeks 13–14: packing and rootkits"',
+          'Course-topic scope only (e.g. "Weeks 13–14: packing and rootkits"). Must be grounded in the course syllabus/material — never name a news article, website, or facts that appear only in linked pages.',
       },
     },
     required: ['title', 'scopeSummary'],
@@ -95,7 +95,7 @@ export const PROPOSE_FLASHCARDS_TOOL: LlmTool = {
       scopeSummary: {
         type: 'string',
         description:
-          'What the flashcards cover, e.g. "Weeks 13–14: packing and rootkits"',
+          'Course-topic scope only (e.g. "Weeks 13–14: packing and rootkits"). Must be grounded in the course syllabus/material — never name a news article, website, or facts that appear only in linked pages.',
       },
       cardCount: {
         type: 'integer',
@@ -121,3 +121,39 @@ export const STUDY_PROPOSAL_TOOLS: LlmTool[] = [
   PROPOSE_FLASHCARDS_TOOL,
   PROPOSE_PRACTICE_QUIZ_TOOL,
 ];
+
+/** Offer Open-button targets when the system fetched page content this turn. */
+export const SUGGEST_OPENABLE_LINKS_TOOL: LlmTool = {
+  name: 'suggest_openable_links',
+  description:
+    'Suggest up to 3 http(s) pages for UI Read link buttons. Call when recommending articles from Linked page content / Outbound links on page. Use only URLs from that fetched content. You MUST still write a full normal reply with markdown links — this tool only supplies buttons and must never be your only output. Do not call for Moodle study-tool creation.',
+  parameters: {
+    type: 'object',
+    properties: {
+      links: {
+        type: 'array',
+        description: 'Up to 3 recommended pages, most relevant first.',
+        items: {
+          type: 'object',
+          properties: {
+            title: {
+              type: 'string',
+              description: 'Short article or page title for the button label.',
+            },
+            url: {
+              type: 'string',
+              description:
+                'Exact http(s) URL from the Linked page content or Outbound links list.',
+            },
+            teaser: {
+              type: 'string',
+              description: 'Optional short blurb (not shown on the button).',
+            },
+          },
+          required: ['title', 'url'],
+        },
+      },
+    },
+    required: ['links'],
+  },
+};

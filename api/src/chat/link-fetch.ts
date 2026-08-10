@@ -10,6 +10,11 @@ export const LINK_FETCH_TIMEOUT_MS = 8_000;
 export const LINK_FETCH_MAX_BYTES = 2_000_000;
 export const LINK_FETCH_MAX_CHARS_PER_PAGE = 40_000;
 export const LINK_FETCH_MAX_REDIRECTS = 4;
+export const LINK_FETCH_MAX_OUTBOUND = 40;
+export const LINK_FETCH_TEASER_MAX_CHARS = 120;
+export const SUGGESTED_LINKS_MAX = 3;
+/** Enough outbound story links to treat the page as a homepage/listing. */
+export const LINK_FETCH_LISTING_MIN_OUTBOUND = 6;
 
 const BLOCKED_HOSTNAMES = new Set([
   'localhost',
@@ -18,6 +23,22 @@ const BLOCKED_HOSTNAMES = new Set([
   'metadata',
 ]);
 
+/** Chrome / share / auth paths we skip when listing outbound article-ish links. */
+const OUTBOUND_SKIP_PATH_RE =
+  /\/(login|signin|signup|register|cart|checkout|account|auth|oauth|share|twitter|facebook|linkedin|whatsapp|pinterest|mailto)(\/|$)/i;
+
+export type OutboundLink = {
+  title: string;
+  url: string;
+  teaser?: string;
+};
+
+export type SuggestedLink = {
+  title: string;
+  url: string;
+  teaser?: string;
+};
+
 export type LinkFetchResult =
   | {
       url: string;
@@ -25,6 +46,7 @@ export type LinkFetchResult =
       title?: string;
       text: string;
       contentType: string;
+      outboundLinks?: OutboundLink[];
     }
   | {
       url: string;
@@ -162,6 +184,207 @@ export async function assertUrlSafeToFetch(rawUrl: string): Promise<URL> {
   return parsed;
 }
 
+function stripNonContentHtml(html: string): string {
+  return html
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<noscript[\s\S]*?<\/noscript>/gi, ' ')
+    .replace(/<!--[\s\S]*?-->/g, ' ');
+}
+
+function collapseWhitespace(value: string): string {
+  return value.replace(/\s+/g, ' ').trim();
+}
+
+function truncateTeaser(text: string, maxChars = LINK_FETCH_TEASER_MAX_CHARS): string {
+  const cleaned = collapseWhitespace(text);
+  if (!cleaned) return '';
+  if (cleaned.length <= maxChars) return cleaned;
+  const slice = cleaned.slice(0, maxChars);
+  const lastSpace = slice.lastIndexOf(' ');
+  return `${(lastSpace > 40 ? slice.slice(0, lastSpace) : slice).trim()}…`;
+}
+
+function stripTagsToText(html: string): string {
+  return collapseWhitespace(
+    decodeHtmlEntities(
+      html
+        .replace(/<\/(p|div|h[1-6]|li|tr|section|article|br|hr)[^>]*>/gi, ' ')
+        .replace(/<br\s*\/?>/gi, ' ')
+        .replace(/<[^>]+>/g, ' '),
+    ),
+  );
+}
+
+function isSkippableOutboundHref(href: string): boolean {
+  const lower = href.trim().toLowerCase();
+  if (!lower || lower.startsWith('#') || lower.startsWith('javascript:')) return true;
+  if (lower.startsWith('mailto:') || lower.startsWith('tel:')) return true;
+  if (lower.startsWith('data:')) return true;
+  return false;
+}
+
+function looksLikeChromeOutboundPath(pathname: string): boolean {
+  return OUTBOUND_SKIP_PATH_RE.test(pathname);
+}
+
+/** Drop date-only / UI crumbs so we keep real blurbs. */
+function scrubTeaserCandidate(raw: string, title: string): string {
+  let teaser = truncateTeaser(raw);
+  if (teaser && teaser.toLowerCase().startsWith(title.toLowerCase())) {
+    teaser = truncateTeaser(teaser.slice(title.length));
+  }
+  // Strip leading date/meta crumbs common on news homepages.
+  teaser = teaser
+    .replace(
+      /^(?:)?\s*(?:january|february|march|april|may|june|july|august|september|october|november|december)\s+\d{1,2},?\s+\d{4}\s*/i,
+      '',
+    )
+    .replace(/^\d{1,2}\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\s+\d{4}\s*/i, '')
+    .replace(/^(?:read\s*[➝→>]+|permalink|share|comments?)\s*/i, '')
+    .trim();
+  if (teaser.length < 12) return '';
+  return truncateTeaser(teaser);
+}
+
+/**
+ * Prefer longer title / any teaser when the same URL appears twice
+ * (e.g. image link then headline link on news homepages).
+ */
+function mergeOutboundCandidate(
+  list: OutboundLink[],
+  item: OutboundLink,
+): void {
+  const idx = list.findIndex((existing) => existing.url === item.url);
+  if (idx < 0) {
+    list.push(item);
+    return;
+  }
+  const prev = list[idx];
+  list[idx] = {
+    url: item.url,
+    title: item.title.length > prev.title.length ? item.title : prev.title,
+    teaser: item.teaser || prev.teaser,
+  };
+}
+
+/** Prefer a clean headline from inside a card-style <a>, not the whole card text. */
+function titleFromAnchorInner(inner: string): string {
+  const homeTitle = inner.match(
+    /<(?:h[1-6]|div|span)[^>]*class=["'][^"']*home-title[^"']*["'][^>]*>([\s\S]*?)<\/(?:h[1-6]|div|span)>/i,
+  );
+  if (homeTitle) {
+    const t = stripTagsToText(homeTitle[1]);
+    if (t.length >= 3) return t;
+  }
+  const heading = inner.match(/<h[1-6][^>]*>([\s\S]*?)<\/h[1-6]>/i);
+  if (heading) {
+    const t = stripTagsToText(heading[1]);
+    if (t.length >= 3) return t;
+  }
+  const alt = inner.match(/<img[^>]*\balt=["']([^"']+)["']/i);
+  if (alt?.[1]) {
+    const t = decodeHtmlEntities(alt[1]).replace(/\s+/g, ' ').trim();
+    if (t.length >= 3) return t;
+  }
+  return stripTagsToText(inner);
+}
+
+/** Blurb inside the same card <a> (e.g. THN .home-desc). */
+function teaserFromAnchorInner(inner: string, title: string): string {
+  const classDescMatch = inner.match(
+    /<(?:div|p|span)[^>]*class=["'][^"']*(?:home-desc|post-desc|summary|excerpt|description|dek|standfirst)[^"']*["'][^>]*>([\s\S]*?)<\/(?:div|p|span)>/i,
+  );
+  if (classDescMatch) {
+    return scrubTeaserCandidate(stripTagsToText(classDescMatch[1]), title);
+  }
+  return '';
+}
+
+/**
+ * Pull title + absolute URL + nearby teaser from <a> tags before plain-text stripping.
+ * Prefers same-host links; caps at LINK_FETCH_MAX_OUTBOUND.
+ */
+export function extractOutboundLinks(
+  html: string,
+  pageUrl: string,
+  max = LINK_FETCH_MAX_OUTBOUND,
+): OutboundLink[] {
+  let page: URL;
+  try {
+    page = new URL(pageUrl);
+  } catch {
+    return [];
+  }
+
+  const cleaned = stripNonContentHtml(html);
+  const anchorRe = /<a\b([^>]*)>([\s\S]*?)<\/a>/gi;
+  const sameHost: OutboundLink[] = [];
+  const otherHost: OutboundLink[] = [];
+  const seenOrder: string[] = [];
+
+  let match: RegExpExecArray | null;
+  while ((match = anchorRe.exec(cleaned)) !== null) {
+    const attrs = match[1] ?? '';
+    const inner = match[2] ?? '';
+    const hrefMatch = attrs.match(/\bhref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i);
+    if (!hrefMatch) continue;
+    const rawHref = (hrefMatch[1] ?? hrefMatch[2] ?? hrefMatch[3] ?? '').trim();
+    if (isSkippableOutboundHref(rawHref)) continue;
+
+    let absolute: URL;
+    try {
+      absolute = new URL(rawHref, page);
+    } catch {
+      continue;
+    }
+    if (absolute.protocol !== 'http:' && absolute.protocol !== 'https:') continue;
+    if (looksLikeChromeOutboundPath(absolute.pathname)) continue;
+
+    // Same document (ignore hash-only / identical page).
+    const withoutHash = absolute.href.replace(/#.*$/, '');
+    const pageWithoutHash = page.href.replace(/#.*$/, '');
+    if (withoutHash === pageWithoutHash) continue;
+
+    const title = titleFromAnchorInner(inner);
+    if (!title || title.length < 3) continue;
+    // Skip chrome-y short labels inside large pages.
+    if (/^(read|more|here|link|click|share|tweet)$/i.test(title)) continue;
+
+    // Prefer blurb inside the same card <a> (THN story-link wraps title+desc).
+    // Fall back to text after the anchor for sites that put the excerpt outside.
+    const afterStart = match.index + match[0].length;
+    const afterChunk = cleaned.slice(afterStart, afterStart + 600);
+    const beforeNextAnchor = afterChunk.split(/<a\b/i)[0] ?? '';
+    const classDescAfter = afterChunk.match(
+      /<(?:div|p|span)[^>]*class=["'][^"']*(?:home-desc|post-desc|summary|excerpt|description|dek|standfirst)[^"']*["'][^>]*>([\s\S]*?)<\/(?:div|p|span)>/i,
+    );
+    const fromInside = teaserFromAnchorInner(inner, title);
+    const fromClassAfter = classDescAfter
+      ? scrubTeaserCandidate(stripTagsToText(classDescAfter[1]), title)
+      : '';
+    const fromAfter = scrubTeaserCandidate(stripTagsToText(beforeNextAnchor), title);
+    const teaser = fromInside || fromClassAfter || fromAfter;
+
+    const item: OutboundLink = teaser
+      ? { title, url: absolute.href, teaser }
+      : { title, url: absolute.href };
+
+    const bucket =
+      absolute.hostname.toLowerCase() === page.hostname.toLowerCase()
+        ? sameHost
+        : otherHost;
+    const already = seenOrder.includes(absolute.href);
+    mergeOutboundCandidate(bucket, item);
+    if (!already) {
+      seenOrder.push(absolute.href);
+    }
+    if (seenOrder.length >= max * 2) break;
+  }
+
+  return [...sameHost, ...otherHost].slice(0, max);
+}
+
 /** Rough HTML → plain text (no extra deps). Good enough for articles / docs. */
 export function htmlToPlainText(html: string): { title?: string; text: string } {
   const titleMatch = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
@@ -169,11 +392,7 @@ export function htmlToPlainText(html: string): { title?: string; text: string } 
     ? decodeHtmlEntities(titleMatch[1].replace(/\s+/g, ' ').trim())
     : undefined;
 
-  let body = html
-    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
-    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
-    .replace(/<noscript[\s\S]*?<\/noscript>/gi, ' ')
-    .replace(/<!--[\s\S]*?-->/g, ' ');
+  let body = stripNonContentHtml(html);
 
   body = body
     .replace(/<\/(p|div|h[1-6]|li|tr|section|article|br|hr)[^>]*>/gi, '\n')
@@ -311,12 +530,14 @@ export async function fetchOneLinkedPage(
         if (!text.trim()) {
           return { url: rawUrl, ok: false, error: 'That page had no readable text.' };
         }
+        const outboundLinks = extractOutboundLinks(rawText, safeUrl.href);
         return {
           url: rawUrl,
           ok: true,
           title,
           text: truncateText(text, LINK_FETCH_MAX_CHARS_PER_PAGE),
           contentType: contentType || 'text/html',
+          outboundLinks: outboundLinks.length ? outboundLinks : undefined,
         };
       }
 
@@ -401,13 +622,76 @@ export function buildLinkFetchPromptBlock(batch: LinkFetchBatch): string {
       const heading = result.title
         ? `--- Linked page: ${result.title} (${result.url}) ---`
         : `--- Linked page: ${result.url} ---`;
-      parts.push(heading, result.text, '---');
+      parts.push(heading);
+
+      const listing = looksLikeListingPage(result);
+      if (listing) {
+        parts.push(
+          'Listing/homepage note: This page looks like a news or link listing. Full page body is omitted to keep the prompt focused. Recommend from the outbound headlines below (titles, URLs, teasers).',
+        );
+      } else {
+        parts.push(result.text);
+      }
+
+      if (result.outboundLinks?.length) {
+        parts.push(
+          listing
+            ? 'Outbound links on page (recommend up to 3 most relevant to the course; use only these URLs):'
+            : 'Outbound links on page (use only these URLs when recommending related articles):',
+        );
+        for (const link of result.outboundLinks) {
+          const teaserBit = link.teaser ? ` — ${link.teaser}` : '';
+          parts.push(`- ${link.title} — ${link.url}${teaserBit}`);
+        }
+      } else if (listing) {
+        parts.push(
+          '(No outbound article links were extracted; ask the student to paste a specific article URL.)',
+        );
+      }
+      parts.push('---');
     } else {
       parts.push(`--- Linked page failed: ${result.url} ---`, result.error, '---');
     }
   }
 
   return parts.join('\n');
+}
+
+/**
+ * Homepages / index pages: shallow path + many outbound story links.
+ * Article pages often have related-link sidebars — do NOT treat those as listings
+ * or we omit the article body the student asked us to read.
+ */
+export function looksLikeListingPage(
+  result: Extract<LinkFetchResult, { ok: true }>,
+): boolean {
+  const outbound = result.outboundLinks?.length ?? 0;
+  let path = '/';
+  try {
+    path = new URL(result.url).pathname.replace(/\/+$/, '') || '/';
+  } catch {
+    // keep default
+  }
+
+  const looksLikeArticle =
+    /\/\d{4}\/\d{1,2}\//.test(path) ||
+    (/\.html?$/i.test(path) && path.split('/').filter(Boolean).length >= 2);
+
+  if (looksLikeArticle) return false;
+
+  const isRootOrIndex =
+    path === '/' ||
+    path === '' ||
+    /\/(index|home|news|blog|latest|articles?)\/?$/i.test(path);
+
+  if (isRootOrIndex && outbound >= 3) return true;
+
+  // Generic listing: many outbound links and a short page body (not a long article).
+  if (outbound >= LINK_FETCH_LISTING_MIN_OUTBOUND) {
+    const bodyLen = (result.text ?? '').length;
+    if (bodyLen < 3_000) return true;
+  }
+  return false;
 }
 
 export function linkFetchWarningMessages(batch: LinkFetchBatch): string[] {
@@ -421,4 +705,376 @@ export function linkFetchWarningMessages(batch: LinkFetchBatch): string[] {
     );
   }
   return warnings;
+}
+
+/** URLs the model may put on Open buttons this turn (fetched pages + outbound). */
+export function collectAllowedSuggestionUrls(batch: LinkFetchBatch): Set<string> {
+  const allowed = new Set<string>();
+  for (const result of batch.results) {
+    if (!result.ok) continue;
+    try {
+      allowed.add(new URL(result.url).href);
+    } catch {
+      // skip
+    }
+    for (const link of result.outboundLinks ?? []) {
+      try {
+        allowed.add(new URL(link.url).href);
+      } catch {
+        // skip
+      }
+    }
+  }
+  return allowed;
+}
+
+function normalizeSuggestionUrl(raw: string): string | null {
+  try {
+    const parsed = new URL(raw.trim());
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null;
+    return parsed.href;
+  } catch {
+    return null;
+  }
+}
+
+function normalizeMatchText(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function pathMatchText(url: string): string {
+  try {
+    return normalizeMatchText(new URL(url).pathname);
+  } catch {
+    return '';
+  }
+}
+
+/** Shared significant tokens / smaller set size (0–1). */
+export function tokenOverlapScore(a: string, b: string): number {
+  const as = new Set(
+    normalizeMatchText(a)
+      .split(' ')
+      .filter((t) => t.length > 2),
+  );
+  const bs = new Set(
+    normalizeMatchText(b)
+      .split(' ')
+      .filter((t) => t.length > 2),
+  );
+  if (!as.size || !bs.size) return 0;
+  let inter = 0;
+  for (const t of as) {
+    if (bs.has(t)) inter += 1;
+  }
+  return inter / Math.min(as.size, bs.size);
+}
+
+function collectOutboundCatalog(batch: LinkFetchBatch): OutboundLink[] {
+  const catalog: OutboundLink[] = [];
+  const seen = new Set<string>();
+  for (const result of batch.results) {
+    if (!result.ok) continue;
+    for (const link of result.outboundLinks ?? []) {
+      const href = normalizeSuggestionUrl(link.url);
+      if (!href || seen.has(href)) continue;
+      seen.add(href);
+      catalog.push({
+        title: link.title,
+        url: href,
+        teaser: link.teaser,
+      });
+    }
+  }
+  return catalog;
+}
+
+/**
+ * Map a model-suggested title/URL onto a real outbound link from this turn.
+ * Exact URL first, then path/title fuzzy match (handles slightly wrong slugs).
+ */
+export function resolveToOutboundLink(
+  batch: LinkFetchBatch,
+  title: string,
+  rawUrl: string,
+): OutboundLink | null {
+  const catalog = collectOutboundCatalog(batch);
+  if (!catalog.length) return null;
+
+  const url = normalizeSuggestionUrl(rawUrl);
+  if (url) {
+    const exact = catalog.find((link) => link.url === url);
+    if (exact) return exact;
+  }
+
+  if (url) {
+    const wantPath = pathMatchText(url);
+    let best: OutboundLink | null = null;
+    let bestScore = 0;
+    for (const link of catalog) {
+      const score = tokenOverlapScore(wantPath, pathMatchText(link.url));
+      if (score > bestScore) {
+        bestScore = score;
+        best = link;
+      }
+    }
+    // Require solid overlap so we don't snap to an unrelated story.
+    if (best && bestScore >= 0.6) return best;
+  }
+
+  const wantTitle = normalizeMatchText(title);
+  if (wantTitle.length >= 10) {
+    let best: OutboundLink | null = null;
+    let bestScore = 0;
+    for (const link of catalog) {
+      const score = tokenOverlapScore(wantTitle, link.title);
+      if (score > bestScore) {
+        bestScore = score;
+        best = link;
+      }
+    }
+    if (best && bestScore >= 0.55) return best;
+  }
+
+  return null;
+}
+
+function titleForAllowedUrl(batch: LinkFetchBatch, url: string): string {
+  for (const result of batch.results) {
+    if (!result.ok) continue;
+    try {
+      if (new URL(result.url).href === url) {
+        return result.title?.trim() || url;
+      }
+    } catch {
+      // continue
+    }
+    for (const link of result.outboundLinks ?? []) {
+      try {
+        if (new URL(link.url).href === url) return link.title;
+      } catch {
+        // continue
+      }
+    }
+  }
+  return url;
+}
+
+/** Parse markdown [title](url) pairs from assistant text. */
+export function parseMarkdownLinks(text: string): SuggestedLink[] {
+  if (!text) return [];
+  const found: SuggestedLink[] = [];
+  const seen = new Set<string>();
+  const re = /\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g;
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(text)) !== null) {
+    const title = collapseWhitespace(match[1] ?? '');
+    const url = normalizeSuggestionUrl(match[2] ?? '');
+    if (!title || !url || seen.has(url)) continue;
+    seen.add(url);
+    found.push({ title, url });
+  }
+  return found;
+}
+
+type SuggestLinksToolArgs = {
+  links?: Array<{ title?: unknown; url?: unknown; teaser?: unknown }>;
+};
+
+/**
+ * Build up to SUGGESTED_LINKS_MAX Open-button links from tool args, then markdown.
+ * Model URLs are snapped to this turn's outbound set (exact or fuzzy title/path).
+ */
+export async function buildSuggestedLinks(options: {
+  batch: LinkFetchBatch;
+  toolArgs?: SuggestLinksToolArgs | null;
+  responseText?: string;
+}): Promise<SuggestedLink[]> {
+  const catalog = collectOutboundCatalog(options.batch);
+  if (!catalog.length && !collectAllowedSuggestionUrls(options.batch).size) {
+    return [];
+  }
+
+  const candidates: SuggestedLink[] = [];
+  const seen = new Set<string>();
+
+  const pushCandidate = (title: string, rawUrl: string, teaser?: string) => {
+    if (candidates.length >= SUGGESTED_LINKS_MAX) return;
+    const resolved =
+      resolveToOutboundLink(options.batch, title, rawUrl) ||
+      (() => {
+        // Allow the fetched page URL itself if the model links it.
+        const href = normalizeSuggestionUrl(rawUrl);
+        if (!href) return null;
+        const allowed = collectAllowedSuggestionUrls(options.batch);
+        if (!allowed.has(href)) return null;
+        return {
+          title: collapseWhitespace(title) || titleForAllowedUrl(options.batch, href),
+          url: href,
+          teaser,
+        } as OutboundLink;
+      })();
+    if (!resolved) return;
+    const url = resolved.url;
+    if (seen.has(url)) return;
+    seen.add(url);
+    const cleanTitle =
+      collapseWhitespace(title) ||
+      resolved.title ||
+      titleForAllowedUrl(options.batch, url);
+    if (!cleanTitle) return;
+    const cleanTeaser =
+      collapseWhitespace(teaser || '') ||
+      resolved.teaser ||
+      teaserForUrl(options.batch, url);
+    candidates.push(
+      cleanTeaser
+        ? { title: cleanTitle, url, teaser: cleanTeaser }
+        : { title: cleanTitle, url },
+    );
+  };
+
+  const toolLinks = options.toolArgs?.links;
+  if (Array.isArray(toolLinks)) {
+    for (const item of toolLinks) {
+      if (!item || typeof item !== 'object') continue;
+      const title = typeof item.title === 'string' ? item.title : '';
+      const url = typeof item.url === 'string' ? item.url : '';
+      const teaser = typeof item.teaser === 'string' ? item.teaser : undefined;
+      pushCandidate(title, url, teaser);
+    }
+  }
+
+  if (candidates.length < SUGGESTED_LINKS_MAX && options.responseText) {
+    for (const link of parseMarkdownLinks(options.responseText)) {
+      pushCandidate(link.title, link.url);
+    }
+  }
+
+  return verifySuggestedLinkCandidates(candidates);
+}
+
+/**
+ * When the LLM is SAFETY-blocked (or returns nothing), pick outbound headlines
+ * from this turn's fetch so the student still gets Read-link buttons.
+ */
+export async function pickOutboundSuggestedLinks(
+  batch: LinkFetchBatch,
+  max = SUGGESTED_LINKS_MAX,
+): Promise<SuggestedLink[]> {
+  const candidates: SuggestedLink[] = [];
+  const seen = new Set<string>();
+
+  for (const result of batch.results) {
+    if (!result.ok || !result.outboundLinks?.length) continue;
+    let pageHost = '';
+    try {
+      pageHost = new URL(result.url).hostname.toLowerCase();
+    } catch {
+      pageHost = '';
+    }
+    const pageHref = normalizeSuggestionUrl(result.url);
+
+    const ranked = [...result.outboundLinks].sort((a, b) => {
+      const hostOf = (raw: string) => {
+        try {
+          return new URL(raw).hostname.toLowerCase();
+        } catch {
+          return '';
+        }
+      };
+      const aSame = pageHost && hostOf(a.url) === pageHost ? 1 : 0;
+      const bSame = pageHost && hostOf(b.url) === pageHost ? 1 : 0;
+      if (aSame !== bSame) return bSame - aSame;
+      const aTeaser = a.teaser ? 1 : 0;
+      const bTeaser = b.teaser ? 1 : 0;
+      return bTeaser - aTeaser;
+    });
+
+    for (const link of ranked) {
+      if (candidates.length >= max) break;
+      const url = normalizeSuggestionUrl(link.url);
+      if (!url || seen.has(url) || url === pageHref) continue;
+      // Skip very short chrome titles.
+      const title = collapseWhitespace(link.title);
+      if (!title || title.length < 12) continue;
+      seen.add(url);
+      candidates.push(
+        link.teaser
+          ? { title, url, teaser: link.teaser }
+          : { title, url },
+      );
+    }
+  }
+
+  return verifySuggestedLinkCandidates(candidates);
+}
+
+async function verifySuggestedLinkCandidates(
+  candidates: SuggestedLink[],
+): Promise<SuggestedLink[]> {
+  const verified: SuggestedLink[] = [];
+  for (const link of candidates) {
+    try {
+      const safe = await assertUrlSafeToFetch(link.url);
+      verified.push(
+        link.teaser
+          ? { title: link.title, url: safe.href, teaser: link.teaser }
+          : { title: link.title, url: safe.href },
+      );
+    } catch {
+      // drop unsafe / unresolvable
+    }
+    if (verified.length >= SUGGESTED_LINKS_MAX) break;
+  }
+  return verified;
+}
+
+function teaserForUrl(batch: LinkFetchBatch | undefined, url: string): string | undefined {
+  if (!batch) return undefined;
+  for (const result of batch.results) {
+    if (!result.ok) continue;
+    for (const link of result.outboundLinks ?? []) {
+      try {
+        if (new URL(link.url).href === url && link.teaser?.trim()) {
+          return link.teaser.trim();
+        }
+      } catch {
+        // continue
+      }
+    }
+  }
+  return undefined;
+}
+
+/**
+ * User-facing reply when the model called suggest_openable_links but returned no prose,
+ * or when SAFETY blocked and we fall back to outbound headlines.
+ */
+export function buildSuggestedLinksReply(
+  links: SuggestedLink[],
+  batch?: LinkFetchBatch,
+  options?: { degraded?: boolean },
+): string {
+  if (!links.length) return '';
+  const lines: string[] = [
+    options?.degraded
+      ? 'I could not get an AI write-up for that page just now, but here are headlines from it that may relate to your course:'
+      : 'These look most relevant to your course right now:',
+    '',
+  ];
+  links.forEach((link, index) => {
+    const teaser = link.teaser?.trim() || teaserForUrl(batch, link.url);
+    const teaserBit = teaser ? ` — ${teaser}` : '';
+    lines.push(`${index + 1}. [${link.title}](${link.url})${teaserBit}`);
+  });
+  lines.push(
+    '',
+    'Use a **Read link** button below if you want me to read one of these pages in detail.',
+  );
+  return lines.join('\n');
 }

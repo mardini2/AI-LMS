@@ -83,6 +83,21 @@ export class GeminiProvider implements LlmProvider {
         );
       }
 
+      const safetySettings = [
+        {
+          category: HarmCategory.HARM_CATEGORY_HARASSMENT,
+          threshold: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
+        },
+      ];
+      // Only when this turn includes fetched link content — keeps default
+      // stricter for ordinary multi-course Q&A.
+      if (request.relaxDangerousContentSafety) {
+        safetySettings.push({
+          category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
+          threshold: HarmBlockThreshold.BLOCK_NONE,
+        });
+      }
+
       const chat = this.gemini.createChat({
         history: geminiHistory,
         config: {
@@ -95,12 +110,7 @@ export class GeminiProvider implements LlmProvider {
                 },
               }
             : undefined,
-          safetySettings: [
-            {
-              category: HarmCategory.HARM_CATEGORY_HARASSMENT,
-              threshold: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
-            },
-          ],
+          safetySettings,
         },
       });
 
@@ -112,19 +122,39 @@ export class GeminiProvider implements LlmProvider {
           args: (call.args ?? {}) as Record<string, unknown>,
         }));
 
+      const text = (result.text ?? '').trim();
+      const finishReason = result.candidates?.[0]?.finishReason
+        ? String(result.candidates[0].finishReason)
+        : undefined;
+      const safetyRatings = result.candidates?.[0]?.safetyRatings;
+
       if (shouldLogGreetingDebug(priorUserTurns)) {
         logGreetingDebug(
           'PROVIDER_RAW:gemini',
           [
             '----- RAW PROVIDER RESPONSE (gemini SDK result.text) -----',
-            (result.text ?? '').trim() || '(empty text)',
+            text || '(empty text)',
+            `finishReason: ${finishReason ?? '(none)'}`,
+            `toolCalls: ${JSON.stringify(toolCalls)}`,
+            `safetyRatings: ${JSON.stringify(safetyRatings ?? [])}`,
           ].join('\n'),
         );
       }
 
+      if (!text) {
+        this.logger.warn(
+          `Gemini returned empty text (finishReason=${finishReason ?? 'n/a'}, toolCalls=${JSON.stringify(
+            toolCalls.map((c) => c.name),
+          )}, safetyRatings=${JSON.stringify(safetyRatings ?? [])}, relaxDangerous=${Boolean(
+            request.relaxDangerousContentSafety,
+          )})`,
+        );
+      }
+
       return {
-        text: (result.text ?? '').trim(),
+        text,
         toolCalls,
+        finishReason,
       };
     } catch (err) {
       this.logger.warn(`Gemini chat failed: ${err instanceof Error ? err.message : String(err)}`);

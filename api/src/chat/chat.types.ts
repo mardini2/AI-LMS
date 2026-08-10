@@ -35,6 +35,11 @@ export interface ReviewBlockDto {
   citationUrl?: string;
 }
 
+export interface SuggestedLinkDto {
+  title: string;
+  url: string;
+}
+
 export interface ChatResponse {
   response: string;
   conversationId: string;
@@ -45,6 +50,8 @@ export interface ChatResponse {
   /** Coach guidance 1–5 when mode is coach. */
   guidance?: number;
   pendingAction?: PendingActionDto;
+  /** Ephemeral Open-button targets for pages recommended this turn. */
+  suggestedLinks?: SuggestedLinkDto[];
   topicSuggestions?: string[];
   quizUrl?: string;
   studyGuideUrl?: string;
