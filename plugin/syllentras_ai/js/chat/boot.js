@@ -1719,11 +1719,11 @@ var SPEECH_VOICES = [
 
 // Same idea as the font size steps — a few named speeds instead of a weird float.
 var SPEECH_RATE_STEPS = [
-    { step: 1, rate: 0.75, label: 'Slow' },
-    { step: 2, rate: 0.9, label: 'Steady' },
-    { step: 3, rate: 1.0, label: 'Default' },
-    { step: 4, rate: 1.15, label: 'Brisk' },
-    { step: 5, rate: 1.3, label: 'Fast' }
+    { step: 1, rate: 0.75, label: 'Very Slow' },
+    { step: 2, rate: 0.9, label: 'Slow' },
+    { step: 3, rate: 1.0, label: 'Normal' },
+    { step: 4, rate: 1.15, label: 'Fast' },
+    { step: 5, rate: 1.3, label: 'Very Fast' }
 ];
 
 var speakingMessageEl = null;
@@ -2270,7 +2270,7 @@ function getMessageSpeakText(el) {
 }
 
 // Beat between the message and the timestamp so "3:45 PM" doesn't glue onto the last word.
-var SPEECH_TIME_PAUSE_MS = 300;
+var SPEECH_TIME_PAUSE_MS = 200;
 
 function speakBrowserUtterance(text, locale, generation, onEnd, onFail) {
     var utterance = new SpeechSynthesisUtterance(text);
