@@ -541,15 +541,72 @@ function stopMessageSpeech() {
     speakingMessageEl = null;
 }
 
-function getMessageSpeakText(el) {
-    if (!el) return '';
+function getMessageSpeakParts(el) {
+    if (!el) return { body: '', time: '' };
+
+    // Pull the clock out separately so we can pause before saying it.
+    var timeNode = el.querySelector('.syllentras-msg-time');
+    var time = timeNode
+        ? String(timeNode.textContent || '').replace(/\s+/g, ' ').trim()
+        : '';
+
     var clone = el.cloneNode(true);
     Array.from(clone.querySelectorAll(
-        '.syllentras-msg-speak, .syllentras-msg-mode, .syllentras-pending-action, .syllentras-suggested-links, .syllentras-content-open-btn, .syllentras-review-toolbar'
+        '.syllentras-msg-speak, .syllentras-msg-mode, .syllentras-msg-time, .syllentras-pending-action, .syllentras-suggested-links, .syllentras-content-open-btn, .syllentras-review-toolbar'
     )).forEach(function (node) {
         node.remove();
     });
-    return (clone.textContent || '').replace(/\s+/g, ' ').trim();
+    var body = (clone.textContent || '').replace(/\s+/g, ' ').trim();
+    return { body: body, time: time };
+}
+
+function getMessageSpeakText(el) {
+    var parts = getMessageSpeakParts(el);
+    if (!parts.body) return '';
+    if (!parts.time) return parts.body;
+    // Fallback single string (e.g. rare callers) — still separates with a beat.
+    return parts.body + '. ... ' + parts.time;
+}
+
+// Beat between the message and the timestamp so "3:45 PM" doesn't glue onto the last word.
+var SPEECH_TIME_PAUSE_MS = 200;
+
+function speakBrowserUtterance(text, locale, generation, onEnd, onFail) {
+    var utterance = new SpeechSynthesisUtterance(text);
+    utterance.lang = locale;
+    var voice = pickSpeechVoice(selectedSpeechVoice, locale);
+    if (voice) {
+        utterance.voice = voice;
+        if (voice.lang) utterance.lang = voice.lang;
+    }
+    utterance.rate = speechRateInfo(selectedSpeechRateStep).rate;
+    utterance.pitch = selectedSpeechVoice === 'ben' ? 0.92 : 1.08;
+    utterance.volume = 1;
+
+    utterance.onend = function () {
+        if (generation !== speechPlayGeneration) return;
+        if (typeof onEnd === 'function') onEnd();
+    };
+    utterance.onerror = function (ev) {
+        if (generation !== speechPlayGeneration) return;
+        var err = ev && ev.error;
+        if (err === 'canceled' || err === 'interrupted') return;
+        if (typeof onFail === 'function') {
+            onFail();
+            return;
+        }
+        if (typeof onEnd === 'function') onEnd();
+    };
+
+    try {
+        window.speechSynthesis.speak(utterance);
+    } catch (e) {
+        if (typeof onFail === 'function') {
+            onFail();
+        } else if (typeof onEnd === 'function') {
+            onEnd();
+        }
+    }
 }
 
 function setSpeakButtonPlaying(el, playing) {
@@ -570,7 +627,7 @@ function clearSpeakingUi(el) {
     }
 }
 
-function startBrowserMessageSpeech(el, text, generation, lang, onFail) {
+function startBrowserMessageSpeech(el, text, generation, lang, onFail, timeText) {
     if (!browserSpeechSupported()) {
         if (typeof onFail === 'function') {
             onFail();
@@ -584,51 +641,48 @@ function startBrowserMessageSpeech(el, text, generation, lang, onFail) {
     refreshSpeechVoiceCache();
 
     var locale = normalizeSpeechLang(lang || SPEECH_LANG_DEFAULT);
-    var utterance = new SpeechSynthesisUtterance(text);
-    utterance.lang = locale;
-    var voice = pickSpeechVoice(selectedSpeechVoice, locale);
-    if (voice) {
-        utterance.voice = voice;
-        // Some engines ignore voice.lang unless we set it too.
-        if (voice.lang) utterance.lang = voice.lang;
-    }
-    utterance.rate = speechRateInfo(selectedSpeechRateStep).rate;
-    // Tiny pitch nudge so Grace/Ben don't sound identical and flat.
-    utterance.pitch = selectedSpeechVoice === 'ben' ? 0.92 : 1.08;
-    utterance.volume = 1;
 
-    utterance.onend = function () {
+    function finish() {
         if (generation !== speechPlayGeneration) return;
         clearSpeakingUi(el);
-    };
-    utterance.onerror = function (ev) {
-        // cancel() / restart fires canceled|interrupted — don't treat as failure.
-        if (generation !== speechPlayGeneration) return;
-        var err = ev && ev.error;
-        if (err === 'canceled' || err === 'interrupted') return;
-        if (typeof onFail === 'function') {
-            onFail();
+    }
+
+    function speakTimeThenFinish() {
+        if (!timeText) {
+            finish();
             return;
         }
-        clearSpeakingUi(el);
-    };
-
-    try {
-        window.speechSynthesis.speak(utterance);
-    } catch (e) {
-        if (typeof onFail === 'function') {
-            onFail();
-        } else {
-            clearSpeakingUi(el);
-        }
+        // Short silence so the timestamp feels like a caption, not the next sentence.
+        setTimeout(function () {
+            if (generation !== speechPlayGeneration || speakingMessageEl !== el) return;
+            speakBrowserUtterance(timeText, locale, generation, finish, function () {
+                // Time failed — still clear the button rather than looping forever.
+                finish();
+            });
+        }, SPEECH_TIME_PAUSE_MS);
     }
+
+    speakBrowserUtterance(
+        text,
+        locale,
+        generation,
+        speakTimeThenFinish,
+        function () {
+            if (typeof onFail === 'function') {
+                onFail();
+                return;
+            }
+            finish();
+        }
+    );
 }
 
 /**
  * @param {boolean} [allowBrowserFallback=true] — set false when browser already
  *   failed and Azure is the last resort (avoids a pointless second browser try).
+ * @param {string} [timeText] — optional timestamp spoken after a short pause.
  */
-function startAzureMessageSpeech(el, text, generation, lang, allowBrowserFallback) {
+function startAzureMessageSpeech(el, text, generation, lang, allowBrowserFallback, timeText) {
     var canFallback = allowBrowserFallback !== false;
     var locale = normalizeSpeechLang(lang || SPEECH_LANG_DEFAULT);
 
@@ -636,7 +690,7 @@ function startAzureMessageSpeech(el, text, generation, lang, allowBrowserFallbac
         markAzureSpeechUnavailableTemporarily();
         if (generation !== speechPlayGeneration || speakingMessageEl !== el) return;
         if (canFallback && browserSpeechSupported()) {
-            startBrowserMessageSpeech(el, text, generation, locale);
+            startBrowserMessageSpeech(el, text, generation, locale, null, timeText);
         } else {
             clearSpeakingUi(el);
         }
@@ -677,6 +731,14 @@ function startAzureMessageSpeech(el, text, generation, lang, allowBrowserFallbac
         azureAudioEl.onended = function () {
             if (generation !== speechPlayGeneration) return;
             stopAzureAudio();
+            if (timeText) {
+                setTimeout(function () {
+                    if (generation !== speechPlayGeneration || speakingMessageEl !== el) return;
+                    // Second clip is just the clock — no further timeText.
+                    startAzureMessageSpeech(el, timeText, generation, locale, canFallback, null);
+                }, SPEECH_TIME_PAUSE_MS);
+                return;
+            }
             clearSpeakingUi(el);
         };
         azureAudioEl.onerror = function () {
@@ -698,7 +760,9 @@ function startAzureMessageSpeech(el, text, generation, lang, allowBrowserFallbac
 function startMessageSpeech(el) {
     if (!el || !speechSupported()) return;
 
-    var text = getMessageSpeakText(el);
+    var parts = getMessageSpeakParts(el);
+    var text = parts.body;
+    var timeText = parts.time || '';
     if (!text || text === '...') return;
 
     var speakLang = detectSpeechLang(text);
@@ -736,23 +800,23 @@ function startMessageSpeech(el) {
                 if (generation !== speechPlayGeneration || speakingMessageEl !== el) return;
                 if (azureOk) {
                     // Native choked; Azure is the backup. Don't bounce back to browser.
-                    startAzureMessageSpeech(el, text, generation, speakLang, false);
+                    startAzureMessageSpeech(el, text, generation, speakLang, false, timeText);
                 } else {
                     clearSpeakingUi(el);
                 }
-            });
+            }, timeText);
             return;
         }
 
         // No matching browser voice (e.g. Arabic on many Windows installs),
         // or Firefox / Brave — Azure when it's up, browser otherwise.
         if (azureOk) {
-            startAzureMessageSpeech(el, text, generation, speakLang, true);
+            startAzureMessageSpeech(el, text, generation, speakLang, true, timeText);
             return;
         }
 
         if (browserSpeechSupported()) {
-            startBrowserMessageSpeech(el, text, generation, speakLang);
+            startBrowserMessageSpeech(el, text, generation, speakLang, null, timeText);
             return;
         }
 
