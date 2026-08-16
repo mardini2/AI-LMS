@@ -1,0 +1,8122 @@
+(function () {
+'use strict';
+
+var root = document.getElementById('syllentras-chat-root');
+if (!root || !root.getAttribute('data-config')) { return; }
+var config = JSON.parse(root.getAttribute('data-config'));
+var API_URL = config.apiUrl;
+var courseId = config.courseId;
+var courseName = config.courseName;
+var moodleUserId = config.moodleUserId;
+var userFirstName = config.userFirstName;
+var courseSections = config.courseSections || [];
+
+
+// ===== preamble.js =====
+// Part of the Syllentras chat widget.
+// Included inside the shared IIFE from before_footer.php — do not load standalone.
+
+var PAGE_SIZE = 30;
+var PANEL_MARGIN = 16;
+var PANEL_MIN_WIDTH = 360;
+var INPUT_MIN_HEIGHT = 42;
+var INPUT_MAX_HEIGHT = 180;
+var MESSAGES_MIN_HEIGHT = 120;
+var PANEL_CHROME_HEIGHT = 130;
+var PANEL_MIN_HEIGHT = PANEL_CHROME_HEIGHT + MESSAGES_MIN_HEIGHT + INPUT_MAX_HEIGHT;
+var PANEL_DEFAULT_WIDTH = 920;
+var PANEL_DEFAULT_HEIGHT = 650;
+var PANEL_DEFAULT_RIGHT = 24;
+var PANEL_DEFAULT_BOTTOM = 88;
+
+var btn       = document.getElementById('syllentras-chat-btn');
+var panel     = document.getElementById('syllentras-chat-panel');
+var close     = document.getElementById('syllentras-chat-close');
+var expandBtn = document.getElementById('syllentras-chat-expand');
+var resetBtn  = document.getElementById('syllentras-chat-reset');
+var input     = document.getElementById('syllentras-chat-input');
+var send      = document.getElementById('syllentras-chat-send');
+var toolsBtn  = document.getElementById('syllentras-chat-tools-btn');
+var msgs      = document.getElementById('syllentras-chat-messages');
+var scrollBottomBtn = document.getElementById('syllentras-scroll-bottom-btn');
+var loadMore  = document.getElementById('syllentras-chat-load-more');
+var courseEl  = document.getElementById('syllentras-chat-course');
+var header    = document.getElementById('syllentras-chat-header');
+var sidebar   = document.getElementById('syllentras-chat-sidebar');
+var sidebarResizer = document.getElementById('syllentras-chat-sidebar-resizer');
+var inputResizer = document.getElementById('syllentras-chat-input-resizer');
+var modal     = document.getElementById('syllentras-chat-modal');
+var conversationsEl = document.getElementById('syllentras-chat-conversations');
+var searchInput = document.getElementById('syllentras-chat-search');
+var newBtn = document.getElementById('syllentras-chat-new');
+var activeTitle = document.getElementById('syllentras-chat-active-title');
+var activeTag = document.getElementById('syllentras-chat-active-tag');
+var msgSearchToggle = document.getElementById('syllentras-msg-search-toggle');
+var msgSearchPanel = document.getElementById('syllentras-msg-search');
+var msgSearchInput = document.getElementById('syllentras-msg-search-input');
+var msgSearchCount = document.getElementById('syllentras-msg-search-count');
+var msgSearchResults = document.getElementById('syllentras-msg-search-results');
+var msgSearchPrev = document.getElementById('syllentras-msg-search-prev');
+var msgSearchNext = document.getElementById('syllentras-msg-search-next');
+var msgSearchClose = document.getElementById('syllentras-msg-search-close');
+var pendingDeleteConversation = null;
+var openMenu = null;
+
+courseEl.textContent = (courseId > 1 && courseName) ? courseName : 'Dashboard';
+
+// Dashboard default chat is named Home. Course default stays Main.
+function isDashboardContext() {
+    return !(courseId > 1);
+}
+
+function generalChatTitle() {
+    return isDashboardContext() ? 'Home' : 'Main';
+}
+
+function generalChatTag() {
+    return isDashboardContext() ? '#Home' : '#Main';
+}
+
+function generalConversationGroupTitle() {
+    return generalChatTitle();
+}
+
+function generalChatPlaceholder() {
+    return isDashboardContext() ? 'Ask a question from Home...' : 'Ask a question about this course...';
+}
+
+function displayConversationTitle(conversation) {
+    if (conversation && conversation.type === 'general') {
+        return generalChatTitle();
+    }
+    return (conversation && conversation.title) || 'Conversation';
+}
+
+function displayConversationTag(conversation) {
+    if (conversation && conversation.type === 'general') {
+        return generalChatTag();
+    }
+    return (conversation && conversation.tag) || '';
+}
+
+if (activeTitle) {
+    activeTitle.textContent = generalChatTitle();
+}
+if (activeTag) {
+    activeTag.textContent = generalChatTag();
+}
+if (input) {
+    input.placeholder = generalChatPlaceholder();
+}
+
+var conversationId = null;
+var activeConversation = null;
+var hasMore = false;
+var loadingHistory = false;
+var loadingOlder = false;
+var layoutSaveTimer = null;
+var isDraggingPanel = false;
+var isResizingPanel = false;
+var isResizingSidebar = false;
+var isResizingInput = false;
+var dragOffsetX = 0;
+var dragOffsetY = 0;
+var resizeEdge = null;
+var resizeStartX = 0;
+var resizeStartY = 0;
+var resizeStartRect = null;
+var inputResizeStartY = 0;
+var inputResizeStartHeight = 0;
+var mobileLayout = window.matchMedia('(max-width: 700px)');
+var isExpanded = localStorage.getItem('syllentras_expanded') === '1';
+var SIDEBAR_MIN_WIDTH = 150;
+var SIDEBAR_MAX_WIDTH = 340;
+var SIDEBAR_DEFAULT_WIDTH = 190;
+
+// ===== layout.js =====
+// Part of the Syllentras chat widget.
+// Included inside the shared IIFE from before_footer.php — do not load standalone.
+
+function layoutStorageKey() {
+    return 'syllentras_layout_' + moodleUserId;
+}
+
+function normalLayoutStorageKey() {
+    return 'syllentras_layout_normal_' + moodleUserId;
+}
+
+function sidebarWidthStorageKey() {
+    return 'syllentras_sidebar_width_' + moodleUserId;
+}
+
+function inputHeightStorageKey() {
+    return 'syllentras_input_height_' + moodleUserId;
+}
+
+function isMobileLayout() {
+    return mobileLayout.matches;
+}
+
+function clamp(value, min, max) {
+    return Math.min(Math.max(value, min), max);
+}
+
+function normalizePanelRect(rect) {
+    var maxWidth = Math.max(1, window.innerWidth - PANEL_MARGIN * 2);
+    var maxHeight = Math.max(1, window.innerHeight - PANEL_MARGIN * 2);
+    var minWidth = Math.min(PANEL_MIN_WIDTH, maxWidth);
+    var minHeight = Math.min(PANEL_MIN_HEIGHT, maxHeight);
+    var width = clamp(rect.width || PANEL_DEFAULT_WIDTH, minWidth, maxWidth);
+    var height = clamp(rect.height || panel.offsetHeight || PANEL_DEFAULT_HEIGHT, minHeight, maxHeight);
+    var left = clamp(rect.left, PANEL_MARGIN, Math.max(PANEL_MARGIN, window.innerWidth - width - PANEL_MARGIN));
+    var top = clamp(rect.top, PANEL_MARGIN, Math.max(PANEL_MARGIN, window.innerHeight - height - PANEL_MARGIN));
+
+    return { left: left, top: top, width: width, height: height };
+}
+
+function setPanelRect(rect) {
+    panel.style.left = Math.round(rect.left) + 'px';
+    panel.style.top = Math.round(rect.top) + 'px';
+    panel.style.width = Math.round(rect.width) + 'px';
+    panel.style.height = Math.round(rect.height) + 'px';
+    panel.style.right = 'auto';
+    panel.style.bottom = 'auto';
+}
+
+function getCurrentPanelRect() {
+    var rect = panel.getBoundingClientRect();
+    return normalizePanelRect({
+        left: rect.left,
+        top: rect.top,
+        width: rect.width,
+        height: rect.height
+    });
+}
+
+function loadStoredLayout(normalSize) {
+    try {
+        var raw = localStorage.getItem(normalSize ? normalLayoutStorageKey() : layoutStorageKey());
+        return raw ? JSON.parse(raw) : null;
+    } catch (e) {
+        return null;
+    }
+}
+
+function savePanelLayout() {
+    if (isMobileLayout() || panel.hidden) return;
+
+    try {
+        var rect = JSON.stringify(getCurrentPanelRect());
+        localStorage.setItem(layoutStorageKey(), rect);
+        if (!isExpanded) {
+            localStorage.setItem(normalLayoutStorageKey(), rect);
+        }
+    } catch (e) {
+        // The chat still works if browser storage is unavailable.
+    }
+}
+
+function scheduleLayoutSave() {
+    if (layoutSaveTimer) clearTimeout(layoutSaveTimer);
+    layoutSaveTimer = setTimeout(savePanelLayout, 150);
+}
+
+function applyStoredSidebarWidth() {
+    if (isMobileLayout()) return;
+    var stored = parseInt(localStorage.getItem(sidebarWidthStorageKey()) || '', 10);
+    if (!Number.isNaN(stored)) setSidebarWidth(stored);
+}
+
+function setSidebarWidth(width) {
+    var panelWidth = panel.getBoundingClientRect().width || PANEL_DEFAULT_WIDTH;
+    var maxByPanel = Math.max(SIDEBAR_MIN_WIDTH, panelWidth - 280);
+    var nextWidth = clamp(width, SIDEBAR_MIN_WIDTH, Math.min(SIDEBAR_MAX_WIDTH, maxByPanel));
+    sidebar.style.width = nextWidth + 'px';
+    sidebar.style.flexBasis = nextWidth + 'px';
+}
+
+function saveSidebarWidth() {
+    if (isMobileLayout()) return;
+    localStorage.setItem(sidebarWidthStorageKey(), String(Math.round(sidebar.getBoundingClientRect().width)));
+}
+
+function applyStoredInputHeight() {
+    var stored = parseInt(localStorage.getItem(inputHeightStorageKey()) || '', 10);
+    if (!Number.isNaN(stored)) setInputHeight(stored);
+}
+
+function setInputHeight(height) {
+    input.style.height = clamp(height, INPUT_MIN_HEIGHT, INPUT_MAX_HEIGHT) + 'px';
+}
+
+function saveInputHeight() {
+    localStorage.setItem(inputHeightStorageKey(), String(Math.round(input.getBoundingClientRect().height)));
+}
+
+function getDefaultPanelRect() {
+    return normalizePanelRect({
+        left: window.innerWidth - PANEL_DEFAULT_WIDTH - PANEL_DEFAULT_RIGHT,
+        top: window.innerHeight - PANEL_DEFAULT_HEIGHT - PANEL_DEFAULT_BOTTOM,
+        width: PANEL_DEFAULT_WIDTH,
+        height: PANEL_DEFAULT_HEIGHT
+    });
+}
+
+function resetPanelLayout() {
+    if (isMobileLayout()) return;
+
+    isExpanded = false;
+    localStorage.setItem('syllentras_expanded', '0');
+    panel.classList.remove('expanded');
+    expandBtn.innerHTML = '&#x2922;';
+    expandBtn.setAttribute('aria-label', 'Expand');
+    setPanelRect(getDefaultPanelRect());
+    savePanelLayout();
+    setSidebarWidth(SIDEBAR_DEFAULT_WIDTH);
+    saveSidebarWidth();
+    setInputHeight(INPUT_MIN_HEIGHT);
+    saveInputHeight();
+}
+
+function applyStoredLayout(normalSize) {
+    if (isMobileLayout()) return;
+    var stored = loadStoredLayout(normalSize);
+    if (stored) setPanelRect(normalizePanelRect(stored));
+}
+
+function clampCurrentPanelLayout() {
+    if (isMobileLayout() || panel.hidden) return;
+    setPanelRect(getCurrentPanelRect());
+    savePanelLayout();
+}
+
+function applyExpandedState(forceFullHeight) {
+    if (isExpanded) {
+        panel.classList.add('expanded');
+        expandBtn.innerHTML = '&#x2921;';
+        expandBtn.setAttribute('aria-label', 'Collapse');
+        if (forceFullHeight && !panel.hidden && !isMobileLayout()) {
+            var expandedRect = getCurrentPanelRect();
+            expandedRect.top = PANEL_MARGIN;
+            expandedRect.height = window.innerHeight - PANEL_MARGIN * 2;
+            setPanelRect(normalizePanelRect(expandedRect));
+        }
+    } else {
+        panel.classList.remove('expanded');
+        expandBtn.innerHTML = '&#x2922;';
+        expandBtn.setAttribute('aria-label', 'Expand');
+        applyStoredLayout(true);
+    }
+    clampCurrentPanelLayout();
+}
+
+function showPanel() {
+    panel.hidden = false;
+    btn.hidden = true;
+    applyStoredLayout();
+    applyStoredSidebarWidth();
+    applyStoredInputHeight();
+    applyExpandedState(false);
+    clampCurrentPanelLayout();
+}
+
+
+// ===== api.js =====
+// Part of the Syllentras chat widget.
+// Included inside the shared IIFE from before_footer.php — do not load standalone.
+
+function fetchJson(path, options) {
+    options = options || {};
+    options.headers = Object.assign({ 'Content-Type': 'application/json' }, options.headers || {});
+    return fetch(API_URL + path, options).then(function (res) {
+        return res.text().then(function (text) {
+            var data = null;
+            if (text) {
+                try {
+                    data = JSON.parse(text);
+                } catch (e) {
+                    data = null;
+                }
+            }
+            if (!res.ok) {
+                // Nest usually returns { message: "..." } — surface that, never secrets.
+                var msg = null;
+                if (data) {
+                    if (typeof data.message === 'string') msg = data.message;
+                    else if (Array.isArray(data.message)) msg = data.message.join(' ');
+                }
+                throw new Error(msg || ('Request failed (' + res.status + '). Please try again.'));
+            }
+            return data;
+        });
+    });
+}
+
+
+// ===== providers.js =====
+// Part of the Syllentras chat widget.
+// Included inside the shared IIFE from before_footer.php — do not load standalone.
+
+var PROVIDER_STORAGE_KEY = 'syllentras_ai_provider';
+var UNAVAILABLE_PROVIDER_MESSAGE =
+    'This AI provider is currently unavailable because it has not been configured yet.';
+
+// Brand marks (simple-icons paths) rendered as currentColor SVGs for the picker.
+var PROVIDER_ICON_PATHS = {
+    openai:
+        'M22.2819 9.8211a5.9847 5.9847 0 0 0-.5157-4.9108 6.0462 6.0462 0 0 0-6.5098-2.9A6.0651 6.0651 0 0 0 4.9807 4.1818a5.9847 5.9847 0 0 0-3.9977 2.9 6.0462 6.0462 0 0 0 .7427 7.0966 5.98 5.98 0 0 0 .511 4.9107 6.051 6.051 0 0 0 6.5146 2.9001A5.9847 5.9847 0 0 0 13.2599 24a6.0557 6.0557 0 0 0 5.7718-4.2058 5.9894 5.9894 0 0 0 3.9977-2.9001 6.0557 6.0557 0 0 0-.7475-7.0729zm-9.022 12.6081a4.4755 4.4755 0 0 1-2.8764-1.0408l.1419-.0804 4.7783-2.7582a.7948.7948 0 0 0 .3927-.6813v-6.7369l2.02 1.1686a.071.071 0 0 1 .038.052v5.5826a4.504 4.504 0 0 1-4.4945 4.4944zm-9.6607-4.1254a4.4708 4.4708 0 0 1-.5346-3.0137l.142.0852 4.783 2.7582a.7712.7712 0 0 0 .7806 0l5.8428-3.3685v2.3324a.0804.0804 0 0 1-.0332.0615L9.74 19.9502a4.4992 4.4992 0 0 1-6.1408-1.6464zM2.3408 7.8956a4.485 4.485 0 0 1 2.3655-1.9728V11.6a.7664.7664 0 0 0 .3879.6765l5.8144 3.3543-2.0201 1.1685a.0757.0757 0 0 1-.071 0l-4.8303-2.7865A4.504 4.504 0 0 1 2.3408 7.872zm16.5963 3.8558L13.1038 8.364 15.1192 7.2a.0757.0757 0 0 1 .071 0l4.8303 2.7913a4.4944 4.4944 0 0 1-.6765 8.1042v-5.6772a.79.79 0 0 0-.407-.667zm2.0107-3.0231l-.142-.0852-4.7735-2.7818a.7759.7759 0 0 0-.7854 0L9.409 9.2297V6.8974a.0662.0662 0 0 1 .0284-.0615l4.8303-2.7866a4.4992 4.4992 0 0 1 6.6802 4.66zM8.3065 12.863l-2.02-1.1638a.0804.0804 0 0 1-.038-.0567V6.0742a4.4992 4.4992 0 0 1 7.3757-3.4537l-.142.0805L8.704 5.459a.7948.7948 0 0 0-.3927.6813zm1.0976-2.3654l2.602-1.4998 2.6069 1.4998v2.9994l-2.5974 1.4997-2.6067-1.4997Z',
+    gemini:
+        'M11.04 19.32Q12 21.51 12 24q0-2.49.93-4.68.96-2.19 2.58-3.81t3.81-2.55Q21.51 12 24 12q-2.49 0-4.68-.93a12.3 12.3 0 0 1-3.81-2.58 12.3 12.3 0 0 1-2.58-3.81Q12 2.49 12 0q0 2.49-.96 4.68-.93 2.19-2.55 3.81a12.3 12.3 0 0 1-3.81 2.58Q2.49 12 0 12q2.49 0 4.68.96 2.19.93 3.81 2.55t2.55 3.81',
+    anthropic:
+        'm4.7144 15.9555 4.7174-2.6471.079-.2307-.079-.1275h-.2307l-.7893-.0486-2.6956-.0729-2.3375-.0971-2.2646-.1214-.5707-.1215-.5343-.7042.0546-.3522.4797-.3218.686.0608 1.5179.1032 2.2767.1578 1.6514.0972 2.4468.255h.3886l.0546-.1579-.1336-.0971-.1032-.0972L6.973 9.8356l-2.55-1.6879-1.3356-.9714-.7225-.4918-.3643-.4614-.1578-1.0078.6557-.7225.8803.0607.2246.0607.8925.686 1.9064 1.4754 2.4893 1.8336.3643.3035.1457-.1032.0182-.0728-.164-.2733-1.3539-2.4467-1.445-2.4893-.6435-1.032-.17-.6194c-.0607-.255-.1032-.4674-.1032-.7285L6.287.1335 6.6997 0l.9957.1336.419.3642.6192 1.4147 1.0018 2.2282 1.5543 3.0296.4553.8985.2429.8318.091.255h.1579v-.1457l.1275-1.706.2368-2.0947.2307-2.6957.0789-.7589.3764-.9107.7468-.4918.5828.2793.4797.686-.0668.4433-.2853 1.8517-.5586 2.9021-.3643 1.9429h.2125l.2429-.2429.9835-1.3053 1.6514-2.0643.7286-.8196.85-.9046.5464-.4311h1.0321l.759 1.1293-.34 1.1657-1.0625 1.3478-.8804 1.1414-1.2628 1.7-.7893 1.36.0729.1093.1882-.0183 2.8535-.607 1.5421-.2794 1.8396-.3157.8318.3886.091.3946-.3278.8075-1.967.4857-2.3072.4614-3.4364.8136-.0425.0304.0486.0607 1.5482.1457.6618.0364h1.621l3.0175.2247.7892.522.4736.6376-.079.4857-1.2142.6193-1.6393-.3886-3.825-.9107-1.3113-.3279h-.1822v.1093l1.0929 1.0686 2.0035 1.8092 2.5075 2.3314.1275.5768-.3218.4554-.34-.0486-2.2039-1.6575-.85-.7468-1.9246-1.621h-.1275v.17l.4432.6496 2.3436 3.5214.1214 1.0807-.17.3521-.6071.2125-.6679-.1214-1.3721-1.9246L14.38 17.959l-1.1414-1.9428-.1397.079-.674 7.2552-.3156.3703-.7286.2793-.6071-.4614-.3218-.7468.3218-1.4753.3886-1.9246.3157-1.53.2853-1.9004.17-.6314-.0121-.0425-.1397.0182-1.4328 1.9672-2.1796 2.9446-1.7243 1.8456-.4128.164-.7164-.3704.0667-.6618.4008-.5889 2.386-3.0357 1.4389-1.882.929-1.0868-.0062-.1579h-.0546l-6.3385 4.1164-1.1293.1457-.4857-.4554.0608-.7467.2307-.2429 1.9064-1.3114Z',
+    xai: 'M14.234 10.162 22.977 0h-2.072l-7.591 8.824L7.251 0H.258l9.168 13.343L.258 24H2.33l8.016-9.318L16.749 24h6.993zm-2.837 3.299-.929-1.329L3.076 1.56h3.182l5.965 8.532.929 1.329 7.754 11.09h-3.182z',
+    mistral:
+        'M17.143 3.429v3.428h-3.429v3.429h-3.428V6.857H6.857V3.43H3.43v13.714H0v3.428h10.286v-3.428H6.857v-3.429h3.429v3.429h3.429v-3.429h3.428v3.429h-3.428v3.428H24v-3.428h-3.43V3.429z'
+};
+
+var PROVIDER_FALLBACK_ICON_PATH =
+    'M12 2l1.4 4.2L18 7.6l-3.6 3.1L15.8 16 12 13.8 8.2 16l1.4-5.3L6 7.6l4.6-1.4L12 2zm0 14.5c2.5 0 4.5 1.3 4.5 2.8S14.5 22 12 22s-4.5-1.2-4.5-2.7 2-2.8 4.5-2.8z';
+
+var providerBtn = document.getElementById('syllentras-provider-btn');
+var providerMenu = document.getElementById('syllentras-provider-menu');
+var providerWrap = providerBtn ? providerBtn.closest('.syllentras-provider-wrap') : null;
+
+var providerList = [];
+var selectedProviderId = null;
+var defaultProviderId = null;
+var providersLoaded = false;
+/** True when any local turn is in flight (or peer turn) — kept for older guards. */
+var isGeneratingResponse = false;
+/** Per-chat in-flight local turns so multiple chats can generate at once. */
+var generatingConversationIds = Object.create(null);
+
+function getSelectedProviderId() {
+    return selectedProviderId || defaultProviderId || null;
+}
+
+function isConversationGenerating(id) {
+    return !!(id && generatingConversationIds[String(id)]);
+}
+
+function hasLocalGeneratingTurns() {
+    for (var key in generatingConversationIds) {
+        if (Object.prototype.hasOwnProperty.call(generatingConversationIds, key)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/** Lock the input only for the chat currently on screen. */
+function isActiveChatBusy() {
+    return isConversationGenerating(conversationId)
+        || (typeof peerTurnActive !== 'undefined' && peerTurnActive);
+}
+
+function updateComposerLock() {
+    var locked = isActiveChatBusy();
+    if (send) {
+        send.disabled = locked;
+    }
+    if (input) {
+        input.disabled = locked;
+        input.setAttribute('aria-busy', locked ? 'true' : 'false');
+    }
+}
+
+function refreshGeneratingChrome() {
+    var busy = isActiveChatBusy();
+    isGeneratingResponse = hasLocalGeneratingTurns()
+        || (typeof peerTurnActive !== 'undefined' && peerTurnActive);
+
+    if (providerBtn) {
+        providerBtn.disabled = busy;
+        providerBtn.setAttribute('aria-busy', busy ? 'true' : 'false');
+        if (busy) {
+            closeProviderMenu();
+        }
+    }
+    if (toolsBtn) {
+        toolsBtn.disabled = busy;
+    }
+    if (typeof modeBtn !== 'undefined' && modeBtn) {
+        modeBtn.disabled = busy;
+        if (busy && typeof closeModeMenu === 'function') {
+            closeModeMenu();
+        }
+    }
+    updateComposerLock();
+}
+
+function createProviderIcon(providerId, className) {
+    var svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+    svg.setAttribute('viewBox', '0 0 24 24');
+    svg.setAttribute('width', '22');
+    svg.setAttribute('height', '22');
+    svg.setAttribute('aria-hidden', 'true');
+    svg.setAttribute('focusable', 'false');
+    if (className) {
+        svg.setAttribute('class', className);
+    }
+
+    var path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    path.setAttribute('fill', 'currentColor');
+    path.setAttribute(
+        'd',
+        PROVIDER_ICON_PATHS[providerId] || PROVIDER_FALLBACK_ICON_PATH
+    );
+    svg.appendChild(path);
+    return svg;
+}
+
+function setGeneratingState(busy, options) {
+    options = options || {};
+
+    // Peer turn only refreshes chrome; local per-chat map is untouched.
+    if (options.fromPeer) {
+        refreshGeneratingChrome();
+        if (!hasLocalGeneratingTurns()
+            && !(typeof peerTurnActive !== 'undefined' && peerTurnActive)
+            && typeof flushPeerSyncQueue === 'function') {
+            flushPeerSyncQueue();
+        }
+        return;
+    }
+
+    var id = options.conversationId != null ? options.conversationId : conversationId;
+    if (busy) {
+        if (id) generatingConversationIds[String(id)] = true;
+    } else if (id) {
+        delete generatingConversationIds[String(id)];
+    }
+
+    refreshGeneratingChrome();
+    if (!hasLocalGeneratingTurns() && typeof flushPeerSyncQueue === 'function') {
+        flushPeerSyncQueue();
+    }
+}
+
+function closeProviderMenu() {
+    if (!providerMenu || !providerBtn) return;
+    providerMenu.hidden = true;
+    providerBtn.setAttribute('aria-expanded', 'false');
+    providerBtn.classList.remove('open');
+}
+
+function openProviderMenu() {
+    if (!providerMenu || !providerBtn || isActiveChatBusy()) return;
+    // Close the tools menu if it is open so the two popovers do not overlap.
+    if (typeof closeToolsMenu === 'function') {
+        closeToolsMenu();
+    }
+    if (typeof closeModeMenu === 'function') {
+        closeModeMenu();
+    }
+    if (typeof closeDisplayMenu === 'function') {
+        closeDisplayMenu();
+    }
+    renderProviderMenu();
+    providerMenu.hidden = false;
+    providerBtn.setAttribute('aria-expanded', 'true');
+    providerBtn.classList.add('open');
+}
+
+function toggleProviderMenu() {
+    if (!providerMenu) return;
+    if (providerMenu.hidden) {
+        openProviderMenu();
+    } else {
+        closeProviderMenu();
+    }
+}
+
+function findProvider(id) {
+    for (var i = 0; i < providerList.length; i++) {
+        if (providerList[i].id === id) return providerList[i];
+    }
+    return null;
+}
+
+function updateProviderLabel() {
+    var activeId = getSelectedProviderId();
+    var active = findProvider(activeId);
+    if (!providerBtn) return;
+
+    providerBtn.setAttribute(
+        'aria-label',
+        active
+            ? ('AI provider: ' + active.displayName + '. Click to change.')
+            : 'Choose AI provider'
+    );
+    providerBtn.title = active ? active.displayName : 'Choose AI provider';
+
+    providerBtn.innerHTML = '';
+    providerBtn.appendChild(
+        createProviderIcon(activeId, 'syllentras-provider-btn-icon')
+    );
+    if (activeId && PROVIDER_ICON_PATHS[activeId]) {
+        providerBtn.dataset.providerId = activeId;
+    } else {
+        providerBtn.removeAttribute('data-provider-id');
+    }
+}
+
+function selectProvider(id) {
+    var provider = findProvider(id);
+    if (!provider || !provider.available) return;
+    selectedProviderId = provider.id;
+    try {
+        localStorage.setItem(PROVIDER_STORAGE_KEY, selectedProviderId);
+    } catch (e) { /* ignore quota / private mode */ }
+    updateProviderLabel();
+    closeProviderMenu();
+}
+
+function renderProviderMenu() {
+    if (!providerMenu) return;
+    providerMenu.innerHTML = '';
+
+    var heading = document.createElement('div');
+    heading.className = 'syllentras-provider-menu-heading';
+    heading.textContent = 'AI provider';
+    providerMenu.appendChild(heading);
+
+    var activeId = getSelectedProviderId();
+
+    if (!providerList.length) {
+        var empty = document.createElement('div');
+        empty.className = 'syllentras-provider-empty';
+        empty.textContent = 'No AI providers are configured yet.';
+        providerMenu.appendChild(empty);
+        return;
+    }
+
+    providerList.forEach(function (provider) {
+        var option = document.createElement('button');
+        option.type = 'button';
+        option.className = 'syllentras-provider-option';
+        option.setAttribute('role', 'option');
+        option.dataset.providerId = provider.id;
+
+        var row = document.createElement('span');
+        row.className = 'syllentras-provider-option-row';
+
+        var main = document.createElement('span');
+        main.className = 'syllentras-provider-option-main';
+
+        var iconWrap = document.createElement('span');
+        iconWrap.className = 'syllentras-provider-option-icon';
+        iconWrap.setAttribute('aria-hidden', 'true');
+        iconWrap.appendChild(createProviderIcon(provider.id));
+        main.appendChild(iconWrap);
+
+        var nameEl = document.createElement('span');
+        nameEl.className = 'syllentras-provider-option-name';
+        nameEl.textContent = provider.displayName;
+        main.appendChild(nameEl);
+
+        row.appendChild(main);
+
+        if (provider.id === activeId) {
+            option.classList.add('active');
+            option.setAttribute('aria-selected', 'true');
+            var check = document.createElement('span');
+            check.className = 'syllentras-provider-option-check';
+            check.setAttribute('aria-hidden', 'true');
+            check.textContent = '\u2713';
+            row.appendChild(check);
+        } else {
+            option.setAttribute('aria-selected', 'false');
+        }
+
+        option.appendChild(row);
+
+        if (!provider.available) {
+            option.classList.add('disabled');
+            option.setAttribute('aria-disabled', 'true');
+            option.title = UNAVAILABLE_PROVIDER_MESSAGE;
+            var unavailable = document.createElement('span');
+            unavailable.className = 'syllentras-provider-option-status';
+            unavailable.textContent = 'Unavailable';
+            row.appendChild(unavailable);
+
+            option.addEventListener('click', function (e) {
+                e.preventDefault();
+                e.stopPropagation();
+            });
+        } else {
+            option.addEventListener('click', function () {
+                selectProvider(provider.id);
+            });
+        }
+
+        providerMenu.appendChild(option);
+    });
+}
+
+function applyProviderList(data) {
+    providerList = Array.isArray(data && data.providers) ? data.providers : [];
+    defaultProviderId = (data && data.defaultProviderId) || null;
+
+    var stored = null;
+    try {
+        stored = localStorage.getItem(PROVIDER_STORAGE_KEY);
+    } catch (e) {
+        stored = null;
+    }
+
+    var storedProvider = stored ? findProvider(stored) : null;
+    if (storedProvider && storedProvider.available) {
+        selectedProviderId = storedProvider.id;
+    } else if (defaultProviderId && findProvider(defaultProviderId)) {
+        selectedProviderId = defaultProviderId;
+    } else {
+        var firstAvailable = null;
+        for (var i = 0; i < providerList.length; i++) {
+            if (providerList[i].available) {
+                firstAvailable = providerList[i].id;
+                break;
+            }
+        }
+        selectedProviderId = firstAvailable;
+    }
+
+    providersLoaded = true;
+    updateProviderLabel();
+    renderProviderMenu();
+}
+
+function loadProviders() {
+    return fetchJson('/chat/providers')
+        .then(function (data) {
+            applyProviderList(data);
+        })
+        .catch(function () {
+            providerList = [];
+            defaultProviderId = null;
+            selectedProviderId = null;
+            providersLoaded = true;
+            updateProviderLabel();
+        });
+}
+
+if (providerBtn) {
+    providerBtn.addEventListener('click', function (e) {
+        e.stopPropagation();
+        if (isActiveChatBusy()) return;
+        toggleProviderMenu();
+    });
+}
+
+document.addEventListener('click', function (e) {
+    if (!providerMenu || providerMenu.hidden) return;
+    if (providerWrap && providerWrap.contains(e.target)) return;
+    closeProviderMenu();
+});
+
+document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape') {
+        closeProviderMenu();
+    }
+});
+
+// ===== mode-selector.js =====
+// Part of the Syllentras chat widget.
+// Included inside the shared IIFE from before_footer.php — do not load standalone.
+
+var MODE_STORAGE_KEY_LEGACY = 'syllentras_ai_mode';
+var GUIDANCE_STORAGE_KEY_LEGACY = 'syllentras_ai_guidance';
+
+var CHAT_MODES = [
+    {
+        id: 'direct',
+        label: 'Direct',
+        description: 'Clear answers from your course materials'
+    },
+    {
+        id: 'coach',
+        label: 'Coach',
+        description: 'Questions and hints so you figure it out'
+    }
+];
+
+var GUIDANCE_LEVEL_LABELS = {
+    1: 'Minimal',
+    2: 'Light',
+    3: 'Balanced',
+    4: 'Strong',
+    5: 'Maximum'
+};
+
+var modeBtn = document.getElementById('syllentras-mode-btn');
+var modeMenu = document.getElementById('syllentras-mode-menu');
+var modeWrap = modeBtn ? modeBtn.closest('.syllentras-mode-wrap') : null;
+var modeLabelEl = document.getElementById('syllentras-mode-btn-label');
+var activeModeEl = document.getElementById('syllentras-chat-active-mode');
+var openModeMenu = null;
+
+var selectedModeId = 'direct';
+var selectedGuidance = 3;
+
+function modeStorageKey() {
+    return 'syllentras_ai_mode_' + courseId;
+}
+
+function guidanceStorageKey() {
+    return 'syllentras_ai_guidance_' + courseId;
+}
+
+function coachTipSeenKey() {
+    return 'syllentras_ai_coach_tip_seen_' + moodleUserId;
+}
+
+function normalizeModeId(value) {
+    return value === 'coach' ? 'coach' : 'direct';
+}
+
+function normalizeGuidance(value) {
+    var n = parseInt(value, 10);
+    if (!Number.isFinite(n)) return 3;
+    return Math.min(5, Math.max(1, n));
+}
+
+function guidanceLevelLabel(level) {
+    return GUIDANCE_LEVEL_LABELS[normalizeGuidance(level)] || 'Balanced';
+}
+
+function getSelectedModeId() {
+    return selectedModeId;
+}
+
+function getSelectedGuidance() {
+    return selectedModeId === 'coach' ? selectedGuidance : null;
+}
+
+function modeDisplayLabel(modeId) {
+    return modeId === 'coach' ? 'Coach' : 'Direct';
+}
+
+function hasSeenCoachTip() {
+    try {
+        return localStorage.getItem(coachTipSeenKey()) === '1';
+    } catch (err) {
+        return true;
+    }
+}
+
+function markCoachTipSeen() {
+    try {
+        localStorage.setItem(coachTipSeenKey(), '1');
+    } catch (err) {
+        // Ignore storage failures.
+    }
+}
+
+function persistModePrefs() {
+    try {
+        localStorage.setItem(modeStorageKey(), selectedModeId);
+        localStorage.setItem(guidanceStorageKey(), String(selectedGuidance));
+    } catch (err) {
+        // Ignore storage failures (private mode, quota, etc.).
+    }
+}
+
+function loadModePrefs() {
+    var modeRaw = null;
+    var guidanceRaw = null;
+    var migrated = false;
+    try {
+        modeRaw = localStorage.getItem(modeStorageKey());
+        guidanceRaw = localStorage.getItem(guidanceStorageKey());
+        if (modeRaw === null) {
+            modeRaw = localStorage.getItem(MODE_STORAGE_KEY_LEGACY);
+            migrated = modeRaw !== null;
+        }
+        if (guidanceRaw === null) {
+            guidanceRaw = localStorage.getItem(GUIDANCE_STORAGE_KEY_LEGACY);
+            if (guidanceRaw !== null) migrated = true;
+        }
+    } catch (err) {
+        modeRaw = null;
+        guidanceRaw = null;
+    }
+    selectedModeId = normalizeModeId(modeRaw);
+    selectedGuidance = normalizeGuidance(guidanceRaw);
+    if (migrated) {
+        persistModePrefs();
+    }
+}
+
+function updateModeUi() {
+    if (modeLabelEl) {
+        modeLabelEl.textContent = modeDisplayLabel(selectedModeId);
+    }
+    if (modeBtn) {
+        modeBtn.setAttribute(
+            'aria-label',
+            'Chat mode: ' + modeDisplayLabel(selectedModeId) + '. Click to change.'
+        );
+        modeBtn.title = 'Chat mode: ' + modeDisplayLabel(selectedModeId);
+    }
+    if (activeModeEl) {
+        activeModeEl.textContent = modeDisplayLabel(selectedModeId);
+        activeModeEl.dataset.mode = selectedModeId;
+    }
+}
+
+function setSelectedMode(modeId, options) {
+    options = options || {};
+    var previous = selectedModeId;
+    var next = normalizeModeId(modeId);
+    selectedModeId = next;
+    if (options.guidance !== undefined) {
+        selectedGuidance = normalizeGuidance(options.guidance);
+    }
+    if (options.persist !== false) {
+        persistModePrefs();
+    }
+    updateModeUi();
+    if (options.notify !== false) {
+        announceModeChange(previous, next);
+    }
+    if (openModeMenu || (modeMenu && !modeMenu.hidden)) {
+        renderModeMenu();
+    }
+}
+
+function setSelectedGuidance(level, options) {
+    options = options || {};
+    selectedGuidance = normalizeGuidance(level);
+    if (options.persist !== false) {
+        persistModePrefs();
+    }
+    // Do not rebuild the menu here — recreating the slider mid-drag cancels the drag.
+}
+
+function announceModeChange(previous, next) {
+    if (previous === next) return;
+    if (typeof appendSystemNotice !== 'function') return;
+    appendSystemNotice('Switched to ' + modeDisplayLabel(next));
+    if (next === 'coach' && !hasSeenCoachTip()) {
+        appendSystemNotice(
+            'I\u2019ll answer deadlines and \u201cwhere is X?\u201d directly; I\u2019ll coach concepts and problems.'
+        );
+        markCoachTipSeen();
+    }
+}
+
+function closeModeMenu() {
+    if (modeMenu) {
+        modeMenu.hidden = true;
+        modeMenu.innerHTML = '';
+    }
+    openModeMenu = null;
+    if (modeBtn) {
+        modeBtn.classList.remove('open');
+        modeBtn.setAttribute('aria-expanded', 'false');
+    }
+}
+
+function renderModeSettings(settingsCol, modeId) {
+    settingsCol.innerHTML = '';
+
+    var heading = document.createElement('div');
+    heading.className = 'syllentras-mode-pane-heading';
+    heading.textContent = 'Settings';
+    settingsCol.appendChild(heading);
+
+    if (modeId === 'coach') {
+        var guidanceLabel = document.createElement('div');
+        guidanceLabel.className = 'syllentras-mode-guidance-label';
+        guidanceLabel.textContent = 'Guidance';
+        settingsCol.appendChild(guidanceLabel);
+
+        var valueEl = document.createElement('div');
+        valueEl.className = 'syllentras-mode-guidance-value';
+        valueEl.textContent = guidanceLevelLabel(selectedGuidance);
+        settingsCol.appendChild(valueEl);
+
+        var slider = document.createElement('input');
+        slider.type = 'range';
+        slider.className = 'syllentras-mode-guidance-slider';
+        slider.min = '1';
+        slider.max = '5';
+        slider.step = '1';
+        slider.value = String(selectedGuidance);
+        slider.setAttribute('aria-label', 'Coach guidance level');
+        slider.addEventListener('input', function (e) {
+            e.stopPropagation();
+            setSelectedGuidance(slider.value);
+            valueEl.textContent = guidanceLevelLabel(selectedGuidance);
+        });
+        slider.addEventListener('click', function (e) {
+            e.stopPropagation();
+        });
+        settingsCol.appendChild(slider);
+
+        var ends = document.createElement('div');
+        ends.className = 'syllentras-mode-guidance-ends';
+        var low = document.createElement('span');
+        low.textContent = 'Low';
+        var high = document.createElement('span');
+        high.textContent = 'High';
+        ends.appendChild(low);
+        ends.appendChild(high);
+        settingsCol.appendChild(ends);
+
+        var hint = document.createElement('p');
+        hint.className = 'syllentras-mode-settings-note';
+        hint.textContent = 'Low asks more questions; high gives stronger hints.';
+        settingsCol.appendChild(hint);
+        return;
+    }
+
+    var note = document.createElement('p');
+    note.className = 'syllentras-mode-settings-note';
+    note.textContent = 'No extra settings - answers directly from your course.';
+    settingsCol.appendChild(note);
+}
+
+function renderModeMenu() {
+    if (!modeMenu) return;
+    modeMenu.innerHTML = '';
+
+    var modesCol = document.createElement('div');
+    modesCol.className = 'syllentras-mode-menu-modes';
+
+    var modesHeading = document.createElement('div');
+    modesHeading.className = 'syllentras-mode-pane-heading';
+    modesHeading.textContent = 'Mode';
+    modesCol.appendChild(modesHeading);
+
+    var settingsCol = document.createElement('div');
+    settingsCol.className = 'syllentras-mode-menu-settings';
+
+    CHAT_MODES.forEach(function (mode) {
+        var button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'syllentras-mode-menu-item';
+        if (mode.id === selectedModeId) {
+            button.classList.add('selected');
+        }
+        button.setAttribute('role', 'menuitemradio');
+        button.setAttribute('aria-checked', mode.id === selectedModeId ? 'true' : 'false');
+        button.dataset.modeId = mode.id;
+
+        var label = document.createElement('span');
+        label.className = 'syllentras-mode-menu-item-label';
+        label.textContent = mode.label;
+
+        var desc = document.createElement('span');
+        desc.className = 'syllentras-mode-menu-item-desc';
+        desc.textContent = mode.description;
+
+        button.appendChild(label);
+        button.appendChild(desc);
+        button.addEventListener('click', function (e) {
+            e.stopPropagation();
+            // Avoid double-render: setSelectedMode would rebuild the whole menu.
+            var previous = selectedModeId;
+            selectedModeId = normalizeModeId(mode.id);
+            persistModePrefs();
+            updateModeUi();
+            announceModeChange(previous, selectedModeId);
+            Array.from(modesCol.querySelectorAll('.syllentras-mode-menu-item')).forEach(function (el) {
+                var active = el.dataset.modeId === mode.id;
+                el.classList.toggle('selected', active);
+                el.setAttribute('aria-checked', active ? 'true' : 'false');
+            });
+            renderModeSettings(settingsCol, mode.id);
+        });
+        modesCol.appendChild(button);
+    });
+
+    renderModeSettings(settingsCol, selectedModeId);
+    modeMenu.appendChild(modesCol);
+    modeMenu.appendChild(settingsCol);
+}
+
+function showModeMenu() {
+    if (!modeBtn || modeBtn.disabled || !modeMenu) return;
+    if (typeof closeToolsMenu === 'function') closeToolsMenu();
+    if (typeof closeProviderMenu === 'function') closeProviderMenu();
+    if (typeof closeDisplayMenu === 'function') closeDisplayMenu();
+
+    modeBtn.classList.add('open');
+    modeBtn.setAttribute('aria-expanded', 'true');
+    modeMenu.hidden = false;
+    openModeMenu = modeMenu;
+    renderModeMenu();
+}
+
+function toggleModeMenu(e) {
+    if (e) e.stopPropagation();
+    if (!modeBtn || modeBtn.disabled) return;
+    if (openModeMenu && modeMenu && !modeMenu.hidden) {
+        closeModeMenu();
+        return;
+    }
+    showModeMenu();
+}
+
+function initModeSelector() {
+    loadModePrefs();
+    updateModeUi();
+
+    if (!modeBtn) return;
+    modeBtn.addEventListener('click', toggleModeMenu);
+}
+
+document.addEventListener('click', function (e) {
+    if (!openModeMenu) return;
+    if (openModeMenu.contains(e.target)) return;
+    if (modeWrap && modeWrap.contains(e.target)) return;
+    closeModeMenu();
+});
+
+document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape') {
+        closeModeMenu();
+    }
+});
+
+window.addEventListener('resize', function () {
+    closeModeMenu();
+});
+
+// ===== markdown.js =====
+// Part of the Syllentras chat widget.
+// Included inside the shared IIFE from before_footer.php — do not load standalone.
+
+var OPEN_CONTENT_LINK_RE = /^Open (practice quiz|study guide|flashcards)$/i;
+
+function allReviewItemsOpen(items) {
+    return items.every(function (item) { return item.open; });
+}
+
+function syncReviewToggleLabel(btn, items) {
+    btn.textContent = allReviewItemsOpen(items) ? 'Collapse all' : 'Expand all';
+}
+
+function attachReviewCollapseControls(el) {
+    var items = Array.from(el.querySelectorAll('details.syllentras-review-item'));
+    if (items.length < 2) return;
+
+    var toolbar = document.createElement('div');
+    toolbar.className = 'syllentras-review-toolbar';
+
+    var toggleBtn = document.createElement('button');
+    toggleBtn.type = 'button';
+    toggleBtn.className = 'syllentras-review-toggle-all';
+    syncReviewToggleLabel(toggleBtn, items);
+
+    toggleBtn.addEventListener('click', function () {
+        var expand = !allReviewItemsOpen(items);
+        items.forEach(function (item) { item.open = expand; });
+        syncReviewToggleLabel(toggleBtn, items);
+    });
+
+    items.forEach(function (item) {
+        item.addEventListener('toggle', function () {
+            syncReviewToggleLabel(toggleBtn, items);
+        });
+    });
+
+    toolbar.appendChild(toggleBtn);
+    items[0].parentNode.insertBefore(toolbar, items[0]);
+}
+
+function renderAssistantContent(el, text) {
+    var modeChip = el.querySelector('.syllentras-msg-mode');
+    var speakBtn = el.querySelector('.syllentras-msg-speak');
+    el.classList.add('syllentras-markdown');
+    var raw = marked.parse(text, { breaks: true });
+    el.innerHTML = DOMPurify.sanitize(raw);
+    if (modeChip) {
+        el.insertBefore(modeChip, el.firstChild);
+    }
+    Array.from(el.querySelectorAll('a[href]')).forEach(function (anchor) {
+        anchor.setAttribute('target', '_blank');
+        anchor.setAttribute('rel', 'noopener noreferrer');
+        var label = (anchor.textContent || '').replace(/\s+/g, ' ').trim();
+        if (OPEN_CONTENT_LINK_RE.test(label)) {
+            anchor.classList.add('syllentras-content-open-btn');
+        }
+    });
+    attachReviewCollapseControls(el);
+    // Markdown replace wipes the bubble; put the speaker back if we had one,
+    // otherwise add it now that there is real text to read.
+    if (speakBtn) {
+        el.appendChild(speakBtn);
+    } else if (typeof attachMessageSpeakButton === 'function') {
+        attachMessageSpeakButton(el);
+    }
+}
+
+// ===== pending-actions.js =====
+// Part of the Syllentras chat widget.
+// Included inside the shared IIFE from before_footer.php — do not load standalone.
+
+var QUIZ_COUNT_MIN = 5;
+var QUIZ_COUNT_MAX = 40;
+var FLASHCARD_COUNT_MIN = 8;
+var FLASHCARD_COUNT_MAX = 40;
+var QUIZ_DIFFICULTIES = [
+    { value: 'easy', label: 'Easy' },
+    { value: 'medium', label: 'Medium' },
+    { value: 'hard', label: 'Hard' },
+    { value: 'expert', label: 'Expert' }
+];
+var QUIZ_DIFFICULTY_DEFAULT = 'medium';
+
+function normalizePendingDifficulty(value) {
+    var raw = typeof value === 'string' ? value.trim().toLowerCase() : '';
+    for (var i = 0; i < QUIZ_DIFFICULTIES.length; i++) {
+        if (QUIZ_DIFFICULTIES[i].value === raw) return raw;
+    }
+    return QUIZ_DIFFICULTY_DEFAULT;
+}
+
+function clearPendingActionUi(root) {
+    var scope = root || msgs;
+    Array.from(scope.querySelectorAll('.syllentras-pending-action, .syllentras-review-offer')).forEach(function (node) {
+        node.remove();
+    });
+}
+
+function resolvePendingActionType(pendingAction) {
+    if (!pendingAction) return 'practice_quiz';
+    if (pendingAction.type === 'flashcards') return 'flashcards';
+    if (pendingAction.type === 'study_guide') return 'study_guide';
+    if (pendingAction.type === 'practice_quiz') return 'practice_quiz';
+    if (typeof pendingAction.cardCount === 'number') return 'flashcards';
+    // Study-guide DTOs omit questionCount/cardCount; quizzes always include a number.
+    if (typeof pendingAction.questionCount !== 'number') return 'study_guide';
+    return 'practice_quiz';
+}
+
+function createPendingField(labelText, inputEl) {
+    var field = document.createElement('label');
+    field.className = 'syllentras-pending-field';
+    var label = document.createElement('span');
+    label.className = 'syllentras-pending-field-label';
+    label.textContent = labelText;
+    field.appendChild(label);
+    field.appendChild(inputEl);
+    return field;
+}
+
+function attachPendingAction(messageEl, pendingAction) {
+    if (!messageEl || !pendingAction || !pendingAction.id) return;
+    clearPendingActionUi(messageEl);
+
+    var actionType = resolvePendingActionType(pendingAction);
+    var wrap = document.createElement('div');
+    wrap.className = 'syllentras-pending-action';
+    wrap.dataset.actionId = pendingAction.id;
+    wrap.dataset.actionType = actionType;
+
+    var summary = document.createElement('div');
+    summary.className = 'syllentras-pending-summary';
+
+    var defaultTitle =
+        actionType === 'study_guide'
+            ? 'Study guide'
+            : actionType === 'flashcards'
+              ? 'Flashcards'
+              : 'Practice quiz';
+
+    var titleInput = document.createElement('input');
+    titleInput.type = 'text';
+    titleInput.className = 'syllentras-pending-title-input';
+    titleInput.maxLength = 200;
+    titleInput.value = pendingAction.title || defaultTitle;
+    titleInput.setAttribute('aria-label', 'Title');
+    summary.appendChild(createPendingField('Title', titleInput));
+
+    var countInput = null;
+    var countMin = null;
+    var countMax = null;
+    var difficultySelect = null;
+    if (actionType === 'flashcards') {
+        countMin = FLASHCARD_COUNT_MIN;
+        countMax = FLASHCARD_COUNT_MAX;
+        countInput = document.createElement('input');
+        countInput.type = 'number';
+        countInput.className = 'syllentras-pending-count-input';
+        countInput.min = String(countMin);
+        countInput.max = String(countMax);
+        countInput.step = '1';
+        countInput.value = String(pendingAction.cardCount || FLASHCARD_COUNT_MIN);
+        countInput.setAttribute('aria-label', 'Number of flashcards');
+        summary.appendChild(createPendingField('Flashcards', countInput));
+    } else if (actionType === 'practice_quiz') {
+        countMin = QUIZ_COUNT_MIN;
+        countMax = QUIZ_COUNT_MAX;
+        countInput = document.createElement('input');
+        countInput.type = 'number';
+        countInput.className = 'syllentras-pending-count-input';
+        countInput.min = String(countMin);
+        countInput.max = String(countMax);
+        countInput.step = '1';
+        countInput.value = String(pendingAction.questionCount || QUIZ_COUNT_MIN);
+        countInput.setAttribute('aria-label', 'Number of questions');
+        summary.appendChild(createPendingField('Questions', countInput));
+
+        difficultySelect = document.createElement('select');
+        difficultySelect.className = 'syllentras-pending-difficulty-select';
+        difficultySelect.setAttribute('aria-label', 'Difficulty');
+        var selectedDifficulty = normalizePendingDifficulty(pendingAction.difficulty);
+        QUIZ_DIFFICULTIES.forEach(function (opt) {
+            var option = document.createElement('option');
+            option.value = opt.value;
+            option.textContent = opt.label;
+            if (opt.value === selectedDifficulty) {
+                option.selected = true;
+            }
+            difficultySelect.appendChild(option);
+        });
+        summary.appendChild(createPendingField('Difficulty', difficultySelect));
+    } else {
+        var guideNote = document.createElement('div');
+        guideNote.className = 'syllentras-pending-note';
+        guideNote.textContent = 'Private study guide Page';
+        summary.appendChild(guideNote);
+    }
+
+    var covers = document.createElement('div');
+    covers.className = 'syllentras-pending-note';
+    covers.textContent = 'Covers: ' + (pendingAction.scopeSummary || 'course material');
+    summary.appendChild(covers);
+
+    wrap.appendChild(summary);
+
+    var actions = document.createElement('div');
+    actions.className = 'syllentras-pending-actions';
+
+    var confirmBtn = document.createElement('button');
+    confirmBtn.type = 'button';
+    confirmBtn.className = 'syllentras-pending-confirm';
+    confirmBtn.textContent = 'Confirm';
+
+    var cancelBtn = document.createElement('button');
+    cancelBtn.type = 'button';
+    cancelBtn.className = 'syllentras-pending-cancel';
+    cancelBtn.textContent = 'Cancel';
+
+    function setBusy(busy) {
+        confirmBtn.disabled = busy;
+        cancelBtn.disabled = busy;
+        titleInput.disabled = busy;
+        if (countInput) countInput.disabled = busy;
+        if (difficultySelect) difficultySelect.disabled = busy;
+        confirmBtn.textContent = busy ? 'Creating...' : 'Confirm';
+    }
+
+    function createFailedMessage() {
+        var kind = wrap.dataset.actionType || actionType;
+        if (kind === 'study_guide') {
+            return 'Could not create the study guide. Please try again.';
+        }
+        if (kind === 'flashcards') {
+            return 'Could not create the flashcards. Please try again.';
+        }
+        return 'Could not create the practice quiz. Please try again.';
+    }
+
+    function readCount() {
+        if (!countInput || countMin == null || countMax == null) return undefined;
+        var n = Number(countInput.value);
+        if (!Number.isFinite(n)) {
+            n = countMin;
+        }
+        n = Math.round(n);
+        if (n < countMin) n = countMin;
+        if (n > countMax) n = countMax;
+        countInput.value = String(n);
+        return n;
+    }
+
+    confirmBtn.addEventListener('click', function () {
+        var title = (titleInput.value || '').trim();
+        if (!title) {
+            titleInput.focus();
+            return;
+        }
+        var count = readCount();
+        setBusy(true);
+        var body = {
+            actionId: pendingAction.id,
+            moodleUserId: moodleUserId,
+            title: title
+        };
+        if (typeof count === 'number') {
+            body.count = count;
+        }
+        if (difficultySelect) {
+            body.difficulty = normalizePendingDifficulty(difficultySelect.value);
+        }
+        var providerId = typeof getSelectedProviderId === 'function' ? getSelectedProviderId() : null;
+        if (providerId) {
+            body.provider = providerId;
+        }
+        var turnConversationId = conversationId;
+        setGeneratingState(true, { conversationId: turnConversationId });
+        fetchJson('/chat/actions/confirm', {
+            method: 'POST',
+            body: JSON.stringify(body)
+        })
+        .then(function (data) {
+            clearPendingActionUi(messageEl);
+            if (data.response) {
+                appendMessage('assistant', data.response);
+            }
+            if (typeof refreshAiContentList === 'function' && typeof isAiContentTabActive === 'function' && isAiContentTabActive()) {
+                refreshAiContentList();
+            }
+            if (typeof broadcastChatSync === 'function') {
+                broadcastChatSync('pending-action-changed', conversationId);
+                broadcastChatSync('messages-updated', conversationId);
+                broadcastChatSync('conversation-list-changed', conversationId);
+            }
+            return loadConversations().then(loadReviewOfferForConversation);
+        })
+        .catch(function (err) {
+            setBusy(false);
+            appendMessage('error', (err && err.message) ? err.message : createFailedMessage());
+        })
+        .finally(function () {
+            setGeneratingState(false, { conversationId: turnConversationId });
+        });
+    });
+
+    cancelBtn.addEventListener('click', function () {
+        setBusy(true);
+        fetchJson('/chat/actions/cancel', {
+            method: 'POST',
+            body: JSON.stringify({
+                actionId: pendingAction.id,
+                moodleUserId: moodleUserId
+            })
+        })
+        .then(function (data) {
+            clearPendingActionUi(messageEl);
+            if (data.response) {
+                appendMessage('assistant', data.response);
+            }
+            if (typeof broadcastChatSync === 'function') {
+                broadcastChatSync('pending-action-changed', conversationId);
+                broadcastChatSync('messages-updated', conversationId);
+            }
+        })
+        .catch(function () {
+            setBusy(false);
+            appendMessage('error', 'Could not cancel that request. Please try again.');
+        });
+    });
+
+    actions.appendChild(confirmBtn);
+    actions.appendChild(cancelBtn);
+    wrap.appendChild(actions);
+    messageEl.appendChild(wrap);
+    if (typeof stickToBottomIfNeeded === 'function') {
+        stickToBottomIfNeeded({ afterLayout: true });
+    } else {
+        msgs.scrollTop = msgs.scrollHeight;
+    }
+}
+
+function loadPendingActionForConversation() {
+    if (!conversationId || !moodleUserId) return Promise.resolve();
+    return fetchJson('/chat/actions/pending?conversationId='
+        + encodeURIComponent(conversationId)
+        + '&moodleUserId=' + encodeURIComponent(moodleUserId))
+    .then(function (data) {
+        if (!data.pendingAction) return;
+        var assistants = msgs.querySelectorAll('.syllentras-msg.assistant');
+        var last = assistants.length ? assistants[assistants.length - 1] : null;
+        if (last) {
+            attachPendingAction(last, data.pendingAction);
+        }
+    })
+    .catch(function () { /* ignore */ });
+}
+
+// ===== suggested-links.js =====
+// Part of the Syllentras chat widget.
+// Included inside the shared IIFE from before_footer.php — do not load standalone.
+
+var SUGGESTED_LINK_OPEN_PREFIX =
+    'Please read this page and explain how it relates to my course: ';
+
+/**
+ * Attach a horizontal row of Read-link buttons under an assistant message.
+ * Click fills the composer with a short prompt + URL and sends via sendMessage().
+ */
+function attachSuggestedLinks(messageEl, links) {
+    if (!messageEl || !Array.isArray(links) || !links.length) return;
+
+    var existing = messageEl.querySelector('.syllentras-suggested-links');
+    if (existing) existing.remove();
+
+    var row = document.createElement('div');
+    row.className = 'syllentras-suggested-links';
+    row.setAttribute('role', 'group');
+    row.setAttribute('aria-label', 'Read recommended pages');
+
+    links.slice(0, 3).forEach(function (link, index) {
+        if (!link || !link.url) return;
+        var btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'syllentras-suggested-link-btn';
+        btn.textContent = 'Read link ' + (index + 1);
+        btn.title = link.title
+            ? String(link.title).replace(/\s+/g, ' ').trim() + '\n' + link.url
+            : link.url;
+        btn.addEventListener('click', function () {
+            if (typeof isActiveChatBusy === 'function' && isActiveChatBusy()) return;
+            if (!input || input.disabled || (send && send.disabled)) return;
+            input.value = SUGGESTED_LINK_OPEN_PREFIX + link.url;
+            if (typeof sendMessage === 'function') {
+                sendMessage();
+            }
+        });
+        row.appendChild(btn);
+    });
+
+    if (!row.childNodes.length) return;
+    messageEl.appendChild(row);
+}
+
+// ===== review-offer.js =====
+// Part of the Syllentras chat widget.
+// Included inside the shared IIFE from before_footer.php — do not load standalone.
+
+function attachReviewOffer(messageEl, offer) {
+    if (!messageEl || !offer || !offer.actionId) return;
+    Array.from(messageEl.querySelectorAll('.syllentras-review-offer')).forEach(function (node) {
+        node.remove();
+    });
+
+    var wrap = document.createElement('div');
+    wrap.className = 'syllentras-review-offer';
+    wrap.dataset.actionId = offer.actionId;
+
+    var summary = document.createElement('div');
+    summary.className = 'syllentras-pending-summary';
+    summary.innerHTML = '<strong></strong><div></div><div></div>';
+    summary.querySelector('strong').textContent = 'Want me to walk through what you missed?';
+    summary.children[1].textContent = 'You got ' + (offer.scoreLabel || (offer.score + '/' + offer.maxScore))
+        + ' on "' + (offer.title || 'your practice quiz') + '".';
+    summary.children[2].textContent = 'I can explain the ' + offer.wrongCount
+        + ' wrong answer' + (offer.wrongCount === 1 ? '' : 's')
+        + ' using your course materials.';
+    wrap.appendChild(summary);
+
+    var explainBtn = document.createElement('button');
+    explainBtn.type = 'button';
+    explainBtn.className = 'syllentras-review-explain';
+    explainBtn.textContent = 'Explain my wrong answers';
+
+    explainBtn.addEventListener('click', function () {
+        explainBtn.disabled = true;
+        explainBtn.textContent = 'Explaining...';
+        var turnConversationId = conversationId;
+        setGeneratingState(true, { conversationId: turnConversationId });
+        var body = {
+            conversationId: turnConversationId,
+            moodleUserId: moodleUserId
+        };
+        var providerId = typeof getSelectedProviderId === 'function' ? getSelectedProviderId() : null;
+        if (providerId) {
+            body.provider = providerId;
+        }
+        fetchJson('/chat/actions/review-explain', {
+            method: 'POST',
+            body: JSON.stringify(body)
+        })
+        .then(function (data) {
+            wrap.remove();
+            if (data.response) {
+                appendMessage('assistant', data.response);
+            }
+            if (typeof broadcastChatSync === 'function') {
+                broadcastChatSync('messages-updated', conversationId);
+            }
+        })
+        .catch(function (err) {
+            explainBtn.disabled = false;
+            explainBtn.textContent = 'Explain my wrong answers';
+            appendMessage('error', (err && err.message)
+                ? err.message
+                : 'Could not explain your wrong answers. Please try again.');
+        })
+        .finally(function () {
+            setGeneratingState(false, { conversationId: turnConversationId });
+        });
+    });
+
+    wrap.appendChild(explainBtn);
+    messageEl.appendChild(wrap);
+    if (typeof stickToBottomIfNeeded === 'function') {
+        stickToBottomIfNeeded({ afterLayout: true });
+    } else {
+        msgs.scrollTop = msgs.scrollHeight;
+    }
+}
+
+function loadReviewOfferForConversation() {
+    if (!conversationId || !moodleUserId) return Promise.resolve();
+    return fetchJson('/chat/actions/review-offer?conversationId='
+        + encodeURIComponent(conversationId)
+        + '&moodleUserId=' + encodeURIComponent(moodleUserId))
+    .then(function (data) {
+        if (!data.offer) return;
+        var assistants = msgs.querySelectorAll('.syllentras-msg.assistant');
+        var last = assistants.length ? assistants[assistants.length - 1] : null;
+        if (last) {
+            attachReviewOffer(last, data.offer);
+        }
+    })
+    .catch(function () { /* ignore */ });
+}
+
+
+// ===== message-search.js =====
+// Part of the Syllentras chat widget.
+// Included inside the shared IIFE from before_footer.php — do not load standalone.
+//
+// Find-in-chat guts. Keeps a tiny searchable list of the messages we already
+// loaded so typing in the find box doesn't walk the whole message DOM.
+// Rendering / scrolling lives in messages.js; this file just indexes + queries.
+
+var MESSAGE_SEARCH_DEBOUNCE_MS = 160;
+var MESSAGE_SEARCH_PREVIEW_RADIUS = 42;
+
+var messageSearchIndex = [];
+var messageSearchLocalSeq = 0;
+var messageSearchQuery = '';
+var messageSearchResults = [];
+var messageSearchActiveIndex = -1;
+var messageSearchDebounceTimer = null;
+var messageSearchOpen = false;
+
+function nextLocalMessageId() {
+    messageSearchLocalSeq += 1;
+    return 'local-' + Date.now() + '-' + messageSearchLocalSeq;
+}
+
+function resetMessageSearchIndex() {
+    messageSearchIndex = [];
+}
+
+function upsertMessageSearchEntry(entry) {
+    if (!entry || !entry.id || entry.role === 'error' || entry.role === 'system') {
+        return;
+    }
+    var content = entry.content == null ? '' : String(entry.content);
+    if (content === '...') {
+        return;
+    }
+    var row = {
+        id: String(entry.id),
+        role: entry.role === 'assistant' ? 'assistant' : 'user',
+        content: content,
+        createdAt: entry.createdAt || null
+    };
+    for (var i = 0; i < messageSearchIndex.length; i++) {
+        if (messageSearchIndex[i].id === row.id) {
+            messageSearchIndex[i] = row;
+            return;
+        }
+    }
+    messageSearchIndex.push(row);
+}
+
+function escapeRegExp(value) {
+    return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function escapeHtml(value) {
+    return String(value)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+}
+
+function stripMarkdown(text) {
+    return String(text || '')
+        .replace(/```[\s\S]*?```/g, ' ')
+        .replace(/`([^`]+)`/g, '$1')
+        .replace(/!\[[^\]]*\]\([^)]+\)/g, ' ')
+        .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+        .replace(/^#{1,6}\s+/gm, '')
+        .replace(/(\*\*|__)(.*?)\1/g, '$2')
+        .replace(/(\*|_)(.*?)\1/g, '$2')
+        .replace(/^>\s?/gm, '')
+        .replace(/^[-*+]\s+/gm, '')
+        .replace(/^\d+\.\s+/gm, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
+function findMatchRanges(content, query) {
+    var ranges = [];
+    if (!content || !query) return ranges;
+    var hay = content.toLowerCase();
+    var needle = query.toLowerCase();
+    var from = 0;
+    while (from <= hay.length) {
+        var hit = hay.indexOf(needle, from);
+        if (hit === -1) break;
+        ranges.push({ start: hit, end: hit + needle.length });
+        from = hit + Math.max(needle.length, 1);
+    }
+    return ranges;
+}
+
+function buildMatchPreview(content, query) {
+    content = stripMarkdown(content);
+    var ranges = findMatchRanges(content, query);
+    if (!ranges.length) {
+        return escapeHtml(content).slice(0, MESSAGE_SEARCH_PREVIEW_RADIUS * 2);
+    }
+    var first = ranges[0];
+    var start = Math.max(0, first.start - MESSAGE_SEARCH_PREVIEW_RADIUS);
+    var end = Math.min(content.length, first.end + MESSAGE_SEARCH_PREVIEW_RADIUS);
+    var slice = content.slice(start, end);
+    var localQuery = query;
+    var re = new RegExp(escapeRegExp(localQuery), 'ig');
+    var highlighted = escapeHtml(slice).replace(re, function (match) {
+        return '<mark class="syllentras-search-mark">' + match + '</mark>';
+    });
+    return (start > 0 ? '…' : '') + highlighted + (end < content.length ? '…' : '');
+}
+
+// Pure query over the index. Cheap enough for big chats because we never touch the DOM here.
+function queryMessageSearchIndex(rawQuery) {
+    var query = (rawQuery || '').trim();
+    if (!query) return [];
+
+    var out = [];
+    for (var i = 0; i < messageSearchIndex.length; i++) {
+        var entry = messageSearchIndex[i];
+        var ranges = findMatchRanges(entry.content, query);
+        if (!ranges.length) continue;
+        out.push({
+            id: entry.id,
+            role: entry.role,
+            content: entry.content,
+            matchCount: ranges.length,
+            previewHtml: buildMatchPreview(entry.content, query)
+        });
+    }
+    return out;
+}
+
+function setMessageSearchResults(results, query) {
+    messageSearchResults = results || [];
+    messageSearchQuery = query || '';
+    messageSearchActiveIndex = messageSearchResults.length ? 0 : -1;
+}
+
+function getActiveMessageSearchResult() {
+    if (messageSearchActiveIndex < 0 || messageSearchActiveIndex >= messageSearchResults.length) {
+        return null;
+    }
+    return messageSearchResults[messageSearchActiveIndex];
+}
+
+function moveMessageSearchSelection(delta) {
+    if (!messageSearchResults.length) {
+        messageSearchActiveIndex = -1;
+        return null;
+    }
+    var next = messageSearchActiveIndex + delta;
+    if (next < 0) next = messageSearchResults.length - 1;
+    if (next >= messageSearchResults.length) next = 0;
+    messageSearchActiveIndex = next;
+    return getActiveMessageSearchResult();
+}
+
+function scheduleMessageSearch(rawQuery, onDone) {
+    if (messageSearchDebounceTimer) {
+        clearTimeout(messageSearchDebounceTimer);
+    }
+    messageSearchDebounceTimer = setTimeout(function () {
+        messageSearchDebounceTimer = null;
+        var query = (rawQuery || '').trim();
+        var results = query ? queryMessageSearchIndex(query) : [];
+        setMessageSearchResults(results, query);
+        if (typeof onDone === 'function') onDone(results, query);
+    }, MESSAGE_SEARCH_DEBOUNCE_MS);
+}
+
+function clearMessageSearchSchedule() {
+    if (messageSearchDebounceTimer) {
+        clearTimeout(messageSearchDebounceTimer);
+        messageSearchDebounceTimer = null;
+    }
+}
+
+// ===== message-speech.js =====
+// Part of the Syllentras chat widget.
+// Included inside the shared IIFE from before_footer.php — do not load standalone.
+//
+// Read-aloud for chat bubbles.
+// Chrome / Edge / Safari: use their built-in voices first (they usually sound
+// good), and only hit Azure if that path fails.
+// Firefox / Brave / everything else: try Azure first, then fall back to the
+// browser voice if Azure is off, out of credit, or just errors out.
+// Goal is no dead speaker button — always try whatever still works.
+
+var SPEECH_VOICE_KEY = 'syllentras_speech_voice';
+var SPEECH_RATE_KEY = 'syllentras_speech_rate_step';
+
+var SPEECH_VOICES = [
+    { id: 'grace', label: 'Grace', gender: 'female' },
+    { id: 'ben', label: 'Ben', gender: 'male' }
+];
+
+// Same idea as the font size steps — a few named speeds instead of a weird float.
+var SPEECH_RATE_STEPS = [
+    { step: 1, rate: 0.75, label: 'Very Slow' },
+    { step: 2, rate: 0.9, label: 'Slow' },
+    { step: 3, rate: 1.0, label: 'Normal' },
+    { step: 4, rate: 1.15, label: 'Fast' },
+    { step: 5, rate: 1.3, label: 'Very Fast' }
+];
+
+var speakingMessageEl = null;
+var selectedSpeechVoice = 'grace';
+var selectedSpeechRateStep = 3;
+var cachedSpeechVoices = [];
+// True while we cancel + re-speak after a speed/voice tweak.
+var speechRestartPending = false;
+
+// From GET /speech/config. null until the first probe finishes.
+var azureSpeechConfig = null;
+var azureSpeechConfigPromise = null;
+// Bumped whenever we stop / start so late Azure responses get ignored.
+var speechPlayGeneration = 0;
+var azureAudioEl = null;
+var azureObjectUrl = null;
+
+function browserSpeechSupported() {
+    return typeof window !== 'undefined'
+        && 'speechSynthesis' in window
+        && typeof SpeechSynthesisUtterance !== 'undefined';
+}
+
+function azureTtsIsAvailable() {
+    return !!(azureSpeechConfig && azureSpeechConfig.azureTtsAvailable);
+}
+
+/** After a hard Azure failure (quota, bad key, etc.) stop asking this session. */
+function markAzureSpeechUnavailableTemporarily() {
+    if (!azureSpeechConfig) {
+        azureSpeechConfig = {
+            azureTtsEnabled: false,
+            azureTtsAvailable: false,
+            maxChars: 5000
+        };
+        return;
+    }
+    azureSpeechConfig.azureTtsAvailable = false;
+}
+
+/**
+ * Browsers that usually ship decent neural / system voices.
+ * Brave is Chromium-based but its voices are often weak, so it is NOT here.
+ */
+function prefersNativeBrowserTts() {
+    if (typeof navigator === 'undefined') return false;
+    var ua = navigator.userAgent || '';
+
+    // Brave — prefer Azure even though the UA looks like Chrome.
+    if (typeof navigator.brave !== 'undefined') return false;
+    if (/Brave/i.test(ua)) return false;
+    if (navigator.userAgentData && Array.isArray(navigator.userAgentData.brands)) {
+        for (var i = 0; i < navigator.userAgentData.brands.length; i++) {
+            var brand = String(navigator.userAgentData.brands[i].brand || '');
+            if (/brave/i.test(brand)) return false;
+        }
+    }
+
+    // Edge (Edg/) before Chrome — Edge UA also contains Chrome/.
+    if (/Edg\//.test(ua)) return true;
+
+    // Chrome / Chromium, but not Opera.
+    if (/Chrome\//.test(ua) && !/OPR\//.test(ua) && !/Edg\//.test(ua)) return true;
+
+    // Safari on macOS / iOS (their UA has Safari but not Chrome).
+    if (/Safari\//.test(ua) && !/Chrome\//.test(ua) && !/Chromium\//.test(ua)) return true;
+
+    return false;
+}
+
+function speechSupported() {
+    // Cloud path only needs Audio + fetch; browser path needs speechSynthesis.
+    if (azureTtsIsAvailable()) return true;
+    if (browserSpeechSupported()) return true;
+    return typeof Audio !== 'undefined' && typeof fetch === 'function';
+}
+
+function normalizeSpeechVoice(raw) {
+    for (var i = 0; i < SPEECH_VOICES.length; i++) {
+        if (SPEECH_VOICES[i].id === raw) return raw;
+    }
+    return 'grace';
+}
+
+function normalizeSpeechRateStep(raw) {
+    var n = parseInt(raw, 10);
+    if (n >= 1 && n <= SPEECH_RATE_STEPS.length) return n;
+    return 3;
+}
+
+function speechRateInfo(step) {
+    return SPEECH_RATE_STEPS[normalizeSpeechRateStep(step) - 1];
+}
+
+function refreshSpeechVoiceCache() {
+    if (!browserSpeechSupported()) {
+        cachedSpeechVoices = [];
+        return cachedSpeechVoices;
+    }
+    cachedSpeechVoices = window.speechSynthesis.getVoices() || [];
+    return cachedSpeechVoices;
+}
+
+// Curated BCP-47 ids — keep in sync with DICTATION_LANGUAGES / API allowlist.
+var SPEECH_LANG_DEFAULT = 'en-US';
+var SPEECH_LANG_MIN_LETTERS = 16;
+
+// Compact stopword lists for Latin-script scoring (dominant language wins).
+var SPEECH_LATIN_WORD_LISTS = {
+    'en-US': ['the', 'and', 'you', 'that', 'for', 'with', 'this', 'have', 'are', 'not', 'your', 'from', 'what', 'about', 'would', 'could', 'should', 'which', 'there', 'their', 'will', 'can', 'how', 'into', 'more'],
+    'en-GB': ['the', 'and', 'you', 'that', 'for', 'with', 'this', 'have', 'are', 'not', 'your', 'from', 'what', 'about', 'would', 'could', 'should', 'which', 'there', 'their', 'will', 'can', 'how', 'into', 'more'],
+    'fr-FR': ['le', 'la', 'les', 'des', 'une', 'est', 'que', 'pour', 'dans', 'pas', 'qui', 'avec', 'sur', 'vous', 'nous', 'sont', 'cette', 'être', 'mais', 'comme', 'aussi', 'fait', 'plus', 'tout', 'votre'],
+    'es-ES': ['que', 'los', 'las', 'del', 'una', 'para', 'con', 'por', 'como', 'más', 'esta', 'este', 'está', 'pero', 'sus', 'hay', 'sobre', 'cuando', 'también', 'puede', 'entre', 'tiene', 'ser', 'son', 'usted'],
+    'es-MX': ['que', 'los', 'las', 'del', 'una', 'para', 'con', 'por', 'como', 'más', 'esta', 'este', 'está', 'pero', 'sus', 'hay', 'sobre', 'cuando', 'también', 'puede', 'usted', 'ustedes', 'pues', 'muy', 'aquí'],
+    'de-DE': ['der', 'die', 'das', 'und', 'ist', 'nicht', 'ein', 'eine', 'sich', 'mit', 'auf', 'für', 'den', 'von', 'dem', 'auch', 'sind', 'oder', 'wie', 'noch', 'nach', 'wird', 'werden', 'haben', 'kann'],
+    'it-IT': ['che', 'del', 'la', 'il', 'di', 'per', 'una', 'con', 'non', 'sono', 'come', 'più', 'della', 'questo', 'questa', 'anche', 'essere', 'hanno', 'delle', 'nel', 'alla', 'dei', 'può', 'tutti', 'quando'],
+    'pt-BR': ['que', 'não', 'uma', 'para', 'com', 'os', 'as', 'por', 'mais', 'como', 'mas', 'foi', 'ele', 'ela', 'são', 'dos', 'das', 'também', 'seu', 'sua', 'quando', 'muito', 'está', 'pelo', 'pela'],
+    'pt-PT': ['que', 'não', 'uma', 'para', 'com', 'os', 'as', 'por', 'mais', 'como', 'mas', 'foi', 'ele', 'ela', 'são', 'dos', 'das', 'também', 'seu', 'sua', 'quando', 'muito', 'está', 'pelo', 'pela'],
+    'nl-NL': ['de', 'het', 'een', 'van', 'en', 'in', 'is', 'op', 'te', 'dat', 'die', 'voor', 'niet', 'met', 'zijn', 'er', 'aan', 'om', 'ook', 'als', 'maar', 'nog', 'worden', 'kan', 'wordt'],
+    'pl-PL': ['nie', 'się', 'to', 'jest', 'na', 'do', 'że', 'jak', 'ale', 'czy', 'od', 'po', 'za', 'już', 'tylko', 'może', 'tego', 'przez', 'także', 'oraz', 'będzie', 'który', 'które', 'więc', 'bardzo'],
+    'cs-CZ': ['je', 'na', 'se', 'to', 'že', 'pro', 'jsou', 'ale', 'jako', 'od', 'po', 'za', 'tak', 'už', 'také', 'když', 'nebo', 'jen', 'který', 'které', 'bylo', 'bude', 'jsem', 'máte', 'může'],
+    'ro-RO': ['și', 'de', 'la', 'în', 'cu', 'nu', 'pe', 'care', 'este', 'pentru', 'o', 'din', 'mai', 'sau', 'că', 'sunt', 'ce', 'ca', 'lui', 'unei', 'acest', 'aceasta', 'poate', 'când', 'foarte'],
+    'hu-HU': ['nem', 'hogy', 'egy', 'van', 'az', 'és', 'el', 'meg', 'mint', 'vagy', 'de', 'csak', 'már', 'ki', 'ez', 'aki', 'amit', 'volt', 'lesz', 'kell', 'még', 'igen', 'nincs', 'amikor', 'miért'],
+    'sv-SE': ['och', 'att', 'det', 'som', 'för', 'med', 'är', 'på', 'av', 'den', 'ett', 'har', 'inte', 'om', 'till', 'kan', 'från', 'när', 'också', 'var', 'ska', 'eller', 'men', 'detta', 'vara'],
+    'da-DK': ['og', 'at', 'det', 'er', 'en', 'til', 'på', 'af', 'den', 'med', 'for', 'ikke', 'som', 'der', 'har', 'de', 'om', 'kan', 'fra', 'eller', 'men', 'også', 'når', 'være', 'dette'],
+    'nb-NO': ['og', 'at', 'det', 'er', 'en', 'til', 'på', 'av', 'den', 'med', 'for', 'ikke', 'som', 'der', 'har', 'de', 'om', 'kan', 'fra', 'eller', 'men', 'også', 'når', 'være', 'dette'],
+    'fi-FI': ['ja', 'on', 'ei', 'että', 'se', 'oli', 'kun', 'tai', 'jos', 'niin', 'mutta', 'ovat', 'myös', 'kuin', 'tämä', 'olen', 'voidaan', 'olla', 'jotka', 'hänen', 'meidän', 'teidän', 'kaikki', 'hyvin', 'koska'],
+    'tr-TR': ['ve', 'bir', 'bu', 'için', 'ile', 'de', 'da', 'ne', 'ama', 'gibi', 'daha', 'çok', 'olarak', 'var', 'kadar', 'sonra', 'olan', 'veya', 'her', 'nasıl', 'neden', 'şimdi', 'şu', 'ben', 'sen'],
+    'id-ID': ['yang', 'dan', 'dari', 'untuk', 'dengan', 'ini', 'itu', 'tidak', 'ada', 'adalah', 'pada', 'akan', 'juga', 'atau', 'sebagai', 'dalam', 'bisa', 'sudah', 'mereka', 'kami', 'kita', 'anda', 'lebih', 'karena', 'saat'],
+    'vi-VN': ['của', 'và', 'các', 'có', 'là', 'được', 'trong', 'cho', 'không', 'một', 'những', 'để', 'với', 'này', 'đã', 'khi', 'về', 'như', 'từ', 'người', 'bạn', 'cũng', 'nhưng', 'rất', 'đang']
+};
+
+function normalizeSpeechLang(raw) {
+    var id = String(raw || '').trim();
+    if (!id) return SPEECH_LANG_DEFAULT;
+    if (typeof DICTATION_LANGUAGES !== 'undefined' && Array.isArray(DICTATION_LANGUAGES)) {
+        for (var i = 0; i < DICTATION_LANGUAGES.length; i++) {
+            if (DICTATION_LANGUAGES[i].id === id) return id;
+        }
+    }
+    var lower = id.toLowerCase().replace(/_/g, '-');
+    var known = [
+        'en-US', 'en-GB', 'ar-SA', 'zh-CN', 'zh-TW', 'cs-CZ', 'da-DK', 'nl-NL',
+        'fi-FI', 'fr-FR', 'de-DE', 'el-GR', 'he-IL', 'hi-IN', 'hu-HU', 'id-ID',
+        'it-IT', 'ja-JP', 'ko-KR', 'nb-NO', 'pl-PL', 'pt-BR', 'pt-PT', 'ro-RO',
+        'ru-RU', 'es-ES', 'es-MX', 'sv-SE', 'th-TH', 'tr-TR', 'uk-UA', 'vi-VN'
+    ];
+    for (var j = 0; j < known.length; j++) {
+        if (known[j].toLowerCase() === lower) return known[j];
+    }
+    var prefix = lower.split('-')[0];
+    var prefixMap = {
+        en: 'en-US', ar: 'ar-SA', zh: 'zh-CN', cs: 'cs-CZ', da: 'da-DK', nl: 'nl-NL',
+        fi: 'fi-FI', fr: 'fr-FR', de: 'de-DE', el: 'el-GR', he: 'he-IL', hi: 'hi-IN',
+        hu: 'hu-HU', id: 'id-ID', it: 'it-IT', ja: 'ja-JP', ko: 'ko-KR', nb: 'nb-NO',
+        no: 'nb-NO', pl: 'pl-PL', pt: 'pt-BR', ro: 'ro-RO', ru: 'ru-RU', es: 'es-ES',
+        sv: 'sv-SE', th: 'th-TH', tr: 'tr-TR', uk: 'uk-UA', vi: 'vi-VN'
+    };
+    if (prefixMap[prefix]) return prefixMap[prefix];
+    return SPEECH_LANG_DEFAULT;
+}
+
+function speechFallbackLang() {
+    if (typeof getDictationLang === 'function') {
+        try {
+            return normalizeSpeechLang(getDictationLang());
+        } catch (e) { /* ignore */ }
+    }
+    return SPEECH_LANG_DEFAULT;
+}
+
+function countLetters(text) {
+    // Count letters across Latin + common non-Latin scripts (Arabic block, CJK, etc.).
+    // Regex ranges miss a lot of Arabic (diacritics / extended letters), so walk code points.
+    var s = String(text || '');
+    var n = 0;
+    for (var i = 0; i < s.length; i++) {
+        var c = s.charCodeAt(i);
+        if ((c >= 0x0041 && c <= 0x005A) || (c >= 0x0061 && c <= 0x007A)) n++; // A-Z a-z
+        else if (c >= 0x00C0 && c <= 0x024F) n++; // Latin extended
+        else if (c >= 0x1E00 && c <= 0x1EFF) n++;
+        else if (c >= 0x0370 && c <= 0x03FF) n++; // Greek
+        else if (c >= 0x0400 && c <= 0x04FF) n++; // Cyrillic
+        else if (c >= 0x0590 && c <= 0x05FF) n++; // Hebrew
+        else if (c >= 0x0600 && c <= 0x06FF) n++; // Arabic
+        else if (c >= 0x0750 && c <= 0x077F) n++; // Arabic Supplement
+        else if (c >= 0x08A0 && c <= 0x08FF) n++; // Arabic Extended-A
+        else if (c >= 0x0900 && c <= 0x097F) n++; // Devanagari
+        else if (c >= 0x0E00 && c <= 0x0E7F) n++; // Thai
+        else if (c >= 0x3040 && c <= 0x30FF) n++; // Hiragana / Katakana
+        else if (c >= 0x3400 && c <= 0x4DBF) n++; // CJK extension A
+        else if (c >= 0x4E00 && c <= 0x9FFF) n++; // CJK
+        else if (c >= 0xAC00 && c <= 0xD7AF) n++; // Hangul
+        else if (c >= 0xFB50 && c <= 0xFDFF) n++; // Arabic presentation forms-A
+        else if (c >= 0xFE70 && c <= 0xFEFF) n++; // Arabic presentation forms-B
+    }
+    return n;
+}
+
+function detectScriptLocale(text) {
+    var s = String(text || '');
+    var counts = {
+        arabic: 0, hebrew: 0, cyrillic: 0, greek: 0, thai: 0,
+        hangul: 0, kana: 0, cjk: 0, latin: 0
+    };
+    for (var i = 0; i < s.length; i++) {
+        var c = s.charCodeAt(i);
+        if (c >= 0x0600 && c <= 0x06FF) counts.arabic++;
+        else if (c >= 0x0590 && c <= 0x05FF) counts.hebrew++;
+        else if ((c >= 0x0400 && c <= 0x04FF) || c === 0x0401 || c === 0x0451) counts.cyrillic++;
+        else if (c >= 0x0370 && c <= 0x03FF) counts.greek++;
+        else if (c >= 0x0E00 && c <= 0x0E7F) counts.thai++;
+        else if (c >= 0xAC00 && c <= 0xD7AF) counts.hangul++;
+        else if ((c >= 0x3040 && c <= 0x309F) || (c >= 0x30A0 && c <= 0x30FF)) counts.kana++;
+        else if ((c >= 0x4E00 && c <= 0x9FFF) || (c >= 0x3400 && c <= 0x4DBF)) counts.cjk++;
+        else if ((c >= 0x0041 && c <= 0x007A) || (c >= 0x00C0 && c <= 0x024F) || (c >= 0x1E00 && c <= 0x1EFF)) counts.latin++;
+    }
+    var totalScript = counts.arabic + counts.hebrew + counts.cyrillic + counts.greek
+        + counts.thai + counts.hangul + counts.kana + counts.cjk;
+    if (totalScript < 3 && counts.latin < 8) return null;
+
+    if (counts.arabic >= 3 && counts.arabic >= totalScript * 0.4) return 'ar-SA';
+    if (counts.hebrew >= 3 && counts.hebrew >= totalScript * 0.4) return 'he-IL';
+    if (counts.thai >= 3 && counts.thai >= totalScript * 0.4) return 'th-TH';
+    if (counts.hangul >= 3 && counts.hangul >= totalScript * 0.4) return 'ko-KR';
+    if (counts.greek >= 3 && counts.greek >= totalScript * 0.4) return 'el-GR';
+    if (counts.kana >= 2) return 'ja-JP';
+    if (counts.cjk >= 3) {
+        // Traditional markers (common TW/HK forms) vs default Simplified.
+        if (/[國學語體後門開對東車來時書長門]/g.test(s)) return 'zh-TW';
+        return 'zh-CN';
+    }
+    if (counts.cyrillic >= 3 && counts.cyrillic >= totalScript * 0.4) {
+        if (/[іїєґІЇЄҐ]/.test(s)) return 'uk-UA';
+        return 'ru-RU';
+    }
+    // Devanagari → Hindi
+    if (/[\u0900-\u097F]/.test(s)) return 'hi-IN';
+    return null;
+}
+
+function scoreLatinLocale(words, localeId) {
+    var list = SPEECH_LATIN_WORD_LISTS[localeId];
+    if (!list || !words.length) return 0;
+    var set = {};
+    for (var i = 0; i < list.length; i++) set[list[i]] = true;
+    var hits = 0;
+    for (var j = 0; j < words.length; j++) {
+        if (set[words[j]]) hits++;
+    }
+    return hits;
+}
+
+function detectLatinLocale(text) {
+    var lower = String(text || '').toLowerCase();
+    var words = lower.match(/[a-zà-öø-ÿā-žăâîșț]+/gi) || [];
+    if (words.length < 3) return null;
+    var normalized = [];
+    for (var i = 0; i < words.length; i++) {
+        normalized.push(words[i].toLowerCase());
+    }
+
+    var bestId = null;
+    var bestScore = 0;
+    var second = 0;
+    var locales = Object.keys(SPEECH_LATIN_WORD_LISTS);
+    for (var j = 0; j < locales.length; j++) {
+        var id = locales[j];
+        var score = scoreLatinLocale(normalized, id);
+        // Mild regional cues.
+        if (id === 'pt-BR' && /\b(você|vocês|né|aí)\b/.test(lower)) score += 2;
+        if (id === 'pt-PT' && /\b(vocês|está|estáis)\b/.test(lower)) score += 1;
+        if (id === 'es-MX' && /\b(ustedes|pues|órale|aquí)\b/.test(lower)) score += 2;
+        if (id === 'es-ES' && /\b(vosotros|vosotras|estáis)\b/.test(lower)) score += 2;
+        if (id === 'en-GB' && /\b(colour|favourite|organise|whilst|whilst)\b/.test(lower)) score += 2;
+
+        if (score > bestScore) {
+            second = bestScore;
+            bestScore = score;
+            bestId = id;
+        } else if (score > second) {
+            second = score;
+        }
+    }
+
+    if (!bestId || bestScore < 2) return null;
+    // Ambiguous English vs others: need a clear lead, or enough hits.
+    if (bestScore < second + 1 && bestScore < 4) return null;
+    return bestId;
+}
+
+/**
+ * Guess BCP-47 locale for TTS from message text.
+ * Short / low-confidence text falls back to mic language, then en-US.
+ */
+function detectSpeechLang(text) {
+    var cleaned = String(text || '').replace(/\s+/g, ' ').trim();
+    if (!cleaned) return speechFallbackLang();
+
+    var letters = countLetters(cleaned);
+    if (letters < SPEECH_LANG_MIN_LETTERS) return speechFallbackLang();
+
+    var scriptHit = detectScriptLocale(cleaned);
+    if (scriptHit) return normalizeSpeechLang(scriptHit);
+
+    var latinHit = detectLatinLocale(cleaned);
+    if (latinHit) return normalizeSpeechLang(latinHit);
+
+    return speechFallbackLang();
+}
+
+function speechLangPrefix(locale) {
+    return String(locale || SPEECH_LANG_DEFAULT).toLowerCase().replace(/_/g, '-').split('-')[0];
+}
+
+function scoreSpeechVoice(voice, wantFemale, targetLocale) {
+    if (!voice) return -1000;
+    var name = String(voice.name || '');
+    var lang = String(voice.lang || '').toLowerCase().replace(/_/g, '-');
+    var target = normalizeSpeechLang(targetLocale || SPEECH_LANG_DEFAULT).toLowerCase();
+    var targetPrefix = speechLangPrefix(target);
+    var score = 0;
+
+    var exact = lang === target || lang.replace('_', '-') === target;
+    var prefixMatch = speechLangPrefix(lang) === targetPrefix;
+    if (exact) score += 80;
+    else if (prefixMatch) score += 55;
+    else if (targetPrefix === 'en') {
+        // English target: still prefer English voices.
+        if (lang.indexOf('en') === 0) score += 40;
+        else if (lang.indexOf('en') !== -1) score += 20;
+        else score -= 30;
+    } else {
+        // Non-English target: demote mismatched voices hard.
+        if (lang.indexOf('en') === 0) score -= 10;
+        else score -= 40;
+    }
+
+    // Neural / natural voices sound way less "GPS lady" than the old defaults.
+    if (/neural|natural|premium|enhanced|online|wave|studio/i.test(name)) score += 35;
+    if (voice.localService === false) score += 8;
+
+    if (wantFemale) {
+        if (/female|woman|zira|samantha|karen|moira|susan|victoria|linda|jenny|aria|sara|salli|joanna|kendra|kimberly|ivy|emma|amy|google us english$/i.test(name)) {
+            score += 50;
+        }
+        if (/male|man|david|mark|daniel|alex|guy|ryan|tony|matthew|justin|brian|ravi/i.test(name) && !/female/i.test(name)) {
+            score -= 40;
+        }
+    } else {
+        if (/male|man|david|mark|daniel|alex|guy|ryan|tony|matthew|justin|brian|ravi|google uk english male/i.test(name)) {
+            score += 50;
+        }
+        if (/female|woman|zira|samantha|karen|moira|jenny|aria|sara/i.test(name) && !/male/i.test(name)) {
+            score -= 40;
+        }
+    }
+
+    // Mild preference among English variants when English is the target.
+    if (targetPrefix === 'en') {
+        if (target === 'en-gb' && /en-gb|en_gb/.test(lang)) score += 8;
+        else if (target === 'en-us' && /en-us|en_us/.test(lang)) score += 8;
+        else if (/en-us|en_us/.test(lang)) score += 6;
+        else if (/en-gb|en_gb|en-au|en_au|en-ca|en_ca/.test(lang)) score += 4;
+    }
+
+    return score;
+}
+
+function pickSpeechVoice(preference, targetLocale) {
+    var voices = cachedSpeechVoices.length ? cachedSpeechVoices : refreshSpeechVoiceCache();
+    if (!voices.length) return null;
+
+    var wantFemale = normalizeSpeechVoice(preference) !== 'ben';
+    var locale = normalizeSpeechLang(targetLocale || SPEECH_LANG_DEFAULT);
+    var best = null;
+    var bestScore = -Infinity;
+    for (var i = 0; i < voices.length; i++) {
+        var score = scoreSpeechVoice(voices[i], wantFemale, locale);
+        if (score > bestScore) {
+            bestScore = score;
+            best = voices[i];
+        }
+    }
+    return best;
+}
+
+/**
+ * True when the browser has at least one voice whose lang matches the locale
+ * (exact or same language prefix, e.g. ar-EG for ar-SA).
+ * Without this, Chrome "succeeds" reading Arabic with an English voice and
+ * never falls through to Azure.
+ */
+function hasBrowserVoiceForLang(targetLocale) {
+    if (!browserSpeechSupported()) return false;
+    var voices = cachedSpeechVoices.length ? cachedSpeechVoices : refreshSpeechVoiceCache();
+    if (!voices.length) return false;
+
+    var locale = normalizeSpeechLang(targetLocale || SPEECH_LANG_DEFAULT).toLowerCase();
+    var prefix = speechLangPrefix(locale);
+    for (var i = 0; i < voices.length; i++) {
+        var lang = String(voices[i].lang || '').toLowerCase().replace(/_/g, '-');
+        if (!lang) continue;
+        if (lang === locale || speechLangPrefix(lang) === prefix) return true;
+    }
+    return false;
+}
+
+function loadSpeechSettings() {
+    var voiceRaw = null;
+    var rateRaw = null;
+    try {
+        voiceRaw = localStorage.getItem(SPEECH_VOICE_KEY);
+        rateRaw = localStorage.getItem(SPEECH_RATE_KEY);
+    } catch (e) {
+        voiceRaw = null;
+        rateRaw = null;
+    }
+    selectedSpeechVoice = normalizeSpeechVoice(voiceRaw);
+    selectedSpeechRateStep = normalizeSpeechRateStep(rateRaw);
+}
+
+function saveSpeechSettings() {
+    try {
+        localStorage.setItem(SPEECH_VOICE_KEY, selectedSpeechVoice);
+        localStorage.setItem(SPEECH_RATE_KEY, String(selectedSpeechRateStep));
+    } catch (e) { /* private mode / quota — ignore */ }
+}
+
+function setSpeechVoicePreference(voiceId) {
+    var next = normalizeSpeechVoice(voiceId);
+    if (next === selectedSpeechVoice) return;
+    selectedSpeechVoice = next;
+    saveSpeechSettings();
+    // Live preview — if something is already talking, kick it off again.
+    restartMessageSpeechIfPlaying();
+}
+
+function setSpeechRateStep(step) {
+    var next = normalizeSpeechRateStep(step);
+    if (next === selectedSpeechRateStep) return;
+    selectedSpeechRateStep = next;
+    saveSpeechSettings();
+    restartMessageSpeechIfPlaying();
+}
+
+function resetSpeechSettings() {
+    selectedSpeechVoice = 'grace';
+    selectedSpeechRateStep = 3;
+    saveSpeechSettings();
+    restartMessageSpeechIfPlaying();
+}
+
+/** Ask Nest whether Azure TTS is on. Safe to call more than once. */
+function loadAzureSpeechConfig() {
+    if (azureSpeechConfigPromise) return azureSpeechConfigPromise;
+    if (typeof fetchJson !== 'function' || !API_URL) {
+        azureSpeechConfig = { azureTtsEnabled: false, azureTtsAvailable: false };
+        azureSpeechConfigPromise = Promise.resolve(azureSpeechConfig);
+        return azureSpeechConfigPromise;
+    }
+    azureSpeechConfigPromise = fetchJson('/speech/config')
+        .then(function (data) {
+            azureSpeechConfig = {
+                azureTtsEnabled: !!(data && data.azureTtsEnabled),
+                azureTtsAvailable: !!(data && data.azureTtsAvailable),
+                maxChars: (data && data.maxChars) || 5000,
+                contentType: (data && data.contentType) || 'audio/mpeg'
+            };
+            return azureSpeechConfig;
+        })
+        .catch(function () {
+            // API down / old deploy — just use the browser voice.
+            azureSpeechConfig = { azureTtsEnabled: false, azureTtsAvailable: false, maxChars: 5000 };
+            return azureSpeechConfig;
+        });
+    return azureSpeechConfigPromise;
+}
+
+function stopAzureAudio() {
+    if (azureAudioEl) {
+        azureAudioEl.onended = null;
+        azureAudioEl.onerror = null;
+        try {
+            azureAudioEl.pause();
+        } catch (e) { /* ignore */ }
+        try {
+            azureAudioEl.removeAttribute('src');
+            azureAudioEl.load();
+        } catch (e2) { /* ignore */ }
+        azureAudioEl = null;
+    }
+    if (azureObjectUrl) {
+        try {
+            URL.revokeObjectURL(azureObjectUrl);
+        } catch (e3) { /* ignore */ }
+        azureObjectUrl = null;
+    }
+}
+
+function stopMessageSpeech() {
+    speechPlayGeneration += 1;
+    speechRestartPending = false;
+    stopAzureAudio();
+    if (typeof window !== 'undefined' && window.speechSynthesis) {
+        window.speechSynthesis.cancel();
+    }
+    if (!speakingMessageEl) return;
+    speakingMessageEl.classList.remove('is-speaking');
+    var btn = speakingMessageEl.querySelector('.syllentras-msg-speak');
+    if (btn) {
+        btn.setAttribute('aria-pressed', 'false');
+        btn.title = 'Read aloud';
+        btn.setAttribute('aria-label', 'Read aloud');
+    }
+    speakingMessageEl = null;
+}
+
+function getMessageSpeakParts(el) {
+    if (!el) return { body: '', time: '' };
+
+    // Pull the clock out separately so we can pause before saying it.
+    var timeNode = el.querySelector('.syllentras-msg-time');
+    var time = timeNode
+        ? String(timeNode.textContent || '').replace(/\s+/g, ' ').trim()
+        : '';
+
+    var clone = el.cloneNode(true);
+    Array.from(clone.querySelectorAll(
+        '.syllentras-msg-speak, .syllentras-msg-mode, .syllentras-msg-time, .syllentras-pending-action, .syllentras-suggested-links, .syllentras-content-open-btn, .syllentras-review-toolbar'
+    )).forEach(function (node) {
+        node.remove();
+    });
+    var body = (clone.textContent || '').replace(/\s+/g, ' ').trim();
+    return { body: body, time: time };
+}
+
+function getMessageSpeakText(el) {
+    var parts = getMessageSpeakParts(el);
+    if (!parts.body) return '';
+    if (!parts.time) return parts.body;
+    // Fallback single string (e.g. rare callers) — still separates with a beat.
+    return parts.body + '. ... ' + parts.time;
+}
+
+// Beat between the message and the timestamp so "3:45 PM" doesn't glue onto the last word.
+var SPEECH_TIME_PAUSE_MS = 200;
+
+function speakBrowserUtterance(text, locale, generation, onEnd, onFail) {
+    var utterance = new SpeechSynthesisUtterance(text);
+    utterance.lang = locale;
+    var voice = pickSpeechVoice(selectedSpeechVoice, locale);
+    if (voice) {
+        utterance.voice = voice;
+        if (voice.lang) utterance.lang = voice.lang;
+    }
+    utterance.rate = speechRateInfo(selectedSpeechRateStep).rate;
+    utterance.pitch = selectedSpeechVoice === 'ben' ? 0.92 : 1.08;
+    utterance.volume = 1;
+
+    utterance.onend = function () {
+        if (generation !== speechPlayGeneration) return;
+        if (typeof onEnd === 'function') onEnd();
+    };
+    utterance.onerror = function (ev) {
+        if (generation !== speechPlayGeneration) return;
+        var err = ev && ev.error;
+        if (err === 'canceled' || err === 'interrupted') return;
+        if (typeof onFail === 'function') {
+            onFail();
+            return;
+        }
+        if (typeof onEnd === 'function') onEnd();
+    };
+
+    try {
+        window.speechSynthesis.speak(utterance);
+    } catch (e) {
+        if (typeof onFail === 'function') {
+            onFail();
+        } else if (typeof onEnd === 'function') {
+            onEnd();
+        }
+    }
+}
+
+function setSpeakButtonPlaying(el, playing) {
+    if (!el) return;
+    var btn = el.querySelector('.syllentras-msg-speak');
+    el.classList.toggle('is-speaking', !!playing);
+    if (!btn) return;
+    btn.setAttribute('aria-pressed', playing ? 'true' : 'false');
+    btn.title = playing ? 'Stop reading' : 'Read aloud';
+    btn.setAttribute('aria-label', playing ? 'Stop reading' : 'Read aloud');
+}
+
+function clearSpeakingUi(el) {
+    if (speechRestartPending) return;
+    if (speakingMessageEl === el) {
+        setSpeakButtonPlaying(el, false);
+        speakingMessageEl = null;
+    }
+}
+
+function startBrowserMessageSpeech(el, text, generation, lang, onFail, timeText) {
+    if (!browserSpeechSupported()) {
+        if (typeof onFail === 'function') {
+            onFail();
+        } else {
+            clearSpeakingUi(el);
+        }
+        return;
+    }
+    if (generation !== speechPlayGeneration || speakingMessageEl !== el) return;
+
+    refreshSpeechVoiceCache();
+
+    var locale = normalizeSpeechLang(lang || SPEECH_LANG_DEFAULT);
+
+    function finish() {
+        if (generation !== speechPlayGeneration) return;
+        clearSpeakingUi(el);
+    }
+
+    function speakTimeThenFinish() {
+        if (!timeText) {
+            finish();
+            return;
+        }
+        // Short silence so the timestamp feels like a caption, not the next sentence.
+        setTimeout(function () {
+            if (generation !== speechPlayGeneration || speakingMessageEl !== el) return;
+            speakBrowserUtterance(timeText, locale, generation, finish, function () {
+                // Time failed — still clear the button rather than looping forever.
+                finish();
+            });
+        }, SPEECH_TIME_PAUSE_MS);
+    }
+
+    speakBrowserUtterance(
+        text,
+        locale,
+        generation,
+        speakTimeThenFinish,
+        function () {
+            if (typeof onFail === 'function') {
+                onFail();
+                return;
+            }
+            finish();
+        }
+    );
+}
+
+/**
+ * @param {boolean} [allowBrowserFallback=true] — set false when browser already
+ *   failed and Azure is the last resort (avoids a pointless second browser try).
+ * @param {string} [timeText] — optional timestamp spoken after a short pause.
+ */
+function startAzureMessageSpeech(el, text, generation, lang, allowBrowserFallback, timeText) {
+    var canFallback = allowBrowserFallback !== false;
+    var locale = normalizeSpeechLang(lang || SPEECH_LANG_DEFAULT);
+
+    function fallbackOrStop() {
+        markAzureSpeechUnavailableTemporarily();
+        if (generation !== speechPlayGeneration || speakingMessageEl !== el) return;
+        if (canFallback && browserSpeechSupported()) {
+            startBrowserMessageSpeech(el, text, generation, locale, null, timeText);
+        } else {
+            clearSpeakingUi(el);
+        }
+    }
+
+    var maxChars = (azureSpeechConfig && azureSpeechConfig.maxChars) || 5000;
+    var clipped = text.length > maxChars ? text.slice(0, maxChars) : text;
+
+    return fetch(API_URL + '/speech/synthesize', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            text: clipped,
+            voice: selectedSpeechVoice,
+            lang: locale
+        })
+    }).then(function (res) {
+        if (!res.ok) {
+            return res.text().then(function (body) {
+                var msg = 'Azure TTS request failed (' + res.status + ')';
+                try {
+                    var data = body ? JSON.parse(body) : null;
+                    if (data && typeof data.message === 'string') msg = data.message;
+                } catch (e) { /* keep default */ }
+                throw new Error(msg);
+            });
+        }
+        return res.blob();
+    }).then(function (blob) {
+        if (generation !== speechPlayGeneration || speakingMessageEl !== el) return;
+
+        stopAzureAudio();
+        azureObjectUrl = URL.createObjectURL(blob);
+        azureAudioEl = new Audio(azureObjectUrl);
+        // Speed slider still works — we just stretch/compress the mp3.
+        azureAudioEl.playbackRate = speechRateInfo(selectedSpeechRateStep).rate;
+
+        azureAudioEl.onended = function () {
+            if (generation !== speechPlayGeneration) return;
+            stopAzureAudio();
+            if (timeText) {
+                setTimeout(function () {
+                    if (generation !== speechPlayGeneration || speakingMessageEl !== el) return;
+                    // Second clip is just the clock — no further timeText.
+                    startAzureMessageSpeech(el, timeText, generation, locale, canFallback, null);
+                }, SPEECH_TIME_PAUSE_MS);
+                return;
+            }
+            clearSpeakingUi(el);
+        };
+        azureAudioEl.onerror = function () {
+            if (generation !== speechPlayGeneration) return;
+            stopAzureAudio();
+            fallbackOrStop();
+        };
+
+        return azureAudioEl.play().catch(function () {
+            if (generation !== speechPlayGeneration) return;
+            stopAzureAudio();
+            fallbackOrStop();
+        });
+    }).catch(function () {
+        fallbackOrStop();
+    });
+}
+
+function startMessageSpeech(el) {
+    if (!el || !speechSupported()) return;
+
+    var parts = getMessageSpeakParts(el);
+    var text = parts.body;
+    var timeText = parts.time || '';
+    if (!text || text === '...') return;
+
+    var speakLang = detectSpeechLang(text);
+
+    // Drop whatever was mid-sentence before starting fresh.
+    speechPlayGeneration += 1;
+    var generation = speechPlayGeneration;
+    stopAzureAudio();
+    if (typeof window !== 'undefined' && window.speechSynthesis) {
+        window.speechSynthesis.cancel();
+    }
+
+    // Only one bubble can look "active" — clear the previous button if we switched.
+    if (speakingMessageEl && speakingMessageEl !== el) {
+        setSpeakButtonPlaying(speakingMessageEl, false);
+    }
+
+    speakingMessageEl = el;
+    setSpeakButtonPlaying(el, true);
+
+    function begin() {
+        if (generation !== speechPlayGeneration || speakingMessageEl !== el) return;
+
+        var azureOk = azureTtsIsAvailable();
+        var hasMatchingVoice = hasBrowserVoiceForLang(speakLang);
+        // Only prefer native when a voice actually speaks this language.
+        // Otherwise Chrome "succeeds" with English on Arabic and Azure never runs.
+        var nativeFirst = prefersNativeBrowserTts()
+            && browserSpeechSupported()
+            && hasMatchingVoice;
+
+        // Chrome / Edge / Safari — matching local voice first.
+        if (nativeFirst) {
+            startBrowserMessageSpeech(el, text, generation, speakLang, function () {
+                if (generation !== speechPlayGeneration || speakingMessageEl !== el) return;
+                if (azureOk) {
+                    // Native choked; Azure is the backup. Don't bounce back to browser.
+                    startAzureMessageSpeech(el, text, generation, speakLang, false, timeText);
+                } else {
+                    clearSpeakingUi(el);
+                }
+            }, timeText);
+            return;
+        }
+
+        // No matching browser voice (e.g. Arabic on many Windows installs),
+        // or Firefox / Brave — Azure when it's up, browser otherwise.
+        if (azureOk) {
+            startAzureMessageSpeech(el, text, generation, speakLang, true, timeText);
+            return;
+        }
+
+        if (browserSpeechSupported()) {
+            startBrowserMessageSpeech(el, text, generation, speakLang, null, timeText);
+            return;
+        }
+
+        clearSpeakingUi(el);
+    }
+
+    // First click may race the config probe — wait one tick if needed.
+    if (azureSpeechConfig === null) {
+        loadAzureSpeechConfig().then(begin);
+    } else {
+        begin();
+    }
+}
+
+// Browsers don't let you change rate mid-utterance, so we restart the same bubble.
+function restartMessageSpeechIfPlaying() {
+    var el = speakingMessageEl;
+    if (!el || !speechSupported()) return;
+
+    speechRestartPending = true;
+    stopAzureAudio();
+    if (window.speechSynthesis) {
+        window.speechSynthesis.cancel();
+    }
+    // Give the engine a tick to finish cancelling, then speak with the new settings.
+    window.setTimeout(function () {
+        speechRestartPending = false;
+        if (!el.isConnected) {
+            speakingMessageEl = null;
+            return;
+        }
+        startMessageSpeech(el);
+    }, 40);
+}
+
+function toggleMessageSpeech(el) {
+    if (!speechSupported() || !el) return;
+
+    // Same bubble again = stop.
+    if (speakingMessageEl === el) {
+        stopMessageSpeech();
+        return;
+    }
+
+    startMessageSpeech(el);
+}
+
+function attachMessageSpeakButton(el) {
+    if (!el || !speechSupported()) return null;
+    if (el.classList.contains('system') || el.classList.contains('error')) return null;
+
+    var existing = el.querySelector('.syllentras-msg-speak');
+    if (existing) return existing;
+
+    var btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'syllentras-msg-speak';
+    btn.title = 'Read aloud';
+    btn.setAttribute('aria-label', 'Read aloud');
+    btn.setAttribute('aria-pressed', 'false');
+    // Clean outline speaker — no box around it, just the icon.
+    btn.innerHTML =
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="16" height="16" fill="none" aria-hidden="true" focusable="false">' +
+        '<path d="M11 5L6 9H3v6h3l5 4V5z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" stroke-linecap="round"/>' +
+        '<path d="M15.2 8.8a4.2 4.2 0 0 1 0 6.4" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>' +
+        '<path d="M17.8 6.2a7.2 7.2 0 0 1 0 11.6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>' +
+        '</svg>';
+
+    btn.addEventListener('click', function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        toggleMessageSpeech(el);
+    });
+
+    el.appendChild(btn);
+    return btn;
+}
+
+loadSpeechSettings();
+loadAzureSpeechConfig();
+
+if (browserSpeechSupported()) {
+    refreshSpeechVoiceCache();
+    // Chrome loads voices late — refresh when they show up.
+    if (typeof window.speechSynthesis.onvoiceschanged !== 'undefined') {
+        window.speechSynthesis.onvoiceschanged = refreshSpeechVoiceCache;
+    }
+    window.speechSynthesis.addEventListener('voiceschanged', refreshSpeechVoiceCache);
+}
+
+// ===== message-dictation.js =====
+// Part of the Syllentras chat widget.
+// Included inside the shared IIFE from before_footer.php — do not load standalone.
+//
+// Mic next to the composer. Uses the browser speech-recognition API to dump
+// what you say into the message box (speech-to-text).
+
+var DICTATION_LANG_KEY = 'syllentras_dictation_lang';
+var DICTATION_LANG_DEFAULT = 'en-US';
+
+// Curated locales that browser STT usually handles well — not every language
+// on earth, just a solid campus-friendly set. Labels stay short for the menu.
+var DICTATION_LANGUAGES = [
+    { id: 'en-US', label: 'English (US)' },
+    { id: 'en-GB', label: 'English (UK)' },
+    { id: 'ar-SA', label: 'Arabic' },
+    { id: 'zh-CN', label: 'Chinese (Simplified)' },
+    { id: 'zh-TW', label: 'Chinese (Traditional)' },
+    { id: 'cs-CZ', label: 'Czech' },
+    { id: 'da-DK', label: 'Danish' },
+    { id: 'nl-NL', label: 'Dutch' },
+    { id: 'fi-FI', label: 'Finnish' },
+    { id: 'fr-FR', label: 'French' },
+    { id: 'de-DE', label: 'German' },
+    { id: 'el-GR', label: 'Greek' },
+    { id: 'he-IL', label: 'Hebrew' },
+    { id: 'hi-IN', label: 'Hindi' },
+    { id: 'hu-HU', label: 'Hungarian' },
+    { id: 'id-ID', label: 'Indonesian' },
+    { id: 'it-IT', label: 'Italian' },
+    { id: 'ja-JP', label: 'Japanese' },
+    { id: 'ko-KR', label: 'Korean' },
+    { id: 'nb-NO', label: 'Norwegian' },
+    { id: 'pl-PL', label: 'Polish' },
+    { id: 'pt-BR', label: 'Portuguese (Brazil)' },
+    { id: 'pt-PT', label: 'Portuguese (Portugal)' },
+    { id: 'ro-RO', label: 'Romanian' },
+    { id: 'ru-RU', label: 'Russian' },
+    { id: 'es-ES', label: 'Spanish (Spain)' },
+    { id: 'es-MX', label: 'Spanish (Latin America)' },
+    { id: 'sv-SE', label: 'Swedish' },
+    { id: 'th-TH', label: 'Thai' },
+    { id: 'tr-TR', label: 'Turkish' },
+    { id: 'uk-UA', label: 'Ukrainian' },
+    { id: 'vi-VN', label: 'Vietnamese' }
+];
+
+var selectedDictationLang = DICTATION_LANG_DEFAULT;
+var dictationRecognition = null;
+var dictationListening = false;
+var dictationBaseText = '';
+var dictationToastTimer = null;
+var dictationToastEl = null;
+var micBtn = document.getElementById('syllentras-chat-mic');
+
+function speechRecognitionSupported() {
+    return typeof window !== 'undefined'
+        && !!(window.SpeechRecognition || window.webkitSpeechRecognition);
+}
+
+function normalizeDictationLang(raw) {
+    var id = String(raw || '').trim();
+    for (var i = 0; i < DICTATION_LANGUAGES.length; i++) {
+        if (DICTATION_LANGUAGES[i].id === id) return id;
+    }
+    return DICTATION_LANG_DEFAULT;
+}
+
+function loadDictationLanguage() {
+    var raw = null;
+    try {
+        raw = localStorage.getItem(DICTATION_LANG_KEY);
+    } catch (e) {
+        raw = null;
+    }
+    selectedDictationLang = normalizeDictationLang(raw);
+}
+
+function saveDictationLanguage() {
+    try {
+        localStorage.setItem(DICTATION_LANG_KEY, selectedDictationLang);
+    } catch (e) { /* private mode / quota */ }
+}
+
+function getDictationLang() {
+    return normalizeDictationLang(selectedDictationLang);
+}
+
+function setDictationLang(langId) {
+    var next = normalizeDictationLang(langId);
+    if (next === selectedDictationLang) return;
+    selectedDictationLang = next;
+    saveDictationLanguage();
+    // Restart listening so the new language kicks in right away.
+    if (dictationListening) {
+        stopDictation();
+        window.setTimeout(function () {
+            startDictation();
+        }, 80);
+    }
+}
+
+function resetDictationLanguage() {
+    selectedDictationLang = DICTATION_LANG_DEFAULT;
+    saveDictationLanguage();
+    if (dictationListening) {
+        stopDictation();
+    }
+}
+
+function appendDictationChunk(base, chunk) {
+    var left = (base || '').replace(/\s+$/, '');
+    var right = String(chunk || '').replace(/^\s+/, '');
+    if (!right) return left;
+    if (!left) return right;
+    return left + ' ' + right;
+}
+
+function ensureDictationToast() {
+    if (dictationToastEl) return dictationToastEl;
+    var host = document.getElementById('syllentras-chat-main') || panel || root;
+    if (!host) return null;
+    dictationToastEl = document.createElement('div');
+    dictationToastEl.id = 'syllentras-dictation-toast';
+    dictationToastEl.className = 'syllentras-dictation-toast';
+    dictationToastEl.setAttribute('role', 'status');
+    dictationToastEl.setAttribute('aria-live', 'polite');
+    dictationToastEl.hidden = true;
+    host.appendChild(dictationToastEl);
+    return dictationToastEl;
+}
+
+function showDictationToast(message) {
+    var el = ensureDictationToast();
+    if (!el) return;
+    el.textContent = String(message || '');
+    el.hidden = false;
+    // Force reflow so the fade-in class actually animates when we re-show.
+    void el.offsetWidth;
+    el.classList.add('is-visible');
+    if (dictationToastTimer) {
+        clearTimeout(dictationToastTimer);
+    }
+    dictationToastTimer = setTimeout(function () {
+        el.classList.remove('is-visible');
+        dictationToastTimer = setTimeout(function () {
+            el.hidden = true;
+            dictationToastTimer = null;
+        }, 220);
+    }, 3000);
+}
+
+function dictationErrorMessage(code) {
+    if (code === 'not-allowed' || code === 'service-not-allowed') {
+        return 'Microphone access blocked. Allow it in your browser or system settings.';
+    }
+    if (code === 'audio-capture') {
+        return 'No microphone detected.';
+    }
+    return '';
+}
+
+function mediaErrorKind(err) {
+    var name = err && err.name ? String(err.name) : '';
+    if (
+        name === 'NotFoundError'
+        || name === 'DevicesNotFoundError'
+        || name === 'NotReadableError'
+        || name === 'OverconstrainedError'
+    ) {
+        return 'no-mic';
+    }
+    if (
+        name === 'NotAllowedError'
+        || name === 'PermissionDeniedError'
+        || name === 'SecurityError'
+    ) {
+        return 'blocked';
+    }
+    return 'unknown';
+}
+
+function probeMicrophone(done) {
+    if (
+        !navigator.mediaDevices
+        || typeof navigator.mediaDevices.getUserMedia !== 'function'
+    ) {
+        done(null);
+        return;
+    }
+    navigator.mediaDevices.getUserMedia({ audio: true }).then(function (stream) {
+        try {
+            stream.getTracks().forEach(function (track) {
+                track.stop();
+            });
+        } catch (e) { /* ignore */ }
+        done(null);
+    }).catch(function (err) {
+        done(mediaErrorKind(err));
+    });
+}
+
+function syncMicButtonUi() {
+    if (!micBtn) return;
+    micBtn.classList.toggle('is-listening', dictationListening);
+    micBtn.setAttribute('aria-pressed', dictationListening ? 'true' : 'false');
+    micBtn.title = dictationListening ? 'Stop listening' : 'Dictate message';
+    micBtn.setAttribute(
+        'aria-label',
+        dictationListening ? 'Stop listening' : 'Dictate message'
+    );
+}
+
+function stopDictation() {
+    dictationListening = false;
+    // Wipe the scratch buffer too — otherwise a late result can refill the box
+    // after send already cleared it (super annoying).
+    dictationBaseText = '';
+    if (!dictationRecognition) {
+        syncMicButtonUi();
+        return;
+    }
+    var rec = dictationRecognition;
+    dictationRecognition = null;
+    // Kill handlers BEFORE stop/abort. Browsers love to fire one more onresult
+    // when you stop, and that was putting the sent text back in the composer.
+    rec.onresult = null;
+    rec.onerror = null;
+    rec.onend = null;
+    try {
+        if (typeof rec.abort === 'function') {
+            rec.abort();
+        } else {
+            rec.stop();
+        }
+    } catch (e) { /* already stopped */ }
+    syncMicButtonUi();
+}
+
+function beginSpeechRecognition() {
+    var Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    dictationRecognition = new Recognition();
+    var session = dictationRecognition;
+    dictationRecognition.lang = getDictationLang();
+    dictationRecognition.continuous = true;
+    dictationRecognition.interimResults = true;
+    dictationBaseText = input.value || '';
+
+    dictationRecognition.onresult = function (event) {
+        // Ignore leftovers from a session we already stopped/sent.
+        if (!dictationListening || dictationRecognition !== session) return;
+
+        var interim = '';
+        var finals = '';
+        for (var i = event.resultIndex; i < event.results.length; i++) {
+            var piece = event.results[i][0].transcript || '';
+            if (event.results[i].isFinal) {
+                finals += piece;
+            } else {
+                interim += piece;
+            }
+        }
+        if (finals) {
+            dictationBaseText = appendDictationChunk(dictationBaseText, finals);
+            input.value = dictationBaseText;
+        } else {
+            input.value = appendDictationChunk(dictationBaseText, interim);
+        }
+        // Keep the caret at the end so you can see what just came in.
+        try {
+            input.focus();
+            var len = input.value.length;
+            input.setSelectionRange(len, len);
+        } catch (e) { /* some browsers are picky about selection on textarea */ }
+    };
+
+    dictationRecognition.onerror = function (event) {
+        if (dictationRecognition !== session) return;
+        // no-speech / aborted are normal — only nag on real mic problems.
+        var code = event && event.error ? String(event.error) : '';
+        var msg = dictationErrorMessage(code);
+        if (msg) {
+            showDictationToast(msg);
+            micBtn.title = msg;
+        }
+        dictationListening = false;
+        syncMicButtonUi();
+    };
+
+    dictationRecognition.onend = function () {
+        if (dictationRecognition !== session) return;
+        // continuous mode can end on its own — flip the button back off.
+        dictationListening = false;
+        syncMicButtonUi();
+    };
+
+    try {
+        dictationRecognition.start();
+        dictationListening = true;
+        syncMicButtonUi();
+        input.focus();
+    } catch (e) {
+        dictationListening = false;
+        syncMicButtonUi();
+        showDictationToast('Could not start the microphone.');
+    }
+}
+
+function startDictation() {
+    if (!speechRecognitionSupported() || !input || !micBtn) return;
+    if (dictationListening) return;
+
+    // Don't talk over yourself — pause read-aloud if it's going.
+    if (typeof stopMessageSpeech === 'function') {
+        stopMessageSpeech();
+    }
+
+    // Quick mic check so we can say "blocked" vs "not found" clearly.
+    probeMicrophone(function (kind) {
+        if (kind === 'blocked') {
+            showDictationToast(
+                'Microphone access blocked. Allow it in your browser or system settings.'
+            );
+            return;
+        }
+        if (kind === 'no-mic') {
+            showDictationToast('No microphone detected.');
+            return;
+        }
+        beginSpeechRecognition();
+    });
+}
+
+function toggleDictation() {
+    if (dictationListening) {
+        stopDictation();
+    } else {
+        startDictation();
+    }
+}
+
+function initDictation() {
+    loadDictationLanguage();
+    if (!micBtn) return;
+
+    if (!speechRecognitionSupported()) {
+        micBtn.hidden = true;
+        return;
+    }
+
+    micBtn.hidden = false;
+    syncMicButtonUi();
+    micBtn.addEventListener('click', function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        toggleDictation();
+    });
+}
+
+initDictation();
+
+// ===== attachments.js =====
+// Part of the Syllentras chat widget.
+// Included inside the shared IIFE from before_footer.php — do not load standalone.
+//
+// Chat file attachments: Tools → Attach files, or drag-and-drop onto the chat.
+
+var CHAT_ATTACHMENT_MAX_FILES = 10;
+var CHAT_ATTACHMENT_MAX_BYTES = 50 * 1024 * 1024;
+var CHAT_ATTACHMENT_MAX_TOTAL_BYTES = 300 * 1024 * 1024;
+var CHAT_ATTACHMENT_USER_QUOTA_MB = 2048;
+var CHAT_ATTACHMENT_TOAST_MS = 3200;
+var CHAT_ATTACHMENT_ALLOWED_EXTENSIONS = [
+    'pdf', 'docx', 'pptx', 'txt', 'md',
+    'py', 'java', 'js', 'ts', 'cpp', 'c', 'cs', 'php',
+    'xlsx', 'csv', 'zip', 'json', 'xml', 'sql', 'odt', 'ods', 'odp',
+    'epub', 'tex'
+];
+// Blocked until OCR / transcription exists — toast explains why.
+var CHAT_ATTACHMENT_OCR_BLOCKED_EXTENSIONS = [
+    'png', 'jpg', 'jpeg', 'mp3', 'wav', 'm4a', 'mp4', 'mov', 'avi'
+];
+
+var pendingAttachments = [];
+var attachmentInput = document.getElementById('syllentras-chat-file-input');
+var attachmentBar = document.getElementById('syllentras-chat-attachments');
+var attachmentListEl = document.getElementById('syllentras-chat-attachment-list');
+var attachmentCountEl = document.getElementById('syllentras-chat-attachment-count');
+var attachmentErrorEl = document.getElementById('syllentras-chat-attachment-error');
+var attachmentToastEl = null;
+var attachmentToastTimer = null;
+var attachmentDragDepth = 0;
+var attachmentDropHost = null;
+
+function attachmentExtension(filename) {
+    var base = String(filename || '').split(/[/\\]/).pop() || '';
+    var dot = base.lastIndexOf('.');
+    if (dot <= 0 || dot === base.length - 1) return '';
+    return base.slice(dot + 1).toLowerCase();
+}
+
+function isAllowedAttachmentFilename(filename) {
+    var ext = attachmentExtension(filename);
+    return !!ext && CHAT_ATTACHMENT_ALLOWED_EXTENSIONS.indexOf(ext) !== -1;
+}
+
+function isOcrBlockedAttachmentFilename(filename) {
+    var ext = attachmentExtension(filename);
+    return !!ext && CHAT_ATTACHMENT_OCR_BLOCKED_EXTENSIONS.indexOf(ext) !== -1;
+}
+
+function buildAcceptAttribute() {
+    return CHAT_ATTACHMENT_ALLOWED_EXTENSIONS.map(function (ext) {
+        return '.' + ext;
+    }).join(',');
+}
+
+function attachmentLimitMessages() {
+    return {
+        tooManyFiles: 'You can attach up to 10 files per message.',
+        tooLargeFile: 'This file is too large. Maximum size is 50 MB per file.',
+        tooLargeTotal: 'Upload limit exceeded. Maximum total upload size is 300 MB.',
+        quotaFull: 'Your attachment storage is full. Maximum storage is 2 GB.',
+        ocrBlocked: "Images and media files aren't allowed yet (OCR not available).",
+        unsupportedType: 'This file type is not supported.'
+    };
+}
+
+function friendlyAttachmentError(raw) {
+    var text = String(raw || '').trim();
+    var limits = attachmentLimitMessages();
+    if (!text) return 'Upload failed. Please try again.';
+    var lower = text.toLowerCase();
+    if (lower.indexOf('ocr') !== -1
+        || lower.indexOf('images and media') !== -1) {
+        return limits.ocrBlocked;
+    }
+    if (lower.indexOf('not supported') !== -1
+        || lower.indexOf('unsupported') !== -1
+        || lower.indexOf('not a supported') !== -1
+        || lower.indexOf('supported file type') !== -1) {
+        return limits.unsupportedType;
+    }
+    if (lower.indexOf('storage is full') !== -1 || lower.indexOf('quota') !== -1) {
+        return limits.quotaFull;
+    }
+    if (lower.indexOf('total upload') !== -1 || lower.indexOf('combined') !== -1) {
+        return limits.tooLargeTotal;
+    }
+    if (lower.indexOf('too large') !== -1 || lower.indexOf('per file') !== -1) {
+        return limits.tooLargeFile;
+    }
+    if (lower.indexOf('up to 10') !== -1 || lower.indexOf('at most 10') !== -1) {
+        return limits.tooManyFiles;
+    }
+    // Never leak paths or stack-looking text.
+    if (text.indexOf('/') !== -1 || text.indexOf('\\') !== -1 || text.indexOf('Error:') === 0) {
+        return 'Upload failed. Please try again.';
+    }
+    return text;
+}
+
+function ensureAttachmentToast() {
+    if (attachmentToastEl) return attachmentToastEl;
+    var host = document.getElementById('syllentras-chat-main') || panel || root;
+    if (!host) return null;
+    attachmentToastEl = document.createElement('div');
+    attachmentToastEl.id = 'syllentras-attachment-toast';
+    attachmentToastEl.className = 'syllentras-dictation-toast syllentras-attachment-toast';
+    attachmentToastEl.setAttribute('role', 'status');
+    attachmentToastEl.setAttribute('aria-live', 'polite');
+    attachmentToastEl.hidden = true;
+    host.appendChild(attachmentToastEl);
+    return attachmentToastEl;
+}
+
+function showAttachmentToast(message) {
+    var el = ensureAttachmentToast();
+    if (!el) return;
+    var text = friendlyAttachmentError(message);
+    el.textContent = text;
+    el.hidden = false;
+    void el.offsetWidth;
+    el.classList.add('is-visible');
+    if (attachmentToastTimer) {
+        clearTimeout(attachmentToastTimer);
+    }
+    attachmentToastTimer = setTimeout(function () {
+        el.classList.remove('is-visible');
+        attachmentToastTimer = setTimeout(function () {
+            el.hidden = true;
+            attachmentToastTimer = null;
+        }, 220);
+    }, CHAT_ATTACHMENT_TOAST_MS);
+}
+
+function setAttachmentError(message) {
+    if (!attachmentErrorEl) {
+        if (message) showAttachmentToast(message);
+        return;
+    }
+    if (!message) {
+        attachmentErrorEl.hidden = true;
+        attachmentErrorEl.textContent = '';
+        return;
+    }
+    var friendly = friendlyAttachmentError(message);
+    // Prefer the temporary toast; keep the inline alert empty so UI stays clean.
+    attachmentErrorEl.hidden = true;
+    attachmentErrorEl.textContent = '';
+    showAttachmentToast(friendly);
+}
+
+function formatAttachmentSize(bytes) {
+    if (!bytes || bytes < 1024) return (bytes || 0) + ' B';
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+    return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+}
+
+function attachmentStatusLabel(status) {
+    if (status === 'uploading') return 'Uploading…';
+    if (status === 'processing') return 'Processing…';
+    if (status === 'ready') return 'Ready';
+    if (status === 'failed') return 'Failed';
+    if (status === 'uploaded') return 'Uploaded';
+    return status || '';
+}
+
+function renderAttachmentBar() {
+    if (!attachmentBar || !attachmentListEl || !attachmentCountEl) return;
+
+    attachmentListEl.innerHTML = '';
+    pendingAttachments.forEach(function (item, index) {
+        var chip = document.createElement('div');
+        chip.className = 'syllentras-attachment-chip status-' + (item.status || 'ready');
+        chip.title = item.filename + ' (' + formatAttachmentSize(item.size) + ') — ' +
+            attachmentStatusLabel(item.status);
+
+        var name = document.createElement('span');
+        name.className = 'syllentras-attachment-chip-name';
+        name.textContent = item.filename;
+
+        var status = document.createElement('span');
+        status.className = 'syllentras-attachment-chip-status';
+        status.textContent = attachmentStatusLabel(item.status);
+
+        var remove = document.createElement('button');
+        remove.type = 'button';
+        remove.className = 'syllentras-attachment-chip-remove';
+        remove.setAttribute('aria-label', 'Remove ' + item.filename);
+        remove.textContent = '×';
+        remove.disabled = item.status === 'uploading' || item.status === 'processing';
+        remove.addEventListener('click', function (e) {
+            e.stopPropagation();
+            var removed = pendingAttachments.splice(index, 1)[0];
+            setAttachmentError('');
+            renderAttachmentBar();
+            if (removed && removed.id && typeof deleteUploadedAttachment === 'function') {
+                deleteUploadedAttachment(removed.id).catch(function () { /* best-effort */ });
+            }
+        });
+
+        chip.appendChild(name);
+        chip.appendChild(status);
+        chip.appendChild(remove);
+        attachmentListEl.appendChild(chip);
+    });
+
+    attachmentCountEl.textContent = pendingAttachments.length + ' / ' + CHAT_ATTACHMENT_MAX_FILES + ' files';
+    attachmentBar.hidden = pendingAttachments.length === 0;
+}
+
+function clearPendingAttachments() {
+    pendingAttachments = [];
+    if (attachmentInput) attachmentInput.value = '';
+    setAttachmentError('');
+    renderAttachmentBar();
+}
+
+function getPendingAttachmentsForSend() {
+    return pendingAttachments
+        .filter(function (item) {
+            return item.id && (item.status === 'ready' || item.status === 'uploaded' || item.status === 'processing');
+        })
+        .map(function (item) {
+            return {
+                id: item.id,
+                filename: item.filename,
+                status: item.status
+            };
+        });
+}
+
+function hasPendingAttachmentUploads() {
+    return pendingAttachments.some(function (item) {
+        return item.status === 'uploading' || item.status === 'processing';
+    });
+}
+
+function deleteUploadedAttachment(id) {
+    if (!id) return Promise.resolve();
+    return fetch(
+        API_URL + '/chat/attachments/' + encodeURIComponent(id) +
+        '?moodleUserId=' + encodeURIComponent(moodleUserId),
+        { method: 'DELETE' }
+    ).then(function (res) {
+        if (!res.ok) {
+            return res.text().then(function () {
+                // Swallow — chip already removed locally.
+            });
+        }
+    });
+}
+
+function uploadAttachmentFile(file, localItem) {
+    var form = new FormData();
+    form.append('files', file, file.name);
+
+    var url = API_URL + '/chat/attachments'
+        + '?moodleUserId=' + encodeURIComponent(moodleUserId)
+        + '&courseId=' + encodeURIComponent(courseId);
+    if (conversationId) {
+        url += '&conversationId=' + encodeURIComponent(conversationId);
+    }
+
+    localItem.status = 'uploading';
+    renderAttachmentBar();
+
+    return fetch(url, { method: 'POST', body: form })
+        .then(function (res) {
+            return res.text().then(function (text) {
+                var data = null;
+                if (text) {
+                    try { data = JSON.parse(text); } catch (e) { data = null; }
+                }
+                if (!res.ok) {
+                    var msg = null;
+                    if (data) {
+                        if (typeof data.message === 'string') msg = data.message;
+                        else if (Array.isArray(data.message)) msg = data.message.join(' ');
+                    }
+                    throw new Error(msg || 'Upload failed. Please try again.');
+                }
+                return data;
+            });
+        })
+        .then(function (data) {
+            var uploaded = (data && data.attachments && data.attachments[0]) || null;
+            if (!uploaded || !uploaded.id) {
+                throw new Error('Upload did not return an attachment id.');
+            }
+            localItem.id = uploaded.id;
+            localItem.status = uploaded.status || 'ready';
+            localItem.size = uploaded.byteLength || file.size;
+            localItem.mimeType = uploaded.mimeType || file.type || '';
+            if (uploaded.status === 'failed') {
+                localItem.error = uploaded.processingError || 'Processing failed.';
+                setAttachmentError(localItem.error);
+            }
+            renderAttachmentBar();
+            return localItem;
+        })
+        .catch(function (err) {
+            localItem.status = 'failed';
+            localItem.error = friendlyAttachmentError((err && err.message) || 'Upload failed.');
+            setAttachmentError(localItem.error);
+            // Remove failed chip after toast so the bar stays tidy.
+            var idx = pendingAttachments.indexOf(localItem);
+            if (idx !== -1) {
+                pendingAttachments.splice(idx, 1);
+            }
+            renderAttachmentBar();
+            throw err;
+        });
+}
+
+/**
+ * Validate and enqueue FileList / File[] selections, then multipart-upload each.
+ * Returns { added, errors } for callers/tests.
+ */
+function addAttachmentFiles(fileList) {
+    var files = Array.prototype.slice.call(fileList || []);
+    var errors = [];
+    var limits = attachmentLimitMessages();
+
+    if (!files.length) {
+        return { added: 0, errors: errors };
+    }
+
+    var remaining = CHAT_ATTACHMENT_MAX_FILES - pendingAttachments.length;
+    if (remaining <= 0) {
+        errors.push(limits.tooManyFiles);
+        setAttachmentError(errors[0]);
+        return { added: 0, errors: errors };
+    }
+
+    if (files.length > remaining) {
+        errors.push(limits.tooManyFiles);
+        files = files.slice(0, remaining);
+    }
+
+    var pendingBytes = pendingAttachments.reduce(function (sum, item) {
+        return sum + (item.size || 0);
+    }, 0);
+    var batchBytes = 0;
+    var queue = [];
+
+    files.forEach(function (file) {
+        if (!file) return;
+        if (isOcrBlockedAttachmentFilename(file.name)) {
+            errors.push(limits.ocrBlocked);
+            return;
+        }
+        if (!isAllowedAttachmentFilename(file.name)) {
+            errors.push(limits.unsupportedType);
+            return;
+        }
+        if (file.size > CHAT_ATTACHMENT_MAX_BYTES) {
+            errors.push(limits.tooLargeFile);
+            return;
+        }
+        if (pendingBytes + batchBytes + file.size > CHAT_ATTACHMENT_MAX_TOTAL_BYTES) {
+            errors.push(limits.tooLargeTotal);
+            return;
+        }
+        var dup = pendingAttachments.some(function (existing) {
+            return existing.filename === file.name && existing.size === file.size;
+        });
+        if (dup) {
+            errors.push('"' + file.name + '" is already attached.');
+            return;
+        }
+        queue.push(file);
+        batchBytes += file.size;
+    });
+
+    if (!queue.length) {
+        // Always toast validation failures (unsupported type, size, etc.).
+        setAttachmentError(errors[0] || limits.unsupportedType);
+        return { added: 0, errors: errors };
+    }
+
+    queue.forEach(function (file) {
+        var localItem = {
+            id: null,
+            filename: file.name,
+            mimeType: file.type || '',
+            size: file.size,
+            status: 'uploading',
+            error: null
+        };
+        pendingAttachments.push(localItem);
+        renderAttachmentBar();
+        uploadAttachmentFile(file, localItem).catch(function () { /* toast already shown */ });
+    });
+
+    // Mixed batch: some files accepted, some rejected — still notify.
+    if (errors.length) {
+        setAttachmentError(errors[0]);
+    }
+    return { added: queue.length, errors: errors };
+}
+
+function openAttachmentPicker() {
+    if (!attachmentInput) return;
+    setAttachmentError('');
+    if (pendingAttachments.length >= CHAT_ATTACHMENT_MAX_FILES) {
+        setAttachmentError(attachmentLimitMessages().tooManyFiles);
+        if (attachmentBar) attachmentBar.hidden = false;
+        return;
+    }
+    attachmentInput.value = '';
+    attachmentInput.click();
+}
+
+function parseStoredAttachmentNames(content) {
+    var text = String(content || '');
+    var match = text.match(/^\[syllentras-files:\s*([^\]]+)\]\s*(?:\n+)?([\s\S]*)$/i);
+    if (!match) {
+        return { filenames: [], displayText: text };
+    }
+    var filenames = match[1].split(',').map(function (part) {
+        return part.trim();
+    }).filter(Boolean);
+    return {
+        filenames: filenames,
+        displayText: (match[2] || '').trim()
+    };
+}
+
+function renderUserMessageContent(el, text, attachmentNames) {
+    if (!el) return;
+    el.textContent = '';
+
+    var names = Array.isArray(attachmentNames) ? attachmentNames.slice() : [];
+    var parsed = parseStoredAttachmentNames(text);
+    if (!names.length && parsed.filenames.length) {
+        names = parsed.filenames;
+    }
+    var displayText = names.length ? parsed.displayText : text;
+
+    if (names.length) {
+        var wrap = document.createElement('div');
+        wrap.className = 'syllentras-msg-attachments';
+        names.forEach(function (name) {
+            var chip = document.createElement('span');
+            chip.className = 'syllentras-msg-attachment-chip';
+            chip.textContent = typeof name === 'string' ? name : (name.filename || name);
+            wrap.appendChild(chip);
+        });
+        el.appendChild(wrap);
+    }
+
+    if (displayText) {
+        var body = document.createElement('div');
+        body.className = 'syllentras-msg-text';
+        body.textContent = displayText;
+        el.appendChild(body);
+    } else if (!names.length) {
+        el.textContent = text;
+    }
+}
+
+function eventHasFiles(e) {
+    var types = e && e.dataTransfer && e.dataTransfer.types;
+    if (!types) return false;
+    if (typeof types.includes === 'function') return types.includes('Files');
+    return Array.prototype.indexOf.call(types, 'Files') !== -1;
+}
+
+function setAttachmentDropHighlight(active) {
+    if (!attachmentDropHost) return;
+    attachmentDropHost.classList.toggle('is-file-dragover', !!active);
+}
+
+function clearAttachmentDropHighlight() {
+    attachmentDragDepth = 0;
+    setAttachmentDropHighlight(false);
+}
+
+function initAttachmentDragDrop() {
+    attachmentDropHost = document.getElementById('syllentras-chat-main') || panel;
+    if (!attachmentDropHost) return;
+
+    attachmentDropHost.addEventListener('dragenter', function (e) {
+        if (!eventHasFiles(e)) return;
+        e.preventDefault();
+        e.stopPropagation();
+        attachmentDragDepth += 1;
+        setAttachmentDropHighlight(true);
+    });
+
+    attachmentDropHost.addEventListener('dragover', function (e) {
+        if (!eventHasFiles(e)) return;
+        e.preventDefault();
+        e.stopPropagation();
+        if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+        setAttachmentDropHighlight(true);
+    });
+
+    attachmentDropHost.addEventListener('dragleave', function (e) {
+        if (!eventHasFiles(e)) return;
+        e.preventDefault();
+        e.stopPropagation();
+        attachmentDragDepth = Math.max(0, attachmentDragDepth - 1);
+        if (attachmentDragDepth === 0) {
+            setAttachmentDropHighlight(false);
+        }
+    });
+
+    attachmentDropHost.addEventListener('drop', function (e) {
+        if (!eventHasFiles(e)) return;
+        e.preventDefault();
+        e.stopPropagation();
+        clearAttachmentDropHighlight();
+        var files = e.dataTransfer && e.dataTransfer.files;
+        if (files && files.length) {
+            addAttachmentFiles(files);
+        }
+    });
+
+    // Avoid the browser navigating away if a file is dropped outside the host.
+    document.addEventListener('dragover', function (e) {
+        if (eventHasFiles(e)) e.preventDefault();
+    });
+    document.addEventListener('drop', function (e) {
+        if (eventHasFiles(e)) e.preventDefault();
+    });
+}
+
+function initAttachments() {
+    if (attachmentInput) {
+        attachmentInput.setAttribute('accept', buildAcceptAttribute());
+        attachmentInput.addEventListener('change', function () {
+            addAttachmentFiles(attachmentInput.files);
+            attachmentInput.value = '';
+        });
+    }
+    initAttachmentDragDrop();
+    renderAttachmentBar();
+}
+
+// ===== timestamps.js =====
+// Part of the Syllentras chat widget.
+// Included inside the shared IIFE from before_footer.php — do not load standalone.
+//
+// Chat timeline helpers: date/time separators, message grouping, and relative
+// times for the conversation ⋮ menu. Kept in one place so messages.js /
+// conversations.js don't each reinvent date math.
+
+// Same sender + closer than this = one visual cluster (no time chip between).
+var MSG_GROUP_GAP_MS = 10 * 60 * 1000;
+
+function parseMessageDate(value) {
+    if (!value) return null;
+    var d = value instanceof Date ? value : new Date(value);
+    return isNaN(d.getTime()) ? null : d;
+}
+
+function isSameLocalDay(a, b) {
+    return (
+        a.getFullYear() === b.getFullYear() &&
+        a.getMonth() === b.getMonth() &&
+        a.getDate() === b.getDate()
+    );
+}
+
+function startOfLocalDay(d) {
+    return new Date(d.getFullYear(), d.getMonth(), d.getDate());
+}
+
+// "3:45 PM" — short clock for bubbles and in-chat time gaps.
+function formatChatClock(d) {
+    return d.toLocaleTimeString(undefined, {
+        hour: 'numeric',
+        minute: '2-digit'
+    });
+}
+
+// Labels for the --- Today --- style day markers.
+function formatChatDateLabel(d) {
+    var now = new Date();
+    var today = startOfLocalDay(now);
+    var day = startOfLocalDay(d);
+    var diffDays = Math.round((today - day) / 86400000);
+
+    if (diffDays === 0) return 'Today';
+    if (diffDays === 1) return 'Yesterday';
+    if (diffDays > 1 && diffDays < 7) {
+        return d.toLocaleDateString(undefined, { weekday: 'long' });
+    }
+    return d.toLocaleDateString(undefined, {
+        month: 'short',
+        day: 'numeric',
+        year: d.getFullYear() !== now.getFullYear() ? 'numeric' : undefined
+    });
+}
+
+// Short relative stamp for the conversation ⋮ menu (and search meta).
+function formatRelativeConversationTime(value) {
+    var d = parseMessageDate(value);
+    if (!d) return '';
+
+    var now = new Date();
+    var sec = Math.max(0, Math.floor((now - d) / 1000));
+
+    if (sec < 60) return 'Just now';
+
+    var min = Math.floor(sec / 60);
+    if (min < 60) return min + 'm';
+
+    var hours = Math.floor(min / 60);
+    if (hours < 24) return hours + 'h';
+
+    if (isSameLocalDay(d, now)) {
+        return formatChatClock(d);
+    }
+
+    var diffDays = Math.round(
+        (startOfLocalDay(now) - startOfLocalDay(d)) / 86400000
+    );
+    if (diffDays >= 1 && diffDays < 7) {
+        return d.toLocaleDateString(undefined, { weekday: 'short' });
+    }
+
+    return d.toLocaleDateString(undefined, {
+        month: 'short',
+        day: 'numeric',
+        year: d.getFullYear() !== now.getFullYear() ? 'numeric' : undefined
+    });
+}
+
+function createChatSeparator(kind, label) {
+    var el = document.createElement('div');
+    el.className = 'syllentras-chat-sep syllentras-chat-sep-' + kind;
+    el.setAttribute('role', 'separator');
+    el.dataset.sepKind = kind;
+
+    // --- Today ---  (hairlines on both sides; time gaps skip the lines)
+    if (kind === 'date') {
+        var left = document.createElement('span');
+        left.className = 'syllentras-chat-sep-line';
+        left.setAttribute('aria-hidden', 'true');
+        var text = document.createElement('span');
+        text.className = 'syllentras-chat-sep-label';
+        text.textContent = label;
+        var right = document.createElement('span');
+        right.className = 'syllentras-chat-sep-line';
+        right.setAttribute('aria-hidden', 'true');
+        el.appendChild(left);
+        el.appendChild(text);
+        el.appendChild(right);
+    } else {
+        var span = document.createElement('span');
+        span.className = 'syllentras-chat-sep-label';
+        span.textContent = label;
+        el.appendChild(span);
+    }
+    return el;
+}
+
+function isChatBubble(el) {
+    return !!(
+        el &&
+        el.classList &&
+        el.classList.contains('syllentras-msg') &&
+        (el.classList.contains('user') || el.classList.contains('assistant'))
+    );
+}
+
+// Seeded Main/Home intro — not a real turn, so no hover clock / no day chip for it alone.
+function isSeededWelcomeBubble(el) {
+    if (!isChatBubble(el) || !el.classList.contains('assistant')) return false;
+    var text = String(el.textContent || '')
+        .replace(/\s+/g, ' ')
+        .trim();
+    return (
+        /I'm Syllentras AI/i.test(text) && /chat in any language/i.test(text)
+    );
+}
+
+function countsForTimeline(el) {
+    return isChatBubble(el) && !isSeededWelcomeBubble(el);
+}
+
+function getTimelineMessages() {
+    if (!msgs) return [];
+    return Array.from(msgs.children).filter(isChatBubble);
+}
+
+function messageRoleKey(el) {
+    return el.classList.contains('user') ? 'user' : 'assistant';
+}
+
+// True when two bubbles should sit in the same stack (tight spacing, shared look).
+function canGroupMessages(a, b) {
+    if (!isChatBubble(a) || !isChatBubble(b)) return false;
+    if (isSeededWelcomeBubble(a) || isSeededWelcomeBubble(b)) return false;
+    if (messageRoleKey(a) !== messageRoleKey(b)) return false;
+
+    var da = parseMessageDate(a.dataset.createdAt);
+    var db = parseMessageDate(b.dataset.createdAt);
+    if (!da || !db) return false;
+    if (!isSameLocalDay(da, db)) return false;
+    if (Math.abs(db - da) >= MSG_GROUP_GAP_MS) return false;
+
+    // Anything sitting between them in the pane (system note, error, etc.)
+    // breaks the cluster — we only group neighbors that feel consecutive.
+    var n = a.nextElementSibling;
+    while (n && n !== b) {
+        if (isChatBubble(n)) return false;
+        if (n.classList.contains('syllentras-msg')) return false;
+        n = n.nextElementSibling;
+    }
+    return n === b;
+}
+
+function ensureMessageTimeEl(el) {
+    if (!isChatBubble(el)) return null;
+    var existing = el.querySelector('.syllentras-msg-time');
+
+    // Intro bubble + typing placeholder — no stamp.
+    if (isSeededWelcomeBubble(el) || el.textContent === '...') {
+        if (existing) existing.remove();
+        return null;
+    }
+
+    var when = parseMessageDate(el.dataset.createdAt);
+    if (!when) {
+        if (existing) existing.remove();
+        return null;
+    }
+
+    var label = formatChatClock(when);
+    if (!existing) {
+        existing = document.createElement('time');
+        existing.className = 'syllentras-msg-time';
+        el.appendChild(existing);
+    }
+    existing.dateTime = when.toISOString();
+    existing.textContent = label;
+    existing.setAttribute('aria-hidden', 'true');
+    return existing;
+}
+
+function bindMessageTimeReveal(el) {
+    if (!el || el.dataset.timeBound === '1') return;
+    el.dataset.timeBound = '1';
+
+    // Phones don't hover — tap the bubble to peek the time; tap again / elsewhere to hide.
+    el.addEventListener('click', function (e) {
+        if (e.target.closest('button, a, summary, input, textarea, .syllentras-pending-actions')) {
+            return;
+        }
+        if (isSeededWelcomeBubble(el) || !el.querySelector('.syllentras-msg-time')) {
+            return;
+        }
+        var canHover =
+            window.matchMedia &&
+            window.matchMedia('(hover: hover) and (pointer: fine)').matches;
+        if (canHover) return;
+
+        var open = el.classList.toggle('is-time-visible');
+        if (open && msgs) {
+            Array.from(msgs.querySelectorAll('.syllentras-msg.is-time-visible')).forEach(
+                function (other) {
+                    if (other !== el) other.classList.remove('is-time-visible');
+                }
+            );
+        }
+    });
+
+    // Long-press also works if a quick tap got eaten by selection / scroll.
+    var pressTimer = null;
+    el.addEventListener(
+        'touchstart',
+        function () {
+            if (isSeededWelcomeBubble(el) || !el.querySelector('.syllentras-msg-time')) {
+                return;
+            }
+            pressTimer = setTimeout(function () {
+                el.classList.add('is-time-visible');
+                if (msgs) {
+                    Array.from(
+                        msgs.querySelectorAll('.syllentras-msg.is-time-visible')
+                    ).forEach(function (other) {
+                        if (other !== el) other.classList.remove('is-time-visible');
+                    });
+                }
+            }, 420);
+        },
+        { passive: true }
+    );
+    function clearPress() {
+        if (pressTimer) {
+            clearTimeout(pressTimer);
+            pressTimer = null;
+        }
+    }
+    el.addEventListener('touchend', clearPress);
+    el.addEventListener('touchcancel', clearPress);
+    el.addEventListener('touchmove', clearPress);
+}
+
+function applyMessageGrouping(nodes) {
+    for (var i = 0; i < nodes.length; i++) {
+        var el = nodes[i];
+        el.classList.remove('is-group-start', 'is-group-end', 'is-group-continued');
+
+        var prev = nodes[i - 1];
+        var next = nodes[i + 1];
+        var withPrev = !!(prev && canGroupMessages(prev, el));
+        var withNext = !!(next && canGroupMessages(el, next));
+
+        if (!withPrev) el.classList.add('is-group-start');
+        if (!withNext) el.classList.add('is-group-end');
+        if (withPrev) el.classList.add('is-group-continued');
+
+        // Overlay clock on hover/tap — middle bubbles of a stack stay quiet
+        // unless you hover that specific one.
+        ensureMessageTimeEl(el);
+        bindMessageTimeReveal(el);
+    }
+}
+
+// Walk the transcript, drop old separators, and put fresh date/time markers
+// back in. Cheap enough to run after history loads and after each send.
+function rebuildChatTimeline() {
+    if (!msgs) return;
+
+    Array.from(msgs.querySelectorAll('.syllentras-chat-sep')).forEach(function (node) {
+        node.remove();
+    });
+
+    var nodes = getTimelineMessages();
+    // Timeline "starts" when someone actually chats — ignore the seeded intro.
+    var prev = null;
+
+    for (var i = 0; i < nodes.length; i++) {
+        var el = nodes[i];
+        if (!countsForTimeline(el)) {
+            continue;
+        }
+
+        var curDate = parseMessageDate(el.dataset.createdAt);
+        if (curDate) {
+            if (!prev) {
+                msgs.insertBefore(
+                    createChatSeparator('date', formatChatDateLabel(curDate)),
+                    el
+                );
+            } else {
+                var prevDate = parseMessageDate(prev.dataset.createdAt);
+                if (prevDate) {
+                    if (!isSameLocalDay(prevDate, curDate)) {
+                        msgs.insertBefore(
+                            createChatSeparator('date', formatChatDateLabel(curDate)),
+                            el
+                        );
+                    } else if (curDate - prevDate >= MSG_GROUP_GAP_MS) {
+                        msgs.insertBefore(
+                            createChatSeparator('time', formatChatClock(curDate)),
+                            el
+                        );
+                    }
+                }
+            }
+            prev = el;
+        }
+    }
+
+    applyMessageGrouping(nodes);
+}
+
+// ===== messages.js =====
+// Part of the Syllentras chat widget.
+// Included inside the shared IIFE from before_footer.php — do not load standalone.
+
+var messageFlashTimer = null;
+var messageMarkFadeTimer = null;
+var STICK_BOTTOM_THRESHOLD_PX = 80;
+// Track whether the viewer is pinned to the latest messages so content growth
+// can follow along without yanking someone who scrolled up to read history.
+var pinnedToBottom = true;
+// While history is painting, hide the list and defer stick-scrolls until one settle.
+var historySettlePending = false;
+
+function normalizeMessageMode(mode) {
+    if (mode === 'coach') return 'coach';
+    // Legacy / missing mode on assistant turns defaults to Direct.
+    return 'direct';
+}
+
+function applyModeChip(el, mode) {
+    if (!el) return;
+    var existing = el.querySelector('.syllentras-msg-mode');
+    if (existing) existing.remove();
+    var normalized = normalizeMessageMode(mode);
+    var chip = document.createElement('span');
+    chip.className = 'syllentras-msg-mode syllentras-msg-mode-' + normalized;
+    chip.textContent = normalized === 'coach' ? 'Coach' : 'Direct';
+    el.insertBefore(chip, el.firstChild);
+    el.dataset.mode = normalized;
+}
+
+function appendSystemNotice(text, options) {
+    options = options || {};
+    if (!msgs || !text) return null;
+    var div = document.createElement('div');
+    div.className = 'syllentras-msg system';
+    div.textContent = text;
+    msgs.appendChild(div);
+    if (options.scroll !== false) {
+        if (options.forceScroll) {
+            scrollToBottom();
+        } else {
+            stickToBottomIfNeeded();
+        }
+    } else {
+        updateScrollBottomButton();
+    }
+    return div;
+}
+
+function createMessageElement(role, text, options) {
+    options = options || {};
+    var div = document.createElement('div');
+    div.className = 'syllentras-msg ' + role;
+    if (options.createdAt) div.dataset.createdAt = options.createdAt;
+    var messageId = options.id || nextLocalMessageId();
+    div.dataset.messageId = String(messageId);
+    if (role === 'assistant' && text !== '...') {
+        renderAssistantContent(div, text);
+        applyModeChip(div, options.mode);
+    } else if (role === 'user') {
+        if (typeof renderUserMessageContent === 'function') {
+            renderUserMessageContent(div, text, options.attachmentNames);
+        } else {
+            div.textContent = text;
+        }
+    } else {
+        div.textContent = text;
+    }
+    if (role === 'user' || (role === 'assistant' && text !== '...')) {
+        upsertMessageSearchEntry({
+            id: messageId,
+            role: role,
+            content: text,
+            createdAt: options.createdAt || null
+        });
+        if (typeof attachMessageSpeakButton === 'function') {
+            attachMessageSpeakButton(div);
+        }
+    }
+    return div;
+}
+
+function appendMessage(role, text, options) {
+    options = options || {};
+    var div = createMessageElement(role, text, options);
+    msgs.appendChild(div);
+    // Live sends / notices — refresh separators + grouping for the new tail.
+    if (options.skipTimeline !== true && typeof rebuildChatTimeline === 'function') {
+        rebuildChatTimeline();
+    }
+    if (options.scroll !== false) {
+        if (options.forceScroll) {
+            scrollToBottom();
+        } else {
+            stickToBottomIfNeeded();
+        }
+    } else {
+        updateScrollBottomButton();
+    }
+    return div;
+}
+
+function prependMessage(role, text, options) {
+    options = options || {};
+    if (typeof options === 'string') {
+        // Legacy callers passed createdAt as the third argument.
+        options = { createdAt: options };
+    }
+    var div = createMessageElement(role, text, options);
+    msgs.insertBefore(div, loadMore.nextSibling);
+    if (options.skipTimeline !== true && typeof rebuildChatTimeline === 'function') {
+        rebuildChatTimeline();
+    }
+    return div;
+}
+
+function clearMessages() {
+    if (typeof stopMessageSpeech === 'function') {
+        stopMessageSpeech();
+    }
+    Array.from(msgs.querySelectorAll('.syllentras-msg, .syllentras-chat-sep')).forEach(
+        function (node) {
+            node.remove();
+        }
+    );
+    resetMessageSearchIndex();
+    clearMessageTextHighlights();
+    if (typeof setMessageSearchResults === 'function') {
+        setMessageSearchResults([], '');
+    }
+    if (typeof renderMessageSearchResults === 'function') {
+        renderMessageSearchResults([]);
+    }
+    if (typeof updateMessageSearchCount === 'function') {
+        updateMessageSearchCount();
+    }
+    pinnedToBottom = true;
+    updateScrollBottomButton();
+}
+
+function getOldestMessageCreatedAt() {
+    var nodes = msgs.querySelectorAll('.syllentras-msg[data-created-at]');
+    return nodes.length ? nodes[0].dataset.createdAt : null;
+}
+
+function isNearBottom() {
+    if (!msgs) return true;
+    return msgs.scrollHeight - msgs.scrollTop - msgs.clientHeight <= STICK_BOTTOM_THRESHOLD_PX;
+}
+
+function updateScrollBottomButton() {
+    if (!scrollBottomBtn || !msgs) return;
+    var canScroll = msgs.scrollHeight > msgs.clientHeight + 4;
+    var show = canScroll && !isNearBottom();
+    scrollBottomBtn.hidden = !show;
+}
+
+function syncPinnedToBottomFromScroll() {
+    pinnedToBottom = isNearBottom();
+    updateScrollBottomButton();
+}
+
+function scrollToBottom(options) {
+    options = options || {};
+    if (!msgs) return;
+    pinnedToBottom = true;
+    var apply = function () {
+        if (options.smooth && typeof msgs.scrollTo === 'function') {
+            msgs.scrollTo({ top: msgs.scrollHeight, behavior: 'smooth' });
+        } else {
+            msgs.scrollTop = msgs.scrollHeight;
+        }
+        updateScrollBottomButton();
+    };
+    if (options.afterLayout) {
+        requestAnimationFrame(function () {
+            apply();
+            // Second frame catches late layout from markdown / chips.
+            requestAnimationFrame(function () {
+                apply();
+                if (typeof options.onDone === 'function') {
+                    options.onDone();
+                }
+            });
+        });
+    } else {
+        apply();
+        if (typeof options.onDone === 'function') {
+            options.onDone();
+        }
+    }
+}
+
+function stickToBottomIfNeeded(options) {
+    // History open settles once at the end — skip intermediate jumps.
+    if (historySettlePending) return;
+    if (pinnedToBottom || isNearBottom()) {
+        scrollToBottom(options);
+    } else {
+        updateScrollBottomButton();
+    }
+}
+
+function beginMessageListSettle() {
+    historySettlePending = true;
+    if (msgs) {
+        msgs.classList.add('syllentras-messages-settling');
+    }
+    if (scrollBottomBtn) {
+        scrollBottomBtn.hidden = true;
+    }
+}
+
+function endMessageListSettle(options) {
+    options = options || {};
+    return new Promise(function (resolve) {
+        function finish() {
+            historySettlePending = false;
+            if (msgs) {
+                msgs.classList.remove('syllentras-messages-settling');
+            }
+            updateScrollBottomButton();
+            resolve();
+        }
+        function applyScrollTop(top) {
+            requestAnimationFrame(function () {
+                if (msgs) {
+                    var maxTop = Math.max(0, msgs.scrollHeight - msgs.clientHeight);
+                    msgs.scrollTop = Math.max(0, Math.min(top, maxTop));
+                }
+                // Second frame catches late layout from markdown / chips.
+                requestAnimationFrame(function () {
+                    if (msgs) {
+                        var maxTop2 = Math.max(0, msgs.scrollHeight - msgs.clientHeight);
+                        msgs.scrollTop = Math.max(0, Math.min(top, maxTop2));
+                        syncPinnedToBottomFromScroll();
+                    }
+                    finish();
+                });
+            });
+        }
+        if (options.scrollToBottom) {
+            scrollToBottom({ afterLayout: true, onDone: finish });
+        } else if (typeof options.scrollTop === 'number') {
+            applyScrollTop(options.scrollTop);
+        } else {
+            finish();
+        }
+    });
+}
+
+function renderMessageBatch(messages, prepend) {
+    var list = prepend ? messages.slice().reverse() : messages;
+    list.forEach(function (m) {
+        var role = m.role === 'assistant' ? 'assistant' : 'user';
+        var attachmentNames = [];
+        if (Array.isArray(m.attachments) && m.attachments.length) {
+            attachmentNames = m.attachments.map(function (a) {
+                return a.filename || a;
+            });
+        }
+        var opts = {
+            scroll: false,
+            // Batch first, then one timeline pass — avoids N separator rebuilds.
+            skipTimeline: true,
+            createdAt: m.createdAt,
+            mode: m.mode,
+            id: m.id,
+            attachmentNames: attachmentNames
+        };
+        if (prepend) {
+            prependMessage(role, m.content, opts);
+        } else {
+            appendMessage(role, m.content, opts);
+        }
+    });
+    if (typeof rebuildChatTimeline === 'function') {
+        rebuildChatTimeline();
+    }
+}
+
+function findMessageElement(messageId) {
+    if (!msgs || messageId == null) return null;
+    var id = String(messageId);
+    var nodes = msgs.querySelectorAll('.syllentras-msg[data-message-id]');
+    for (var i = 0; i < nodes.length; i++) {
+        if (nodes[i].dataset.messageId === id) return nodes[i];
+    }
+    return null;
+}
+
+function clearMessageTextHighlights() {
+    if (!msgs) return;
+    Array.from(msgs.querySelectorAll('mark.syllentras-search-mark')).forEach(function (mark) {
+        var parent = mark.parentNode;
+        if (!parent) return;
+        parent.replaceChild(document.createTextNode(mark.textContent), mark);
+        parent.normalize();
+    });
+    Array.from(msgs.querySelectorAll('.syllentras-msg-flash')).forEach(function (el) {
+        el.classList.remove('syllentras-msg-flash');
+    });
+    if (messageFlashTimer) {
+        clearTimeout(messageFlashTimer);
+        messageFlashTimer = null;
+    }
+    if (messageMarkFadeTimer) {
+        clearTimeout(messageMarkFadeTimer);
+        messageMarkFadeTimer = null;
+    }
+}
+
+function highlightTextNodeMatches(root, query) {
+    if (!root || !query) return;
+    var needle = query.toLowerCase();
+    var walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+        acceptNode: function (node) {
+            if (!node.nodeValue || !node.nodeValue.toLowerCase().includes(needle)) {
+                return NodeFilter.FILTER_REJECT;
+            }
+            // Don't mess with mode chips, timestamps, or other chrome.
+            if (
+                node.parentElement &&
+                node.parentElement.closest(
+                    '.syllentras-msg-mode, .syllentras-msg-time, .syllentras-chat-sep'
+                )
+            ) {
+                return NodeFilter.FILTER_REJECT;
+            }
+            return NodeFilter.FILTER_ACCEPT;
+        }
+    });
+
+    var textNodes = [];
+    var current = walker.nextNode();
+    while (current) {
+        textNodes.push(current);
+        current = walker.nextNode();
+    }
+
+    textNodes.forEach(function (textNode) {
+        var value = textNode.nodeValue;
+        var lower = value.toLowerCase();
+        var frag = document.createDocumentFragment();
+        var cursor = 0;
+        var hit = lower.indexOf(needle, cursor);
+        while (hit !== -1) {
+            if (hit > cursor) {
+                frag.appendChild(document.createTextNode(value.slice(cursor, hit)));
+            }
+            var mark = document.createElement('mark');
+            mark.className = 'syllentras-search-mark';
+            mark.textContent = value.slice(hit, hit + needle.length);
+            frag.appendChild(mark);
+            cursor = hit + needle.length;
+            hit = lower.indexOf(needle, cursor);
+        }
+        if (cursor < value.length) {
+            frag.appendChild(document.createTextNode(value.slice(cursor)));
+        }
+        textNode.parentNode.replaceChild(frag, textNode);
+    });
+}
+
+function flashMessageElement(el, query) {
+    if (!el) return;
+    clearMessageTextHighlights();
+    el.classList.add('syllentras-msg-flash');
+    if (query) {
+        highlightTextNodeMatches(el, query);
+    }
+    messageFlashTimer = setTimeout(function () {
+        el.classList.remove('syllentras-msg-flash');
+        messageFlashTimer = null;
+    }, 2400);
+    messageMarkFadeTimer = setTimeout(function () {
+        Array.from(el.querySelectorAll('mark.syllentras-search-mark')).forEach(function (mark) {
+            mark.classList.add('is-fading');
+        });
+        setTimeout(function () {
+            Array.from(el.querySelectorAll('mark.syllentras-search-mark')).forEach(function (mark) {
+                var parent = mark.parentNode;
+                if (!parent) return;
+                parent.replaceChild(document.createTextNode(mark.textContent), mark);
+                parent.normalize();
+            });
+            messageMarkFadeTimer = null;
+        }, 900);
+    }, 1800);
+}
+
+function scrollMessageIntoView(el) {
+    if (!el || !msgs) return;
+    // Scroll the messages pane itself. scrollIntoView can move the wrong
+    // parent in this layout and leave you stuck where you already were.
+    var containerTop = msgs.getBoundingClientRect().top;
+    var elTop = el.getBoundingClientRect().top;
+    var delta = elTop - containerTop - (msgs.clientHeight / 2 - el.offsetHeight / 2);
+    var nextTop = Math.max(0, msgs.scrollTop + delta);
+    if (typeof msgs.scrollTo === 'function') {
+        msgs.scrollTo({ top: nextTop, behavior: 'smooth' });
+    } else {
+        msgs.scrollTop = nextTop;
+    }
+}
+
+function focusMessageById(messageId, query) {
+    var el = findMessageElement(messageId);
+    if (!el) return Promise.resolve(null);
+    scrollMessageIntoView(el);
+    flashMessageElement(el, query);
+    return Promise.resolve(el);
+}
+
+// Shared jump used by Find (Ctrl/Cmd+F) and sidebar search hits.
+// If the match is older than the page we have loaded, keep pulling older
+// pages until it shows up (or we run out of history).
+function navigateToSearchMessage(messageId, query) {
+    if (!messageId) return Promise.resolve(null);
+    return ensureMessageVisible(messageId, query || '');
+}
+
+function ensureMessageVisible(messageId, query) {
+    var existing = findMessageElement(messageId);
+    if (existing) {
+        return focusMessageById(messageId, query);
+    }
+
+    function pullOlder() {
+        if (!hasMore) {
+            return Promise.resolve(null);
+        }
+        return loadOlderMessages().then(function (loaded) {
+            if (findMessageElement(messageId)) {
+                return focusMessageById(messageId, query);
+            }
+            if (!loaded) {
+                return null;
+            }
+            return pullOlder();
+        });
+    }
+
+    return pullOlder();
+}
+
+// ===== conversations.js =====
+// Part of the Syllentras chat widget.
+// Included inside the shared IIFE from before_footer.php — do not load standalone.
+
+// Per-chat scroll memory for the current page session (switch away → switch back).
+var conversationScrollPositions = Object.create(null);
+// Chats that finished a reply while the user was viewing another conversation.
+var unreadConversationIds = Object.create(null);
+
+function markConversationUnread(id) {
+    if (!id) return;
+    if (conversationId && String(conversationId) === String(id)) return;
+    unreadConversationIds[String(id)] = true;
+    syncConversationUnreadUi(id);
+}
+
+function clearConversationUnread(id) {
+    if (!id) return;
+    delete unreadConversationIds[String(id)];
+    syncConversationUnreadUi(id);
+}
+
+function conversationHasUnread(id) {
+    return !!(id && unreadConversationIds[String(id)]);
+}
+
+function syncConversationUnreadUi(id) {
+    if (!conversationsEl || !id) return;
+    var item = conversationsEl.querySelector(
+        '.syllentras-conversation-item[data-conversation-id="' + String(id).replace(/"/g, '') + '"]'
+    );
+    if (!item) return;
+    var unread = conversationHasUnread(id);
+    item.classList.toggle('has-unread', unread);
+    var dot = item.querySelector('.syllentras-conversation-unread-dot');
+    if (dot) dot.hidden = !unread;
+    if (unread) {
+        item.setAttribute('aria-description', 'Unread reply');
+    } else {
+        item.removeAttribute('aria-description');
+    }
+}
+
+function lastConversationStorageKey() {
+    return 'syllentras_last_conversation_' + moodleUserId + '_' + courseId;
+}
+
+function saveConversationScrollPosition(id) {
+    if (!id || !msgs || historySettlePending) return;
+    conversationScrollPositions[id] = {
+        scrollTop: msgs.scrollTop,
+        pinnedToBottom: !!pinnedToBottom || (typeof isNearBottom === 'function' && isNearBottom())
+    };
+}
+
+function getConversationScrollPosition(id) {
+    if (!id) return null;
+    return conversationScrollPositions[id] || null;
+}
+
+function persistLastConversationId(id) {
+    try {
+        if (id) {
+            localStorage.setItem(lastConversationStorageKey(), String(id));
+        } else {
+            localStorage.removeItem(lastConversationStorageKey());
+        }
+    } catch (e) {
+        // Ignore quota / private-mode failures.
+    }
+}
+
+function readLastConversationId() {
+    try {
+        return localStorage.getItem(lastConversationStorageKey()) || null;
+    } catch (e) {
+        return null;
+    }
+}
+
+function setActiveConversation(conversation, options) {
+    options = options || {};
+    // Remember where the user left off before tearing down the thread.
+    if (conversationId && conversation && conversation.id !== conversationId) {
+        saveConversationScrollPosition(conversationId);
+    }
+    activeConversation = conversation;
+    if (activeConversation && Array.isArray(conversation.topicSuggestions)) {
+        activeConversation.topicSuggestions = conversation.topicSuggestions;
+    }
+    conversationId = conversation.id;
+    clearConversationUnread(conversationId);
+    // Unlock/lock input for this chat (other chats may still be generating).
+    if (typeof refreshGeneratingChrome === 'function') {
+        refreshGeneratingChrome();
+    } else if (typeof updateComposerLock === 'function') {
+        updateComposerLock();
+    }
+    persistLastConversationId(conversationId);
+    activeTitle.textContent = displayConversationTitle(conversation);
+    activeTag.textContent = displayConversationTag(conversation);
+    if (typeof closeMessageSearch === 'function') {
+        closeMessageSearch();
+    }
+    clearMessages();
+    beginMessageListSettle();
+    hasMore = false;
+    loadingHistory = false;
+    updateActiveConversationButtons();
+    return loadCurrentHistory(options);
+}
+
+function loadCurrentHistory(options) {
+    options = options || {};
+    if (!conversationId || loadingHistory) {
+        return endMessageListSettle({ scrollToBottom: false });
+    }
+    loadingHistory = true;
+
+    var savedScroll = options.deferScroll ? null : getConversationScrollPosition(conversationId);
+    var restoreScrollTop = savedScroll && !savedScroll.pinnedToBottom
+        ? savedScroll.scrollTop
+        : null;
+
+    return fetchJson('/conversations/' + encodeURIComponent(conversationId)
+        + '/messages?moodleUserId=' + encodeURIComponent(moodleUserId)
+        + '&limit=' + PAGE_SIZE)
+    .then(function (page) {
+        if (page.messages && page.messages.length) {
+            renderMessageBatch(page.messages, false);
+            hasMore = !!page.hasMore;
+            if (options.deferScroll || restoreScrollTop !== null) {
+                pinnedToBottom = false;
+            }
+        }
+        if (typeof applyGeneratingStateFromHistoryPage === 'function') {
+            applyGeneratingStateFromHistoryPage(page);
+        }
+        return loadPendingActionForConversation()
+            .then(loadReviewOfferForConversation)
+            .then(function () {
+                // One settle after content + pending/review UI — avoids reopen jumpiness.
+                // Prefer the last scroll spot for this chat; otherwise land at bottom.
+                if (options.deferScroll) {
+                    return endMessageListSettle({ scrollToBottom: false });
+                }
+                if (restoreScrollTop !== null) {
+                    return endMessageListSettle({
+                        scrollToBottom: false,
+                        scrollTop: restoreScrollTop
+                    });
+                }
+                return endMessageListSettle({ scrollToBottom: true });
+            });
+    })
+    .catch(function () {
+        appendMessage('error', 'Could not load chat history.', { scroll: false });
+        return endMessageListSettle({ scrollToBottom: false });
+    })
+    .finally(function () {
+        loadingHistory = false;
+        if (typeof flushPeerSyncQueue === 'function') {
+            flushPeerSyncQueue();
+        }
+    });
+}
+
+var loadOlderMessagesInFlight = null;
+
+function loadOlderMessages() {
+    // Reuse the same request if scroll-up and find-in-chat both ask at once.
+    if (loadOlderMessagesInFlight) {
+        return loadOlderMessagesInFlight;
+    }
+    if (!hasMore || !conversationId) {
+        return Promise.resolve(false);
+    }
+
+    var before = getOldestMessageCreatedAt();
+    if (!before) {
+        return Promise.resolve(false);
+    }
+
+    loadingOlder = true;
+    loadMore.hidden = false;
+
+    var prevScrollHeight = msgs.scrollHeight;
+    loadOlderMessagesInFlight = fetchJson('/conversations/' + encodeURIComponent(conversationId)
+        + '/messages?moodleUserId=' + encodeURIComponent(moodleUserId)
+        + '&limit=' + PAGE_SIZE
+        + '&before=' + encodeURIComponent(before))
+    .then(function (page) {
+        if (page.messages && page.messages.length) {
+            renderMessageBatch(page.messages, true);
+            hasMore = !!page.hasMore;
+            msgs.scrollTop = msgs.scrollHeight - prevScrollHeight;
+            return true;
+        }
+        hasMore = false;
+        return false;
+    })
+    .catch(function () {
+        hasMore = false;
+        return false;
+    })
+    .finally(function () {
+        loadingOlder = false;
+        loadMore.hidden = true;
+        loadOlderMessagesInFlight = null;
+        if (typeof syncPinnedToBottomFromScroll === 'function') {
+            syncPinnedToBottomFromScroll();
+        }
+    });
+
+    return loadOlderMessagesInFlight;
+}
+
+function openConversation(options) {
+    showPanel();
+    return fetchJson('/conversations/open', {
+        method: 'POST',
+        body: JSON.stringify(Object.assign({
+            courseId: courseId,
+            moodleUserId: moodleUserId
+        }, options))
+    })
+    .then(function (conversation) {
+        return setActiveConversation(conversation).then(function () {
+            return loadConversations();
+        });
+    })
+    .then(function () {
+        input.focus();
+    })
+    .catch(function () {
+        appendMessage('error', 'Could not open the conversation.', { scroll: false });
+        return endMessageListSettle({ scrollToBottom: false });
+    });
+}
+
+/** Reopen the last viewed chat, or Main/Home if none is available. */
+function openLastOrGeneralConversation() {
+    if (conversationId) {
+        showPanel();
+        input.focus();
+        return Promise.resolve();
+    }
+
+    var lastId = readLastConversationId();
+    if (lastId) {
+        return openConversationById(lastId).catch(function () {
+            persistLastConversationId(null);
+            return openConversation({ type: 'general', title: generalChatTitle() });
+        });
+    }
+
+    return openConversation({ type: 'general', title: generalChatTitle() });
+}
+
+function openConversationById(id, options) {
+    options = options || {};
+    var focusMessageId = options.messageId || null;
+    var focusQuery = options.query || '';
+    showPanel();
+
+    // Already on this chat? Just reuse the Find jump helper.
+    if (conversationId === id && focusMessageId) {
+        return navigateToSearchMessage(focusMessageId, focusQuery);
+    }
+
+    return fetchJson('/conversations/' + encodeURIComponent(id)
+        + '?moodleUserId=' + encodeURIComponent(moodleUserId))
+    .then(function (conversation) {
+        return setActiveConversation(conversation, {
+            deferScroll: !!focusMessageId
+        });
+    })
+    .then(function () {
+        if (focusMessageId) {
+            return navigateToSearchMessage(focusMessageId, focusQuery);
+        }
+        input.focus();
+    });
+}
+
+function loadConversations() {
+    return fetchJson('/conversations?moodleUserId=' + encodeURIComponent(moodleUserId)
+        + '&courseId=' + encodeURIComponent(courseId))
+    .then(renderConversationList)
+    .catch(function () {
+        conversationsEl.textContent = 'Could not load conversations.';
+    });
+}
+
+function renderConversationList(conversations) {
+    conversationsEl.innerHTML = '';
+    var pinned = conversations.filter(function (c) { return c.pinned && c.type !== 'general'; });
+    renderConversationGroup(generalConversationGroupTitle(), conversations.filter(function (c) { return c.type === 'general'; }));
+    if (pinned.length) renderConversationGroup('Pinned', pinned);
+    renderConversationGroup('Course Sections', conversations.filter(function (c) { return !c.pinned && c.type === 'section'; }));
+    renderConversationGroup('Other Conversations', conversations.filter(function (c) { return !c.pinned && c.type === 'manual'; }));
+    updateActiveConversationButtons();
+}
+
+function renderConversationGroup(label, conversations) {
+    if (!conversations.length) return;
+    var heading = document.createElement('div');
+    heading.className = 'syllentras-conversation-group-title';
+    heading.textContent = label;
+    conversationsEl.appendChild(heading);
+    conversations.forEach(renderConversationItem);
+}
+
+function renderConversationItem(conversation) {
+    var item = document.createElement('div');
+    item.tabIndex = 0;
+    item.setAttribute('role', 'button');
+    item.className = 'syllentras-conversation-item';
+    item.dataset.conversationId = conversation.id;
+    var hasUnread = conversationHasUnread(conversation.id);
+    if (hasUnread) {
+        item.classList.add('has-unread');
+    }
+    item.innerHTML =
+        '<span class="syllentras-conversation-unread-dot" aria-hidden="true"></span>' +
+        '<span class="syllentras-conversation-name"></span>' +
+        '<span class="syllentras-conversation-tag"></span>' +
+        '<button type="button" class="syllentras-conversation-menu-btn" aria-label="Conversation menu" aria-haspopup="menu">&#8942;</button>';
+    var dotEl = item.querySelector('.syllentras-conversation-unread-dot');
+    if (dotEl) {
+        dotEl.hidden = !hasUnread;
+        if (hasUnread) {
+            item.setAttribute('aria-description', 'Unread reply');
+        }
+    }
+    var nameEl = item.querySelector('.syllentras-conversation-name');
+    nameEl.textContent = displayConversationTitle(conversation);
+    nameEl.classList.toggle('pinned', !!conversation.pinned);
+    item.querySelector('.syllentras-conversation-tag').textContent = displayConversationTag(conversation);
+    item.addEventListener('click', function () {
+        openConversationById(conversation.id);
+    });
+    item.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            openConversationById(conversation.id);
+        }
+    });
+    item.querySelector('.syllentras-conversation-menu-btn').addEventListener('click', function (e) {
+        e.stopPropagation();
+        showConversationMenu(e.currentTarget, conversation);
+    });
+    conversationsEl.appendChild(item);
+}
+
+function renderSearchResultItem(conversation, matchedMessage) {
+    var item = document.createElement('div');
+    item.tabIndex = 0;
+    item.setAttribute('role', 'button');
+    item.className = 'syllentras-conversation-item is-search-result';
+    item.dataset.conversationId = conversation.id;
+    if (matchedMessage && matchedMessage.id) {
+        item.dataset.messageId = matchedMessage.id;
+    }
+
+    var nameEl = document.createElement('span');
+    nameEl.className = 'syllentras-conversation-name';
+    nameEl.textContent = displayConversationTitle(conversation);
+    nameEl.classList.toggle('pinned', !!conversation.pinned);
+    item.appendChild(nameEl);
+
+    if (matchedMessage && matchedMessage.id) {
+        var meta = document.createElement('span');
+        meta.className = 'syllentras-conversation-search-meta';
+        var roleLabel = matchedMessage.role === 'assistant' ? 'Assistant' : 'You';
+        var when =
+            matchedMessage.createdAt && typeof formatRelativeConversationTime === 'function'
+                ? formatRelativeConversationTime(matchedMessage.createdAt)
+                : matchedMessage.createdAt
+                  ? new Date(matchedMessage.createdAt).toLocaleString()
+                  : '';
+        meta.textContent = when ? roleLabel + ' · ' + when : roleLabel;
+        if (matchedMessage.createdAt) {
+            meta.title = new Date(matchedMessage.createdAt).toLocaleString();
+        }
+        item.appendChild(meta);
+
+        if (matchedMessage.content) {
+            var match = document.createElement('span');
+            match.className = 'syllentras-conversation-match';
+            match.textContent = stripMarkdown(matchedMessage.content).slice(0, 120);
+            item.appendChild(match);
+        }
+    } else {
+        var tag = document.createElement('span');
+        tag.className = 'syllentras-conversation-tag';
+        tag.textContent = displayConversationTag(conversation);
+        item.appendChild(tag);
+    }
+
+    item.addEventListener('click', function () {
+        openConversationFromSearch(conversation, matchedMessage);
+    });
+    item.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            openConversationFromSearch(conversation, matchedMessage);
+        }
+    });
+    conversationsEl.appendChild(item);
+}
+
+function ensureNewConversationPrompt() {
+    var existing = document.getElementById('syllentras-chat-new-prompt');
+    if (existing) return existing;
+
+    var prompt = document.createElement('div');
+    prompt.id = 'syllentras-chat-new-prompt';
+    prompt.hidden = true;
+    prompt.setAttribute('role', 'dialog');
+    prompt.setAttribute('aria-label', 'Name new conversation');
+    prompt.innerHTML =
+        '<label for="syllentras-chat-new-name">Name this conversation</label>' +
+        '<input id="syllentras-chat-new-name" type="text" autocomplete="off" maxlength="120">' +
+        '<div id="syllentras-chat-new-error" hidden>Please enter a conversation name.</div>' +
+        '<div class="syllentras-confirm-actions">' +
+        '<button type="button" class="syllentras-new-create">Create</button>' +
+        '<button type="button" class="syllentras-new-cancel">Cancel</button>' +
+        '</div>';
+    document.getElementById('syllentras-chat-main').insertBefore(prompt, document.getElementById('syllentras-chat-active-meta'));
+
+    prompt.querySelector('.syllentras-new-create').addEventListener('click', confirmNewConversation);
+    prompt.querySelector('.syllentras-new-cancel').addEventListener('click', cancelNewConversation);
+    prompt.querySelector('#syllentras-chat-new-name').addEventListener('keydown', function (e) {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            confirmNewConversation();
+        } else if (e.key === 'Escape') {
+            e.preventDefault();
+            cancelNewConversation();
+        }
+    });
+
+    return prompt;
+}
+
+function showNewConversationPrompt() {
+    showPanel();
+    cancelDeleteConversation();
+
+    var prompt = ensureNewConversationPrompt();
+    var nameInput = prompt.querySelector('#syllentras-chat-new-name');
+    var error = prompt.querySelector('#syllentras-chat-new-error');
+    error.textContent = 'Please enter a conversation name.';
+    error.hidden = true;
+    nameInput.value = '';
+    prompt.hidden = false;
+    nameInput.focus();
+}
+
+function cancelNewConversation() {
+    var prompt = ensureNewConversationPrompt();
+    prompt.hidden = true;
+}
+
+function confirmNewConversation() {
+    var prompt = ensureNewConversationPrompt();
+    var nameInput = prompt.querySelector('#syllentras-chat-new-name');
+    var error = prompt.querySelector('#syllentras-chat-new-error');
+    var title = nameInput.value.trim();
+
+    if (!title) {
+        error.hidden = false;
+        nameInput.focus();
+        return;
+    }
+
+    prompt.querySelector('.syllentras-new-create').disabled = true;
+    createManualConversation(title)
+        .catch(function () {
+            error.textContent = 'Could not create the conversation. Please try again.';
+            error.hidden = false;
+        })
+        .finally(function () {
+            prompt.querySelector('.syllentras-new-create').disabled = false;
+        });
+}
+
+function openConversationFromSearch(conversation, matchedMessage) {
+    var query = (searchInput && searchInput.value ? searchInput.value : '').trim();
+    if (matchedMessage && matchedMessage.id) {
+        // Same navigateToSearchMessage path as the Find panel / Ctrl+F.
+        return openConversationById(conversation.id, {
+            messageId: matchedMessage.id,
+            query: query
+        });
+    }
+    return openConversationById(conversation.id);
+}
+
+function searchConversations(query) {
+    if (!query.trim()) {
+        loadConversations();
+        return;
+    }
+
+    fetchJson('/conversations/search?moodleUserId=' + encodeURIComponent(moodleUserId)
+        + '&courseId=' + encodeURIComponent(courseId)
+        + '&q=' + encodeURIComponent(query.trim()))
+    .then(function (results) {
+        conversationsEl.innerHTML = '';
+        var heading = document.createElement('div');
+        heading.className = 'syllentras-conversation-group-title';
+        heading.textContent = 'Search Results';
+        conversationsEl.appendChild(heading);
+        results.forEach(function (result) {
+            renderSearchResultItem(result.conversation, result.matchedMessage);
+        });
+        if (!results.length) {
+            conversationsEl.appendChild(document.createTextNode('No results found.'));
+        }
+        updateActiveConversationButtons();
+    });
+}
+
+function createManualConversation(title) {
+    return fetchJson('/conversations', {
+        method: 'POST',
+        body: JSON.stringify({
+            courseId: courseId,
+            moodleUserId: moodleUserId,
+            type: 'manual',
+            title: title
+        })
+    })
+    .then(function (conversation) {
+        cancelNewConversation();
+        return setActiveConversation(conversation).then(function () {
+            if (typeof broadcastChatSync === 'function') {
+                broadcastChatSync('conversation-list-changed', conversation.id);
+            }
+            return loadConversations();
+        });
+    });
+}
+
+function sendMessage() {
+    var text = input.value.trim();
+    var attachmentsPayload = typeof getPendingAttachmentsForSend === 'function'
+        ? getPendingAttachmentsForSend()
+        : [];
+    var hasAttachments = attachmentsPayload.length > 0;
+    if ((!text && !hasAttachments) || !conversationId) return;
+    // Only block a second send in the same chat; other chats can generate in parallel.
+    if (typeof isConversationGenerating === 'function' && isConversationGenerating(conversationId)) return;
+    if (typeof peerTurnActive !== 'undefined' && peerTurnActive) return;
+
+    if (typeof hasPendingAttachmentUploads === 'function' && hasPendingAttachmentUploads()) {
+        if (typeof setAttachmentError === 'function') {
+            setAttachmentError('Wait for uploads to finish before sending.');
+        }
+        return;
+    }
+
+    var failed = attachmentsPayload.filter(function (item) {
+        return item.status === 'failed';
+    });
+    if (failed.length) {
+        if (typeof setAttachmentError === 'function') {
+            setAttachmentError('Remove failed attachments before sending.');
+        }
+        return;
+    }
+
+    // Stop the mic first so a trailing STT result can't refill the box.
+    if (typeof stopDictation === 'function') {
+        stopDictation();
+    }
+
+    var attachmentNames = attachmentsPayload.map(function (item) {
+        return item.filename;
+    });
+    var attachmentIds = attachmentsPayload.map(function (item) {
+        return item.id;
+    }).filter(Boolean);
+    input.value = '';
+    if (typeof clearPendingAttachments === 'function') {
+        clearPendingAttachments();
+    }
+
+    var turnConversationId = conversationId;
+    setGeneratingState(true, { conversationId: turnConversationId });
+
+    var displayText = text || (hasAttachments ? 'Please review the attached file(s).' : '');
+    var sentAt = new Date().toISOString();
+    var userEl = appendMessage('user', displayText, {
+        attachmentNames: attachmentNames,
+        createdAt: sentAt,
+        forceScroll: true,
+        // Wait for the assistant placeholder so we only rebuild the timeline once.
+        skipTimeline: true
+    });
+
+    var loadingEl = appendMessage('assistant', '...', {
+        forceScroll: true,
+        skipTimeline: true
+    });
+    var pendingAssistantId = loadingEl.dataset.messageId || nextLocalMessageId();
+    loadingEl.dataset.messageId = pendingAssistantId;
+    if (typeof rebuildChatTimeline === 'function') {
+        rebuildChatTimeline();
+    }
+
+    var body = {
+        courseId: courseId,
+        courseName: courseName || undefined,
+        moodleUserId: moodleUserId,
+        userFirstName: userFirstName || undefined,
+        message: text,
+        conversationId: turnConversationId
+    };
+    if (attachmentIds.length) {
+        body.attachmentIds = attachmentIds;
+    }
+    // Selected provider rides along so mid-chat switches apply to the next turn.
+    var providerId = typeof getSelectedProviderId === 'function' ? getSelectedProviderId() : null;
+    if (providerId) {
+        body.provider = providerId;
+    }
+    var modeId = typeof getSelectedModeId === 'function' ? getSelectedModeId() : 'direct';
+    body.mode = modeId === 'coach' ? 'coach' : 'direct';
+    if (body.mode === 'coach' && typeof getSelectedGuidance === 'function') {
+        body.guidance = getSelectedGuidance();
+    }
+
+    var turnStarted = false;
+
+    function isViewingTurn() {
+        return !!(conversationId && turnConversationId
+            && String(conversationId) === String(turnConversationId));
+    }
+
+    function applyAssistantToLiveBubble(data) {
+        renderAssistantContent(loadingEl, data.response);
+        applyModeChip(loadingEl, data.mode || body.mode);
+        if (typeof attachMessageSpeakButton === 'function') {
+            attachMessageSpeakButton(loadingEl);
+        }
+        loadingEl.dataset.createdAt = new Date().toISOString();
+        upsertMessageSearchEntry({
+            id: pendingAssistantId,
+            role: 'assistant',
+            content: data.response,
+            createdAt: loadingEl.dataset.createdAt
+        });
+        if (typeof rebuildChatTimeline === 'function') {
+            rebuildChatTimeline();
+        }
+        if (messageSearchOpen && msgSearchInput && msgSearchInput.value.trim()) {
+            runMessageSearch(msgSearchInput.value);
+        }
+        if (Array.isArray(data.topicSuggestions)) {
+            if (!activeConversation) activeConversation = { id: turnConversationId };
+            activeConversation.topicSuggestions = data.topicSuggestions;
+        }
+        if (data.pendingAction) {
+            attachPendingAction(loadingEl, data.pendingAction);
+        }
+        if (data.suggestedLinks && typeof attachSuggestedLinks === 'function') {
+            attachSuggestedLinks(loadingEl, data.suggestedLinks);
+        }
+        if (Array.isArray(data.attachmentWarnings) && data.attachmentWarnings.length) {
+            if (typeof appendSystemNotice === 'function') {
+                appendSystemNotice(data.attachmentWarnings.join(' '));
+            }
+        }
+        if (typeof stickToBottomIfNeeded === 'function') {
+            stickToBottomIfNeeded({ afterLayout: true });
+        }
+    }
+
+    fetchJson('/chat/message/start', {
+        method: 'POST',
+        body: JSON.stringify(body)
+    })
+    .then(function (started) {
+        turnStarted = true;
+        var previousTurnId = turnConversationId;
+        turnConversationId = started.conversationId || turnConversationId;
+        // Keep the in-flight map pointed at the server conversation id.
+        if (typeof setGeneratingState === 'function') {
+            if (previousTurnId && String(previousTurnId) !== String(turnConversationId)) {
+                setGeneratingState(false, { conversationId: previousTurnId });
+            }
+            setGeneratingState(true, { conversationId: turnConversationId });
+        }
+        // Only touch the optimistic bubbles if the user is still on this chat.
+        if (isViewingTurn() && userEl && userEl.parentNode && started.userMessageId) {
+            userEl.dataset.messageId = String(started.userMessageId);
+        }
+        if (isViewingTurn()
+            && Array.isArray(started.attachmentWarnings)
+            && started.attachmentWarnings.length) {
+            if (typeof appendSystemNotice === 'function') {
+                appendSystemNotice(started.attachmentWarnings.join(' '));
+            }
+        }
+        if (typeof broadcastChatSync === 'function') {
+            broadcastChatSync('turn-started', turnConversationId);
+        }
+        var completeBody = {
+            courseId: courseId,
+            courseName: courseName || undefined,
+            moodleUserId: moodleUserId,
+            userFirstName: userFirstName || undefined,
+            conversationId: turnConversationId,
+            userMessageId: started.userMessageId,
+            message: text
+        };
+        if (attachmentIds.length) {
+            completeBody.attachmentIds = attachmentIds;
+        }
+        if (providerId) {
+            completeBody.provider = providerId;
+        }
+        completeBody.mode = body.mode;
+        if (body.mode === 'coach' && body.guidance != null) {
+            completeBody.guidance = body.guidance;
+        }
+        return fetchJson('/chat/message/complete', {
+            method: 'POST',
+            body: JSON.stringify(completeBody)
+        });
+    })
+    .then(function (data) {
+        turnConversationId = data.conversationId || turnConversationId;
+
+        var finishUi = Promise.resolve();
+        if (isViewingTurn()) {
+            if (loadingEl && loadingEl.parentNode) {
+                applyAssistantToLiveBubble(data);
+            } else {
+                // User left and came back mid-turn — pull the finished reply from history.
+                finishUi = loadCurrentHistory();
+            }
+        } else {
+            // Reply finished in the background — mark unread for the sidebar blue dot.
+            markConversationUnread(turnConversationId);
+        }
+
+        return finishUi.then(function () {
+            if (typeof broadcastChatSync === 'function') {
+                broadcastChatSync('messages-updated', turnConversationId);
+                if (data.pendingAction) {
+                    broadcastChatSync('pending-action-changed', turnConversationId);
+                }
+                broadcastChatSync('conversation-list-changed', turnConversationId);
+            }
+            return loadConversations();
+        });
+    })
+    .catch(function (err) {
+        if (!turnStarted) {
+            if (isViewingTurn()) {
+                if (userEl && userEl.parentNode) userEl.remove();
+                if (loadingEl && loadingEl.parentNode) loadingEl.remove();
+                if (typeof rebuildChatTimeline === 'function') {
+                    rebuildChatTimeline();
+                }
+            }
+            return;
+        }
+
+        if (isViewingTurn() && loadingEl && loadingEl.parentNode) {
+            loadingEl.className = 'syllentras-msg error';
+            loadingEl.textContent = (err && err.message)
+                ? err.message
+                : 'Something went wrong. Please try again.';
+            if (typeof stickToBottomIfNeeded === 'function') {
+                stickToBottomIfNeeded({ afterLayout: true });
+            }
+        } else if (isViewingTurn()) {
+            return loadCurrentHistory();
+        } else {
+            markConversationUnread(turnConversationId);
+            return loadConversations();
+        }
+    })
+    .finally(function () {
+        if (turnStarted && typeof broadcastChatSync === 'function') {
+            broadcastChatSync('turn-finished', turnConversationId);
+        }
+        setGeneratingState(false, { conversationId: turnConversationId });
+        if (input && !input.disabled) {
+            try { input.focus(); } catch (e) { /* ignore */ }
+        }
+    });
+}
+
+function updateActiveConversationButtons() {
+    Array.from(conversationsEl.querySelectorAll('.syllentras-conversation-item')).forEach(function (item) {
+        item.classList.toggle('active', item.dataset.conversationId === conversationId);
+    });
+}
+
+function updateConversation(id, changes) {
+    return fetchJson('/conversations/' + encodeURIComponent(id)
+        + '?moodleUserId=' + encodeURIComponent(moodleUserId), {
+        method: 'PATCH',
+        body: JSON.stringify(changes)
+    });
+}
+
+
+// ===== message-search-ui.js =====
+// Part of the Syllentras chat widget.
+// Included inside the shared IIFE from before_footer.php — do not load standalone.
+//
+// Find-in-chat UI: the little search bar above the messages, result list, and
+// keyboard bits. Talks to message-search.js for matches and messages.js to jump.
+
+function isMessageSearchUiReady() {
+    return !!(msgSearchPanel && msgSearchInput && msgSearchResults);
+}
+
+function openMessageSearch() {
+    if (!isMessageSearchUiReady()) return;
+    messageSearchOpen = true;
+    msgSearchPanel.hidden = false;
+    if (msgSearchToggle) {
+        msgSearchToggle.setAttribute('aria-expanded', 'true');
+    }
+    msgSearchInput.focus();
+    msgSearchInput.select();
+    if (msgSearchInput.value.trim()) {
+        runMessageSearch(msgSearchInput.value);
+    } else {
+        renderMessageSearchResults([]);
+        updateMessageSearchCount();
+    }
+}
+
+function closeMessageSearch() {
+    if (!isMessageSearchUiReady()) return;
+    messageSearchOpen = false;
+    clearMessageSearchSchedule();
+    msgSearchPanel.hidden = true;
+    if (msgSearchToggle) {
+        msgSearchToggle.setAttribute('aria-expanded', 'false');
+    }
+    setMessageSearchResults([], '');
+    renderMessageSearchResults([]);
+    updateMessageSearchCount();
+    clearMessageTextHighlights();
+}
+
+function toggleMessageSearch() {
+    if (messageSearchOpen) {
+        closeMessageSearch();
+    } else {
+        openMessageSearch();
+    }
+}
+
+function updateMessageSearchCount() {
+    if (!msgSearchCount) return;
+    var total = messageSearchResults.length;
+    if (!messageSearchQuery) {
+        msgSearchCount.textContent = '';
+        return;
+    }
+    if (!total) {
+        msgSearchCount.textContent = '0 matches';
+        return;
+    }
+    msgSearchCount.textContent = (messageSearchActiveIndex + 1) + ' / ' + total;
+}
+
+function renderMessageSearchResults(results) {
+    if (!msgSearchResults) return;
+    msgSearchResults.innerHTML = '';
+    if (!results.length) {
+        if (messageSearchQuery) {
+            var empty = document.createElement('div');
+            empty.className = 'syllentras-msg-search-empty';
+            empty.textContent = 'No matches in this conversation';
+            msgSearchResults.appendChild(empty);
+        }
+        return;
+    }
+
+    results.forEach(function (result, index) {
+        var btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'syllentras-msg-search-result';
+        btn.setAttribute('role', 'option');
+        btn.setAttribute('aria-selected', index === messageSearchActiveIndex ? 'true' : 'false');
+        btn.dataset.resultIndex = String(index);
+        if (index === messageSearchActiveIndex) {
+            btn.classList.add('is-active');
+        }
+
+        var meta = document.createElement('span');
+        meta.className = 'syllentras-msg-search-result-meta';
+        meta.textContent = (result.role === 'assistant' ? 'Assistant' : 'You')
+            + (result.matchCount > 1 ? ' · ' + result.matchCount + ' matches' : '');
+
+        var preview = document.createElement('span');
+        preview.className = 'syllentras-msg-search-result-preview';
+        preview.innerHTML = result.previewHtml;
+
+        btn.appendChild(meta);
+        btn.appendChild(preview);
+        btn.addEventListener('click', function () {
+            messageSearchActiveIndex = index;
+            renderMessageSearchResults(messageSearchResults);
+            updateMessageSearchCount();
+            openMessageSearchResult(result);
+        });
+        msgSearchResults.appendChild(btn);
+    });
+
+    var active = msgSearchResults.querySelector('.syllentras-msg-search-result.is-active');
+    if (active && typeof active.scrollIntoView === 'function') {
+        active.scrollIntoView({ block: 'nearest' });
+    }
+}
+
+function runMessageSearch(rawQuery) {
+    scheduleMessageSearch(rawQuery, function (results) {
+        renderMessageSearchResults(results);
+        updateMessageSearchCount();
+    });
+}
+
+function openMessageSearchResult(result) {
+    if (!result) return Promise.resolve(null);
+    // Same jump path as sidebar search hits / keyboard Enter.
+    return navigateToSearchMessage(result.id, messageSearchQuery);
+}
+
+function openActiveMessageSearchResult() {
+    return openMessageSearchResult(getActiveMessageSearchResult());
+}
+
+function stepMessageSearch(delta) {
+    var result = moveMessageSearchSelection(delta);
+    renderMessageSearchResults(messageSearchResults);
+    updateMessageSearchCount();
+    if (result) {
+        openMessageSearchResult(result);
+    }
+}
+
+function onMessageSearchInput() {
+    runMessageSearch(msgSearchInput.value);
+}
+
+function onMessageSearchKeydown(e) {
+    if (!messageSearchOpen) return;
+
+    if (e.key === 'Escape') {
+        e.preventDefault();
+        closeMessageSearch();
+        if (input) input.focus();
+        return;
+    }
+    if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        stepMessageSearch(1);
+        return;
+    }
+    if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        stepMessageSearch(-1);
+        return;
+    }
+    if (e.key === 'Enter') {
+        e.preventDefault();
+        openActiveMessageSearchResult();
+    }
+}
+
+function bindMessageSearchUi() {
+    if (!isMessageSearchUiReady()) return;
+
+    if (msgSearchToggle) {
+        msgSearchToggle.addEventListener('click', function () {
+            toggleMessageSearch();
+        });
+    }
+    if (msgSearchClose) {
+        msgSearchClose.addEventListener('click', function () {
+            closeMessageSearch();
+            if (input) input.focus();
+        });
+    }
+    if (msgSearchPrev) {
+        msgSearchPrev.addEventListener('click', function () {
+            stepMessageSearch(-1);
+        });
+    }
+    if (msgSearchNext) {
+        msgSearchNext.addEventListener('click', function () {
+            stepMessageSearch(1);
+        });
+    }
+    msgSearchInput.addEventListener('input', onMessageSearchInput);
+    msgSearchInput.addEventListener('keydown', onMessageSearchKeydown);
+
+    // Ctrl/Cmd+F while the chat panel is open jumps to find-in-conversation.
+    document.addEventListener('keydown', function (e) {
+        if (!panel || panel.hidden) return;
+        var key = (e.key || '').toLowerCase();
+        if (key === 'f' && (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey) {
+            e.preventDefault();
+            openMessageSearch();
+        }
+    });
+}
+
+// ===== modals.js =====
+// Part of the Syllentras chat widget.
+// Included inside the shared IIFE from before_footer.php — do not load standalone.
+
+function closeConversationMenu() {
+    if (openMenu) {
+        openMenu.remove();
+        openMenu = null;
+    }
+    Array.from(conversationsEl.querySelectorAll('.syllentras-conversation-menu-btn.open')).forEach(function (btn) {
+        btn.classList.remove('open');
+    });
+}
+
+function showConversationMenu(anchor, conversation) {
+    closeToolsMenu();
+    closeConversationMenu();
+    anchor.classList.add('open');
+
+    var menu = document.createElement('div');
+    menu.className = 'syllentras-conversation-menu';
+    menu.setAttribute('role', 'menu');
+
+    // Only show a clock after the student has actually typed — welcome-only
+    // Main/Home (or a just-cleared one) should stay quiet.
+    var when = conversation.lastUserMessageAt || null;
+    var relative =
+        when && typeof formatRelativeConversationTime === 'function'
+            ? formatRelativeConversationTime(when)
+            : '';
+    if (relative) {
+        var meta = document.createElement('div');
+        meta.className = 'syllentras-conversation-menu-meta';
+        meta.textContent = relative;
+        meta.title = new Date(when).toLocaleString();
+        menu.appendChild(meta);
+    }
+
+    addMenuAction(menu, 'Rename', function () { showRenameModal(conversation); }, conversation.type !== 'manual');
+    addMenuAction(menu, conversation.pinned ? 'Unpin' : 'Pin', function () { togglePinConversation(conversation); }, conversation.type === 'general');
+    addMenuAction(menu, 'Export', function () { showExportModal(conversation); });
+    addMenuAction(menu, 'Delete', function () { deleteConversation(conversation); }, false, true);
+    // Keep it under #syllentras-chat-root so theme colors (panel bg, text, etc.) actually apply.
+    // Dropping it on document.body made background: var(--syll-panel-bg) resolve to nothing.
+    (root || document.body).appendChild(menu);
+
+    var rect = anchor.getBoundingClientRect();
+    menu.style.left = Math.max(8, rect.right - 124) + 'px';
+    menu.style.top = Math.min(window.innerHeight - menu.offsetHeight - 8, rect.bottom + 4) + 'px';
+    openMenu = menu;
+}
+
+function addMenuAction(menu, label, handler, disabled, danger) {
+    var button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'syllentras-menu-action' + (danger ? ' danger' : '');
+    button.textContent = label;
+    button.disabled = !!disabled;
+    button.addEventListener('click', function (e) {
+        e.stopPropagation();
+        closeConversationMenu();
+        if (!button.disabled) handler();
+    });
+    menu.appendChild(button);
+}
+
+function showModal(title, bodyNode, actions) {
+    closeConversationMenu();
+    closeToolsMenu();
+    modal.querySelector('#syllentras-modal-title').textContent = title;
+    var body = modal.querySelector('#syllentras-modal-body');
+    var actionArea = modal.querySelector('#syllentras-modal-actions');
+    body.innerHTML = '';
+    actionArea.innerHTML = '';
+    if (typeof bodyNode === 'string') {
+        body.textContent = bodyNode;
+    } else {
+        body.appendChild(bodyNode);
+    }
+    actions.forEach(function (action) {
+        var button = document.createElement('button');
+        button.type = 'button';
+        button.className = action.className || 'syllentras-modal-secondary';
+        button.textContent = action.label;
+        button.addEventListener('click', action.onClick);
+        actionArea.appendChild(button);
+    });
+    modal.hidden = false;
+    var firstButton = actionArea.querySelector('button');
+    if (firstButton) firstButton.focus();
+}
+
+function closeModal() {
+    modal.hidden = true;
+}
+
+function deleteConversation(conversation) {
+    pendingDeleteConversation = conversation;
+    if (conversation.type === 'general') {
+        var generalTitle = generalChatTitle();
+        showModal(
+            'Clear ' + generalTitle + ' history?',
+            'Clear all messages in ' + generalTitle + '? The conversation will stay available. Course content will not be deleted.',
+            [
+                { label: 'Cancel', className: 'syllentras-modal-secondary', onClick: cancelDeleteConversation },
+                { label: 'Clear', className: 'syllentras-modal-danger', onClick: confirmDeleteConversation }
+            ]
+        );
+        return;
+    }
+
+    var title = conversation.title || 'this conversation';
+    showModal(
+        'Delete conversation',
+        'Delete "' + title + '" and its history? Course content will not be deleted.',
+        [
+            { label: 'Cancel', className: 'syllentras-modal-secondary', onClick: cancelDeleteConversation },
+            { label: 'Delete', className: 'syllentras-modal-danger', onClick: confirmDeleteConversation }
+        ]
+    );
+}
+
+function cancelDeleteConversation() {
+    pendingDeleteConversation = null;
+    closeModal();
+}
+
+function confirmDeleteConversation() {
+    if (!pendingDeleteConversation) return;
+
+    var conversation = pendingDeleteConversation;
+    cancelDeleteConversation();
+
+    fetchJson('/conversations/' + encodeURIComponent(conversation.id)
+        + '?moodleUserId=' + encodeURIComponent(moodleUserId), { method: 'DELETE' })
+    .then(function (result) {
+        if (result && result.cleared) {
+            // Reload history so the fresh welcome bubble shows up after clear.
+            if (conversation.id === conversationId) {
+                return setActiveConversation(result.conversation || conversation)
+                    .then(function () {
+                        if (typeof broadcastChatSync === 'function') {
+                            broadcastChatSync('messages-updated', conversation.id);
+                            broadcastChatSync('conversation-list-changed', conversation.id);
+                        }
+                        return loadConversations();
+                    });
+            }
+            if (typeof broadcastChatSync === 'function') {
+                broadcastChatSync('conversation-list-changed', conversation.id);
+            }
+            return loadConversations();
+        }
+
+        if (conversation.id === conversationId) {
+            clearMessages();
+            conversationId = null;
+            activeConversation = null;
+            persistLastConversationId(null);
+            return openConversation({ type: 'general', title: generalChatTitle() })
+                .then(function () {
+                    if (typeof broadcastChatSync === 'function') {
+                        broadcastChatSync('conversation-list-changed', conversation.id);
+                    }
+                });
+        }
+        if (typeof broadcastChatSync === 'function') {
+            broadcastChatSync('conversation-list-changed', conversation.id);
+        }
+        return loadConversations();
+    });
+}
+
+function showRenameModal(conversation) {
+    var wrapper = document.createElement('div');
+    wrapper.textContent = 'Enter a new name for this conversation.';
+    var inputEl = document.createElement('input');
+    inputEl.type = 'text';
+    inputEl.maxLength = 120;
+    inputEl.value = conversation.title || '';
+    var error = document.createElement('div');
+    error.className = 'syllentras-modal-error';
+    error.hidden = true;
+    wrapper.appendChild(inputEl);
+    wrapper.appendChild(error);
+
+    showModal('Rename conversation', wrapper, [
+        { label: 'Cancel', className: 'syllentras-modal-secondary', onClick: closeModal },
+        {
+            label: 'Rename',
+            className: 'syllentras-modal-primary',
+            onClick: function () {
+                var title = inputEl.value.trim();
+                if (!title) {
+                    error.textContent = 'Please enter a conversation name.';
+                    error.hidden = false;
+                    inputEl.focus();
+                    return;
+                }
+                updateConversation(conversation.id, { title: title })
+                    .then(function (updated) {
+                        closeModal();
+                        if (conversation.id === conversationId) setActiveConversation(updated);
+                        if (typeof broadcastChatSync === 'function') {
+                            broadcastChatSync('conversation-list-changed', conversation.id);
+                        }
+                        return loadConversations();
+                    })
+                    .catch(function () {
+                        error.textContent = 'Could not rename this conversation.';
+                        error.hidden = false;
+                    });
+            }
+        }
+    ]);
+    inputEl.focus();
+    inputEl.select();
+}
+
+function togglePinConversation(conversation) {
+    updateConversation(conversation.id, { pinned: !conversation.pinned })
+        .then(function (updated) {
+            if (conversation.id === conversationId) activeConversation = updated;
+            if (typeof broadcastChatSync === 'function') {
+                broadcastChatSync('conversation-list-changed', conversation.id);
+            }
+            return loadConversations();
+        })
+        .catch(function () {
+            showModal('Pin conversation', 'Could not update the pinned state. Please refresh the page and try again.', [
+                { label: 'Close', className: 'syllentras-modal-secondary', onClick: closeModal }
+            ]);
+        });
+}
+
+function showExportModal(conversation) {
+    fetchConversationMessages(conversation.id)
+        .then(function (messages) {
+            var exportText = formatConversationExport(conversation, messages);
+            var wrapper = document.createElement('div');
+            wrapper.textContent = 'Copy or download this conversation.';
+            var textArea = document.createElement('textarea');
+            textArea.readOnly = true;
+            textArea.value = exportText;
+            wrapper.appendChild(textArea);
+
+            showModal('Export conversation', wrapper, [
+                { label: 'Close', className: 'syllentras-modal-secondary', onClick: closeModal },
+                {
+                    label: 'Copy',
+                    className: 'syllentras-modal-primary',
+                    onClick: function () {
+                        copyText(exportText);
+                    }
+                },
+                {
+                    label: 'Download',
+                    className: 'syllentras-modal-primary',
+                    onClick: function () {
+                        downloadText(safeFileName(conversation.title || 'conversation') + '.txt', exportText);
+                    }
+                }
+            ]);
+            textArea.focus();
+            textArea.select();
+        })
+        .catch(function () {
+            showModal('Export conversation', 'Could not load this conversation for export.', [
+                { label: 'Close', className: 'syllentras-modal-secondary', onClick: closeModal }
+            ]);
+        });
+}
+
+function fetchConversationMessages(id) {
+    var all = [];
+    function loadPage(before) {
+        var path = '/conversations/' + encodeURIComponent(id)
+            + '/messages?moodleUserId=' + encodeURIComponent(moodleUserId)
+            + '&limit=100';
+        if (before) path += '&before=' + encodeURIComponent(before);
+        return fetchJson(path).then(function (page) {
+            var messages = page.messages || [];
+            all = messages.concat(all);
+            if (page.hasMore && messages.length) {
+                return loadPage(messages[0].createdAt);
+            }
+            return all;
+        });
+    }
+    return loadPage();
+}
+
+function formatConversationExport(conversation, messages) {
+    var lines = [
+        displayConversationTitle(conversation),
+        displayConversationTag(conversation),
+        courseName ? 'Course: ' + courseName : '',
+        'Exported: ' + new Date().toLocaleString(),
+        ''
+    ].filter(function (line, index) { return index < 4 ? line !== '' : true; });
+
+    messages.forEach(function (message) {
+        var role = message.role === 'assistant' ? 'Assistant' : 'User';
+        var date = message.createdAt ? new Date(message.createdAt).toLocaleString() : '';
+        lines.push('[' + role + (date ? ' - ' + date : '') + ']');
+        lines.push(message.content || '');
+        lines.push('');
+    });
+
+    return lines.join('\n').trim() + '\n';
+}
+
+function copyText(text) {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text);
+        return;
+    }
+
+    var temp = document.createElement('textarea');
+    temp.value = text;
+    document.body.appendChild(temp);
+    temp.select();
+    document.execCommand('copy');
+    temp.remove();
+}
+
+function downloadText(filename, text) {
+    var blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+    var link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    URL.revokeObjectURL(link.href);
+    link.remove();
+}
+
+function safeFileName(name) {
+    return name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'conversation';
+}
+
+
+// ===== tools-menu.js =====
+// Part of the Syllentras chat widget.
+// Included inside the shared IIFE from before_footer.php — do not load standalone.
+
+var openToolsMenu = null;
+var selectedToolKey = null;
+var selectedTopicId = null;
+var toolsMenu = document.getElementById('syllentras-chat-tools-menu');
+var toolsWrap = toolsBtn ? toolsBtn.closest('.syllentras-tools-wrap') : null;
+
+var STUDY_TOOLS = [
+    {
+        key: 'study_guide',
+        label: 'Study guide',
+        description: 'Summarize course material into notes',
+        promptPrefix: 'Create a study guide about '
+    },
+    {
+        key: 'flashcards',
+        label: 'Flashcards',
+        description: 'Practice with flip cards',
+        promptPrefix: 'Create flashcards about '
+    },
+    {
+        key: 'practice_quiz',
+        label: 'Practice quiz',
+        description: 'Test yourself with quiz questions',
+        promptPrefix: 'Create a practice quiz about '
+    }
+];
+
+function closeToolsMenu() {
+    if (toolsMenu) {
+        toolsMenu.hidden = true;
+        toolsMenu.innerHTML = '';
+    }
+    openToolsMenu = null;
+    selectedToolKey = null;
+    selectedTopicId = null;
+    if (toolsBtn) {
+        toolsBtn.classList.remove('open');
+        toolsBtn.setAttribute('aria-expanded', 'false');
+    }
+}
+
+function buildStructuralTopicSuggestions() {
+    var suggestions = [];
+    var sections = Array.isArray(courseSections) ? courseSections.slice() : [];
+    sections = sections.filter(function (s) {
+        return s && s.name && String(s.name).trim().toLowerCase() !== 'ai content';
+    });
+    sections.sort(function (a, b) {
+        return (b.number || 0) - (a.number || 0);
+    });
+
+    function pushSuggestion(id, label, promptFragment) {
+        if (!label || !promptFragment) return false;
+        var key = String(promptFragment).toLowerCase();
+        var labelKey = String(label).toLowerCase();
+        if (suggestions.some(function (s) {
+            return s.promptFragment.toLowerCase() === key || s.label.toLowerCase() === labelKey;
+        })) {
+            return false;
+        }
+        suggestions.push({
+            id: id,
+            label: label,
+            promptFragment: promptFragment
+        });
+        return true;
+    }
+
+    pushSuggestion('whole-course', 'Whole course', 'the whole course');
+
+    var titleLabel = '';
+    if (activeConversation) {
+        if (activeConversation.type === 'section') {
+            titleLabel = (activeConversation.sectionName || activeConversation.title || '').trim();
+        } else if (activeConversation.type === 'manual') {
+            titleLabel = (activeConversation.title || '').trim();
+        } else {
+            // Main / general — title "Main" is not a useful topic.
+            var genericTitle = !activeConversation.title
+                || String(activeConversation.title).trim().toLowerCase() === 'main';
+            if (!genericTitle) {
+                titleLabel = String(activeConversation.title).trim();
+            }
+        }
+    }
+
+    if (titleLabel
+        && titleLabel.toLowerCase() !== 'whole course'
+        && titleLabel.toLowerCase() !== 'the whole course') {
+        pushSuggestion('conversation-title', titleLabel, titleLabel);
+    }
+
+    if (suggestions.length < 2) {
+        var numbered = sections.filter(function (s) {
+            return s && s.name && (s.number || 0) > 0;
+        });
+        for (var i = 0; i < numbered.length && suggestions.length < 2; i++) {
+            pushSuggestion('section-' + numbered[i].id, numbered[i].name, numbered[i].name);
+        }
+    }
+
+    if (suggestions.length < 2) {
+        var courseLabel = (typeof courseName === 'string' && courseName.trim())
+            ? courseName.trim()
+            : 'this course';
+        pushSuggestion('course-fallback', courseLabel, courseLabel);
+    }
+
+    if (suggestions.length < 2) {
+        pushSuggestion('key-topics', 'Key topics from this course', 'key topics from this course');
+    }
+
+    pushSuggestion('surprise-me', 'Surprise me', 'surprise me');
+
+    // Pad to exactly 3 with remaining sections if Surprise me somehow collided.
+    for (var j = 0; j < sections.length && suggestions.length < 3; j++) {
+        if (!sections[j] || !sections[j].name) continue;
+        pushSuggestion('section-pad-' + sections[j].id, sections[j].name, sections[j].name);
+    }
+    if (suggestions.length < 3) {
+        pushSuggestion('key-topics', 'Key topics from this course', 'key topics from this course');
+    }
+
+    return suggestions.slice(0, 3);
+}
+
+function getTopicSuggestionsForUi() {
+    var result = [];
+    var seen = {};
+
+    function addItem(item) {
+        if (!item || !item.label || !item.promptFragment) return;
+        var key = String(item.promptFragment).toLowerCase();
+        if (seen[key]) return;
+        seen[key] = true;
+        result.push(item);
+    }
+
+    var cached = activeConversation && activeConversation.topicSuggestions;
+    if (Array.isArray(cached)) {
+        cached.slice(0, 3).forEach(function (topic, index) {
+            if (typeof topic !== 'string' || !topic.trim()) return;
+            addItem({
+                id: 'llm-' + index,
+                label: topic.trim(),
+                promptFragment: topic.trim()
+            });
+        });
+    }
+
+    buildStructuralTopicSuggestions().forEach(addItem);
+    return result.slice(0, 3);
+}
+
+function findStudyTool(key) {
+    return STUDY_TOOLS.find(function (tool) { return tool.key === key; }) || null;
+}
+
+function hasOpenPendingAction() {
+    return !!(msgs && msgs.querySelector('.syllentras-pending-action'));
+}
+
+function updateContinueState(panel) {
+    if (!panel) return;
+    var continueBtn = panel.querySelector('.syllentras-tools-continue');
+    var customInput = panel.querySelector('.syllentras-tools-custom-input');
+    if (!continueBtn) return;
+
+    if (hasOpenPendingAction()) {
+        continueBtn.disabled = true;
+        continueBtn.title = 'Confirm or cancel the draft first';
+        return;
+    }
+
+    continueBtn.title = '';
+    if (!selectedToolKey) {
+        continueBtn.disabled = true;
+        return;
+    }
+    if (selectedTopicId === 'custom') {
+        continueBtn.disabled = !(customInput && customInput.value.trim());
+        return;
+    }
+    continueBtn.disabled = !selectedTopicId;
+}
+
+function clearTopicSelection(topicsCol) {
+    Array.from(topicsCol.querySelectorAll('.syllentras-tools-topic-option')).forEach(function (el) {
+        el.classList.remove('selected');
+    });
+    var customWrap = topicsCol.querySelector('.syllentras-tools-custom');
+    if (customWrap) customWrap.classList.remove('selected');
+}
+
+function selectTopicSuggestion(topicsCol, button) {
+    if (!button) return;
+    selectedTopicId = button.dataset.topicId;
+    clearTopicSelection(topicsCol);
+    button.classList.add('selected');
+    updateContinueState(topicsCol);
+}
+
+function selectCustomTopic(topicsCol, focusInput) {
+    selectedTopicId = 'custom';
+    clearTopicSelection(topicsCol);
+    var customWrap = topicsCol.querySelector('.syllentras-tools-custom');
+    if (customWrap) customWrap.classList.add('selected');
+    var customInput = topicsCol.querySelector('.syllentras-tools-custom-input');
+    if (focusInput && customInput) customInput.focus();
+    updateContinueState(topicsCol);
+}
+
+function selectFirstTopicIfNeeded(topicsCol) {
+    if (selectedTopicId) return;
+    var first = topicsCol.querySelector('.syllentras-tools-topic-option[data-topic-id]');
+    if (first) {
+        selectTopicSuggestion(topicsCol, first);
+    }
+}
+
+function submitToolsLaunch(panel) {
+    var tool = findStudyTool(selectedToolKey);
+    if (!tool || hasOpenPendingAction()) return;
+
+    var fragment = '';
+    if (selectedTopicId === 'custom') {
+        var customInput = panel.querySelector('.syllentras-tools-custom-input');
+        fragment = customInput ? customInput.value.trim() : '';
+    } else {
+        var selectedBtn = panel.querySelector('.syllentras-tools-topic-option.selected[data-topic-id]');
+        fragment = selectedBtn ? (selectedBtn.dataset.promptFragment || selectedBtn.textContent || '') : '';
+        fragment = String(fragment).trim();
+    }
+
+    if (!fragment) return;
+
+    closeToolsMenu();
+    input.value = tool.promptPrefix + fragment;
+    sendMessage();
+}
+
+function renderTopicPanel(topicsCol) {
+    topicsCol.innerHTML = '';
+    topicsCol.hidden = false;
+    selectedTopicId = null;
+
+    var heading = document.createElement('div');
+    heading.className = 'syllentras-tools-pane-heading';
+    heading.textContent = 'What should this cover?';
+    topicsCol.appendChild(heading);
+
+    var suggestions = getTopicSuggestionsForUi();
+
+    suggestions.forEach(function (suggestion) {
+        var button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'syllentras-tools-topic-option';
+        button.dataset.topicId = suggestion.id;
+        button.dataset.promptFragment = suggestion.promptFragment;
+        button.textContent = suggestion.label;
+        button.addEventListener('click', function (e) {
+            e.stopPropagation();
+            selectTopicSuggestion(topicsCol, button);
+        });
+        topicsCol.appendChild(button);
+    });
+
+    var customWrap = document.createElement('div');
+    customWrap.className = 'syllentras-tools-custom';
+
+    var customBtn = document.createElement('button');
+    customBtn.type = 'button';
+    customBtn.className = 'syllentras-tools-topic-option custom-label';
+    customBtn.textContent = 'Custom topic';
+    customBtn.addEventListener('click', function (e) {
+        e.stopPropagation();
+        selectCustomTopic(topicsCol, true);
+    });
+
+    var customInput = document.createElement('input');
+    customInput.type = 'text';
+    customInput.className = 'syllentras-tools-custom-input';
+    customInput.placeholder = 'weeks 2–4, debugging, surprise me…';
+    customInput.setAttribute('aria-label', 'Custom topic');
+    customInput.addEventListener('click', function (e) {
+        e.stopPropagation();
+        selectCustomTopic(topicsCol, false);
+    });
+    customInput.addEventListener('input', function () {
+        selectCustomTopic(topicsCol, false);
+    });
+    customInput.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            e.stopPropagation();
+            submitToolsLaunch(topicsCol);
+        }
+    });
+
+    customWrap.appendChild(customBtn);
+    customWrap.appendChild(customInput);
+    topicsCol.appendChild(customWrap);
+
+    var continueBtn = document.createElement('button');
+    continueBtn.type = 'button';
+    continueBtn.className = 'syllentras-tools-continue';
+    continueBtn.textContent = 'Continue';
+    continueBtn.addEventListener('click', function (e) {
+        e.stopPropagation();
+        submitToolsLaunch(topicsCol);
+    });
+    topicsCol.appendChild(continueBtn);
+
+    updateContinueState(topicsCol);
+}
+
+function showToolsMenu() {
+    closeConversationMenu();
+    closeToolsMenu();
+    if (typeof closeModeMenu === 'function') closeModeMenu();
+    if (typeof closeProviderMenu === 'function') closeProviderMenu();
+    if (typeof closeDisplayMenu === 'function') closeDisplayMenu();
+    if (!toolsBtn || toolsBtn.disabled || !toolsMenu) return;
+
+    toolsBtn.classList.add('open');
+    toolsBtn.setAttribute('aria-expanded', 'true');
+    selectedToolKey = null;
+    selectedTopicId = null;
+
+    toolsMenu.innerHTML = '';
+    toolsMenu.hidden = false;
+    openToolsMenu = toolsMenu;
+
+    var toolsCol = document.createElement('div');
+    toolsCol.className = 'syllentras-tools-menu-tools';
+
+    var toolsHeading = document.createElement('div');
+    toolsHeading.className = 'syllentras-tools-pane-heading';
+    toolsHeading.textContent = 'Tools';
+    toolsCol.appendChild(toolsHeading);
+
+    var topicsCol = document.createElement('div');
+    topicsCol.className = 'syllentras-tools-menu-topics';
+
+    STUDY_TOOLS.forEach(function (tool) {
+        var button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'syllentras-tools-menu-item';
+        button.setAttribute('role', 'menuitem');
+        button.dataset.toolKey = tool.key;
+
+        var label = document.createElement('span');
+        label.className = 'syllentras-tools-menu-item-label';
+        label.textContent = tool.label;
+
+        var desc = document.createElement('span');
+        desc.className = 'syllentras-tools-menu-item-desc';
+        desc.textContent = tool.description;
+
+        button.appendChild(label);
+        button.appendChild(desc);
+        button.addEventListener('click', function (e) {
+            e.stopPropagation();
+            selectedToolKey = tool.key;
+            Array.from(toolsCol.querySelectorAll('.syllentras-tools-menu-item')).forEach(function (el) {
+                el.classList.toggle('selected', el === button);
+            });
+            topicsCol.hidden = false;
+            selectFirstTopicIfNeeded(topicsCol);
+            updateContinueState(topicsCol);
+        });
+        toolsCol.appendChild(button);
+    });
+
+    var attachBtn = document.createElement('button');
+    attachBtn.type = 'button';
+    attachBtn.className = 'syllentras-tools-menu-item syllentras-tools-attach-item';
+    attachBtn.setAttribute('role', 'menuitem');
+    attachBtn.dataset.toolKey = 'attach_files';
+
+    var attachRow = document.createElement('span');
+    attachRow.className = 'syllentras-tools-attach-row';
+
+    var attachIcon = document.createElement('span');
+    attachIcon.className = 'syllentras-tools-attach-icon';
+    attachIcon.setAttribute('aria-hidden', 'true');
+    attachIcon.innerHTML =
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18" fill="none" focusable="false">' +
+        '<path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" ' +
+        'stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round"/>' +
+        '</svg>';
+
+    var attachText = document.createElement('span');
+    attachText.className = 'syllentras-tools-attach-text';
+
+    var attachLabel = document.createElement('span');
+    attachLabel.className = 'syllentras-tools-menu-item-label';
+    attachLabel.textContent = 'Attach files';
+
+    var attachDesc = document.createElement('span');
+    attachDesc.className = 'syllentras-tools-menu-item-desc';
+    attachDesc.textContent = 'Drop files here or browse';
+
+    attachText.appendChild(attachLabel);
+    attachText.appendChild(attachDesc);
+    attachRow.appendChild(attachIcon);
+    attachRow.appendChild(attachText);
+    attachBtn.appendChild(attachRow);
+    attachBtn.addEventListener('click', function (e) {
+        e.stopPropagation();
+        closeToolsMenu();
+        if (typeof openAttachmentPicker === 'function') {
+            openAttachmentPicker();
+        }
+    });
+    toolsCol.appendChild(attachBtn);
+
+    toolsMenu.appendChild(toolsCol);
+    toolsMenu.appendChild(topicsCol);
+    renderTopicPanel(topicsCol);
+}
+
+function toggleToolsMenu(e) {
+    if (e) e.stopPropagation();
+    if (!toolsBtn || toolsBtn.disabled) return;
+    if (openToolsMenu) {
+        closeToolsMenu();
+        return;
+    }
+    showToolsMenu();
+}
+
+function initToolsMenu() {
+    if (!toolsBtn) return;
+    if (courseId <= 1) {
+        toolsBtn.disabled = true;
+        toolsBtn.title = 'Open a course to use study tools';
+        toolsBtn.setAttribute('aria-label', 'Study tools unavailable on dashboard');
+        return;
+    }
+    toolsBtn.addEventListener('click', toggleToolsMenu);
+}
+
+// ===== section-buttons.js =====
+// Part of the Syllentras chat widget.
+// Included inside the shared IIFE from before_footer.php — do not load standalone.
+
+function installSectionButtons() {
+    if (!courseSections.length) return;
+    courseSections.forEach(function (section) {
+        var target = findSectionElement(section);
+        if (!target || target.querySelector('.syllentras-section-chat-btn[data-section-id="' + section.id + '"]')) return;
+
+        var button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'syllentras-section-chat-btn';
+        button.dataset.sectionId = String(section.id);
+        button.textContent = 'AI chat';
+        button.setAttribute('aria-label', 'Open AI chat for ' + section.name);
+        button.addEventListener('click', function (e) {
+            e.preventDefault();
+            e.stopPropagation();
+            openConversation({
+                type: 'section',
+                title: section.name,
+                sectionId: section.id || undefined,
+                sectionNumber: section.number,
+                sectionName: section.name
+            });
+        });
+
+        var headerTarget = target.querySelector('.course-section-header, .sectionname, h3, h4') || target;
+        headerTarget.appendChild(button);
+    });
+}
+
+function findSectionElement(section) {
+    var root = document.querySelector('#region-main .course-content')
+        || document.querySelector('.course-content')
+        || document.querySelector('#region-main')
+        || document;
+    var selectors = [
+        '[data-for="section"][data-id="' + section.id + '"]',
+        '.course-section[data-id="' + section.id + '"]',
+        'li.section[data-id="' + section.id + '"]',
+        '#section-' + section.number,
+        '.course-section[data-section="' + section.number + '"]',
+        'li.section[data-section="' + section.number + '"]',
+        '[data-for="section"][data-number="' + section.number + '"]',
+        '.course-section[data-number="' + section.number + '"]',
+        'li.section[data-number="' + section.number + '"]'
+    ];
+
+    for (var i = 0; i < selectors.length; i++) {
+        var found = root.querySelector(selectors[i]);
+        if (found) return found;
+    }
+
+    var candidates = Array.from(root.querySelectorAll('.course-section, li.section, [data-for="section"], [id^="section-"]'));
+    return candidates.find(function (candidate) {
+        var heading = candidate.querySelector('.sectionname, .course-section-header h3, .course-section-header h4, h3, h4');
+        return heading && heading.textContent && heading.textContent.trim() === section.name;
+    }) || null;
+}
+
+
+// ===== ai-content-panel.js =====
+// Part of the Syllentras chat widget.
+// Included inside the shared IIFE from before_footer.php — do not load standalone.
+
+var activeChatTab = 'chat';
+var aiContentList = null;
+var aiContentEmptyEl = null;
+var aiContentToolbar = null;
+var aiContentOpenMenu = null;
+var tabChatBtn = document.getElementById('syllentras-tab-chat');
+var tabAiContentBtn = document.getElementById('syllentras-tab-ai-content');
+var panelChat = document.getElementById('syllentras-panel-chat');
+var panelAiContent = document.getElementById('syllentras-panel-ai-content');
+
+var aiContentItems = [];
+var aiContentSortKey = 'course';
+var aiContentSortDir = 'asc';
+var aiContentFilterKinds = {};
+var aiContentSearchQuery = '';
+var aiContentBulkMode = false;
+var aiContentSelected = {};
+var aiContentToolbarBound = false;
+
+var SORT_LABELS = {
+    course: 'Course order',
+    modified: 'Recently modified',
+    alpha: 'Alphabetical'
+};
+var SORT_DEFAULT_DIR = {
+    course: 'asc',
+    modified: 'desc',
+    alpha: 'asc'
+};
+
+function kindBadgeLabel(kind) {
+    if (kind === 'flashcards') return 'Flashcards';
+    if (kind === 'practice_quiz') return 'Quiz';
+    return 'Guide';
+}
+
+function isAiContentTabActive() {
+    return activeChatTab === 'ai-content';
+}
+
+function bindAiContentDom() {
+    if (!panelAiContent) return;
+    aiContentList = panelAiContent.querySelector('#syllentras-ai-content-list') ||
+        panelAiContent.querySelector('.syllentras-ai-content-list');
+    aiContentEmptyEl = panelAiContent.querySelector('.syllentras-ai-content-empty');
+    aiContentToolbar = panelAiContent.querySelector('#syllentras-ai-content-toolbar');
+    if (!aiContentToolbarBound && aiContentToolbar) {
+        bindAiContentToolbar();
+        aiContentToolbarBound = true;
+    }
+}
+
+function setChatTab(tab) {
+    if (tab !== 'chat' && tab !== 'ai-content') {
+        tab = 'chat';
+    }
+    activeChatTab = tab;
+
+    var chatSelected = tab === 'chat';
+    if (tabChatBtn) {
+        tabChatBtn.setAttribute('aria-selected', chatSelected ? 'true' : 'false');
+        tabChatBtn.tabIndex = chatSelected ? 0 : -1;
+    }
+    if (tabAiContentBtn) {
+        tabAiContentBtn.setAttribute('aria-selected', chatSelected ? 'false' : 'true');
+        tabAiContentBtn.tabIndex = chatSelected ? -1 : 0;
+    }
+    if (panelChat) {
+        panelChat.hidden = !chatSelected;
+    }
+    if (panelAiContent) {
+        panelAiContent.hidden = chatSelected;
+    }
+
+    closeAiContentMenu();
+    closeAiContentDropdowns();
+    closeConversationMenu();
+    closeToolsMenu();
+
+    if (!chatSelected) {
+        refreshAiContentList();
+    }
+}
+
+function closeAiContentMenu() {
+    if (aiContentOpenMenu) {
+        aiContentOpenMenu.remove();
+        aiContentOpenMenu = null;
+    }
+    if (aiContentList) {
+        Array.from(aiContentList.querySelectorAll('.syllentras-ai-content-menu-btn.open')).forEach(function (btn) {
+            btn.classList.remove('open');
+        });
+    }
+}
+
+function closeAiContentDropdowns() {
+    if (!aiContentToolbar) return;
+    Array.from(aiContentToolbar.querySelectorAll('.syllentras-ai-content-dd-panel')).forEach(function (panel) {
+        panel.hidden = true;
+    });
+    Array.from(aiContentToolbar.querySelectorAll('.syllentras-ai-content-dd-btn')).forEach(function (btn) {
+        btn.setAttribute('aria-expanded', 'false');
+    });
+}
+
+function selectedKindCount() {
+    return Object.keys(aiContentFilterKinds).filter(function (k) {
+        return aiContentFilterKinds[k];
+    }).length;
+}
+
+function selectedCmCount() {
+    return Object.keys(aiContentSelected).filter(function (id) {
+        return aiContentSelected[id];
+    }).length;
+}
+
+function getVisibleAiContentItems() {
+    var needle = (aiContentSearchQuery || '').trim().toLowerCase();
+    var filtered = aiContentItems.filter(function (item) {
+        if (selectedKindCount() > 0 && !aiContentFilterKinds[item.kind]) {
+            return false;
+        }
+        if (needle) {
+            var name = String(item.name || '').toLowerCase();
+            if (name.indexOf(needle) === -1) return false;
+        }
+        return true;
+    });
+
+    var dir = aiContentSortDir === 'desc' ? -1 : 1;
+    filtered.sort(function (a, b) {
+        var cmp = 0;
+        if (aiContentSortKey === 'modified') {
+            cmp = (a.timeModified || 0) - (b.timeModified || 0);
+            if (cmp === 0) cmp = (a.sortOrder || 0) - (b.sortOrder || 0);
+        } else if (aiContentSortKey === 'alpha') {
+            cmp = String(a.name || '').localeCompare(String(b.name || ''), undefined, {
+                sensitivity: 'base'
+            });
+            if (cmp === 0) cmp = (a.sortOrder || 0) - (b.sortOrder || 0);
+        } else {
+            cmp = (a.sortOrder || 0) - (b.sortOrder || 0);
+        }
+        if (cmp === 0) cmp = (a.cmId || 0) - (b.cmId || 0);
+        return cmp * dir;
+    });
+    return filtered;
+}
+
+function updateAiContentToolbarChrome() {
+    if (!aiContentToolbar) return;
+
+    var sortBtn = aiContentToolbar.querySelector('#syllentras-ai-sort-btn');
+    var filterBtn = aiContentToolbar.querySelector('#syllentras-ai-filter-btn');
+    var bulkToggle = aiContentToolbar.querySelector('#syllentras-ai-bulk-toggle');
+    var bulkRow = aiContentToolbar.querySelector('#syllentras-ai-bulk-row');
+    var bulkDelete = aiContentToolbar.querySelector('#syllentras-ai-bulk-delete');
+    var arrow = aiContentSortDir === 'desc' ? '↓' : '↑';
+
+    if (sortBtn) {
+        sortBtn.innerHTML =
+            'Sort: ' +
+            (SORT_LABELS[aiContentSortKey] || 'Course order') +
+            ' <span class="syllentras-ai-content-sort-arrow" aria-hidden="true">' +
+            arrow +
+            '</span>';
+    }
+
+    Array.from(aiContentToolbar.querySelectorAll('.syllentras-ai-content-dd-option[data-sort]')).forEach(
+        function (opt) {
+            var key = opt.getAttribute('data-sort');
+            var active = key === aiContentSortKey;
+            opt.classList.toggle('is-active', active);
+            var existing = opt.querySelector('.syllentras-ai-content-sort-arrow');
+            if (active) {
+                if (!existing) {
+                    existing = document.createElement('span');
+                    existing.className = 'syllentras-ai-content-sort-arrow';
+                    existing.setAttribute('aria-hidden', 'true');
+                    opt.appendChild(existing);
+                }
+                existing.textContent = arrow;
+            } else if (existing) {
+                existing.remove();
+            }
+        }
+    );
+
+    if (filterBtn) {
+        var n = selectedKindCount();
+        if (n === 0) {
+            filterBtn.textContent = 'Type: All';
+        } else if (n === 1) {
+            var only = Object.keys(aiContentFilterKinds).find(function (k) {
+                return aiContentFilterKinds[k];
+            });
+            filterBtn.textContent =
+                'Type: ' +
+                (only === 'flashcards'
+                    ? 'Flashcards'
+                    : only === 'practice_quiz'
+                      ? 'Quiz'
+                      : 'Study guide');
+        } else {
+            filterBtn.textContent = 'Type: ' + n + ' selected';
+        }
+    }
+
+    if (bulkToggle) {
+        bulkToggle.textContent = aiContentBulkMode ? 'Done' : 'Select';
+    }
+    if (bulkRow) {
+        bulkRow.hidden = !aiContentBulkMode;
+    }
+    if (bulkDelete) {
+        bulkDelete.disabled = selectedCmCount() < 1;
+        bulkDelete.textContent =
+            selectedCmCount() > 0 ? 'Delete (' + selectedCmCount() + ')' : 'Delete';
+    }
+}
+
+function renderAiContentList() {
+    if (!aiContentList || !aiContentEmptyEl) return;
+
+    closeAiContentMenu();
+    var visible = getVisibleAiContentItems();
+    aiContentList.innerHTML = '';
+
+    if (!aiContentItems.length) {
+        if (aiContentToolbar) aiContentToolbar.hidden = true;
+        aiContentEmptyEl.hidden = false;
+        aiContentEmptyEl.textContent = 'No AI Content yet in this course.';
+        updateAiContentToolbarChrome();
+        return;
+    }
+
+    if (aiContentToolbar) aiContentToolbar.hidden = false;
+
+    if (!visible.length) {
+        aiContentEmptyEl.hidden = false;
+        if ((aiContentSearchQuery || '').trim()) {
+            aiContentEmptyEl.textContent = 'No items match your search.';
+        } else if (selectedKindCount() > 0) {
+            aiContentEmptyEl.textContent = 'No items match the selected type filter.';
+        } else {
+            aiContentEmptyEl.textContent = 'No items match.';
+        }
+        updateAiContentToolbarChrome();
+        return;
+    }
+
+    aiContentEmptyEl.hidden = true;
+    visible.forEach(function (item) {
+        aiContentList.appendChild(renderAiContentRow(item));
+    });
+    updateAiContentToolbarChrome();
+}
+
+function refreshAiContentList() {
+    bindAiContentDom();
+    if (!aiContentList || !aiContentEmptyEl) return;
+
+    aiContentSelected = {};
+    aiContentBulkMode = false;
+    closeAiContentDropdowns();
+
+    if (courseId <= 1) {
+        aiContentItems = [];
+        aiContentList.innerHTML = '';
+        if (aiContentToolbar) aiContentToolbar.hidden = true;
+        aiContentEmptyEl.hidden = false;
+        aiContentEmptyEl.textContent = 'Open a course page to manage your AI Content.';
+        updateAiContentToolbarChrome();
+        return;
+    }
+
+    aiContentList.innerHTML = '<p class="syllentras-ai-content-loading">Loading…</p>';
+    aiContentEmptyEl.hidden = true;
+    if (aiContentToolbar) aiContentToolbar.hidden = true;
+
+    fetchJson(
+        '/ai-content?courseId=' + encodeURIComponent(courseId) +
+        '&moodleUserId=' + encodeURIComponent(moodleUserId)
+    )
+        .then(function (data) {
+            aiContentItems = ((data && data.items) || []).map(function (item, index) {
+                return {
+                    cmId: item.cmId,
+                    modname: item.modname,
+                    name: item.name,
+                    kind: item.kind,
+                    viewUrl: item.viewUrl,
+                    sortOrder: typeof item.sortOrder === 'number' ? item.sortOrder : index,
+                    timeModified: typeof item.timeModified === 'number' ? item.timeModified : 0
+                };
+            });
+            renderAiContentList();
+        })
+        .catch(function () {
+            aiContentItems = [];
+            aiContentList.innerHTML = '';
+            if (aiContentToolbar) aiContentToolbar.hidden = true;
+            aiContentEmptyEl.hidden = false;
+            aiContentEmptyEl.textContent = 'Could not load AI Content. Try again.';
+            updateAiContentToolbarChrome();
+        });
+}
+
+function renderAiContentRow(item) {
+    var row = document.createElement('div');
+    row.className = 'syllentras-ai-content-item' + (aiContentBulkMode ? ' is-bulk' : '');
+    row.setAttribute('data-cmid', String(item.cmId));
+
+    if (aiContentBulkMode) {
+        var checkWrap = document.createElement('label');
+        checkWrap.className = 'syllentras-ai-content-item-check';
+        var check = document.createElement('input');
+        check.type = 'checkbox';
+        check.checked = !!aiContentSelected[item.cmId];
+        check.setAttribute('aria-label', 'Select ' + (item.name || 'item'));
+        check.addEventListener('change', function () {
+            if (check.checked) {
+                aiContentSelected[item.cmId] = true;
+            } else {
+                delete aiContentSelected[item.cmId];
+            }
+            updateAiContentToolbarChrome();
+        });
+        checkWrap.appendChild(check);
+        row.appendChild(checkWrap);
+    }
+
+    var main = document.createElement('div');
+    main.className = 'syllentras-ai-content-item-main';
+    var nameEl = document.createElement('a');
+    nameEl.className = 'syllentras-ai-content-name';
+    nameEl.textContent = item.name || 'Untitled';
+    nameEl.href = item.viewUrl || '#';
+    nameEl.target = '_blank';
+    nameEl.rel = 'noopener noreferrer';
+    var kindEl = document.createElement('span');
+    kindEl.className = 'syllentras-ai-content-kind';
+    kindEl.textContent = kindBadgeLabel(item.kind);
+    main.appendChild(nameEl);
+    main.appendChild(kindEl);
+    row.appendChild(main);
+
+    var menuBtn = document.createElement('button');
+    menuBtn.type = 'button';
+    menuBtn.className = 'syllentras-ai-content-menu-btn';
+    menuBtn.setAttribute('aria-label', 'Content menu');
+    menuBtn.setAttribute('aria-haspopup', 'menu');
+    menuBtn.innerHTML = '&#8942;';
+    menuBtn.addEventListener('click', function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        if (aiContentBulkMode) return;
+        showAiContentMenu(e.currentTarget, item);
+    });
+    row.appendChild(menuBtn);
+
+    return row;
+}
+
+function showAiContentMenu(anchor, item) {
+    closeConversationMenu();
+    closeToolsMenu();
+    closeAiContentMenu();
+    closeAiContentDropdowns();
+    anchor.classList.add('open');
+
+    // Same shell as the chat ⋮ menu so theme vars + solid fallbacks apply.
+    // (Appending to document.body made --syll-panel-bg resolve to transparent.)
+    var menu = document.createElement('div');
+    menu.className = 'syllentras-conversation-menu syllentras-ai-content-menu';
+    menu.setAttribute('role', 'menu');
+
+    function addAction(label, handler, danger) {
+        var button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'syllentras-menu-action' + (danger ? ' danger' : '');
+        button.textContent = label;
+        button.addEventListener('click', function (e) {
+            e.stopPropagation();
+            closeAiContentMenu();
+            handler();
+        });
+        menu.appendChild(button);
+    }
+
+    addAction('Open', function () {
+        if (item.viewUrl) window.open(item.viewUrl, '_blank', 'noopener,noreferrer');
+    });
+    addAction('Download PDF', function () { downloadAiContentItemPdf(item); });
+    addAction('Rename', function () { renameAiContentItem(item); });
+    addAction('Delete', function () { deleteAiContentItem(item); }, true);
+
+    (root || document.body).appendChild(menu);
+    var rect = anchor.getBoundingClientRect();
+    menu.style.left = Math.max(8, rect.right - 124) + 'px';
+    menu.style.top = Math.min(window.innerHeight - menu.offsetHeight - 8, rect.bottom + 4) + 'px';
+    aiContentOpenMenu = menu;
+}
+
+var aiContentPdfBusy = false;
+
+function downloadAiContentItemPdf(item) {
+    if (aiContentPdfBusy) return;
+    if (
+        !window.SyllentrasAiContentPdf ||
+        typeof window.SyllentrasAiContentPdf.download !== 'function'
+    ) {
+        showModal('Download PDF', 'PDF export is unavailable on this page.', [
+            { label: 'Close', className: 'syllentras-modal-secondary', onClick: closeModal }
+        ]);
+        return;
+    }
+    aiContentPdfBusy = true;
+
+    showModal('Download PDF', 'Preparing PDF…', [
+        { label: 'Close', className: 'syllentras-modal-secondary', onClick: closeModal }
+    ]);
+
+    window.SyllentrasAiContentPdf.download(item, {
+        apiUrl: API_URL,
+        courseId: courseId,
+        moodleUserId: moodleUserId,
+        courseName: courseName
+    })
+        .then(function () {
+            closeModal();
+        })
+        .catch(function (err) {
+            var detail = err && err.message ? String(err.message) : '';
+            var message = detail
+                ? 'Could not export this item. ' + detail
+                : 'Could not export this item.';
+            showModal('Download PDF', message, [
+                { label: 'Close', className: 'syllentras-modal-secondary', onClick: closeModal }
+            ]);
+        })
+        .then(function () {
+            aiContentPdfBusy = false;
+        });
+}
+
+function renameAiContentItem(item) {
+    var wrap = document.createElement('div');
+    var label = document.createElement('label');
+    label.textContent = 'Title';
+    var hint = document.createElement('p');
+    hint.style.margin = '0 0 6px';
+    hint.style.fontSize = '12px';
+    hint.style.color = '#667788';
+    hint.textContent = kindBadgeLabel(item.kind) + ' prefix is kept automatically.';
+    var input = document.createElement('input');
+    input.type = 'text';
+    input.maxLength = 200;
+    input.value = String(item.name || '')
+        .replace(/^(Study Guide|Flashcards|Quiz|Practice Quiz)\s*:\s*/i, '')
+        .trim();
+    wrap.appendChild(label);
+    wrap.appendChild(hint);
+    wrap.appendChild(input);
+
+    showModal('Rename', wrap, [
+        { label: 'Cancel', className: 'syllentras-modal-secondary', onClick: closeModal },
+        {
+            label: 'Save',
+            className: 'syllentras-modal-primary',
+            onClick: function () {
+                var name = (input.value || '').trim();
+                if (!name) return;
+                closeModal();
+                fetchJson('/ai-content/rename', {
+                    method: 'POST',
+                    body: JSON.stringify({
+                        courseId: courseId,
+                        moodleUserId: moodleUserId,
+                        cmId: item.cmId,
+                        name: name,
+                        kind: item.kind || 'study_guide'
+                    })
+                })
+                    .then(function () {
+                        refreshAiContentList();
+                    })
+                    .catch(function () {
+                        showModal('Rename', 'Could not rename this item.', [
+                            { label: 'Close', className: 'syllentras-modal-secondary', onClick: closeModal }
+                        ]);
+                    });
+            }
+        }
+    ]);
+    setTimeout(function () { input.focus(); input.select(); }, 0);
+}
+
+function deleteAiContentItem(item) {
+    showModal(
+        'Delete this content?',
+        'Delete "' + (item.name || 'this item') + '"? This cannot be undone.',
+        [
+            { label: 'Cancel', className: 'syllentras-modal-secondary', onClick: closeModal },
+            {
+                label: 'Delete',
+                className: 'syllentras-modal-danger',
+                onClick: function () {
+                    closeModal();
+                    fetchJson('/ai-content/delete', {
+                        method: 'POST',
+                        body: JSON.stringify({
+                            courseId: courseId,
+                            moodleUserId: moodleUserId,
+                            cmId: item.cmId
+                        })
+                    })
+                        .then(function () {
+                            refreshAiContentList();
+                        })
+                        .catch(function () {
+                            showModal('Delete', 'Could not delete this item.', [
+                                { label: 'Close', className: 'syllentras-modal-secondary', onClick: closeModal }
+                            ]);
+                        });
+                }
+            }
+        ]
+    );
+}
+
+function deleteSelectedAiContentItems() {
+    var ids = Object.keys(aiContentSelected)
+        .filter(function (id) { return aiContentSelected[id]; })
+        .map(function (id) { return parseInt(id, 10); })
+        .filter(function (id) { return id > 0; });
+
+    if (!ids.length) return;
+
+    var names = ids.map(function (id) {
+        var found = aiContentItems.find(function (item) { return item.cmId === id; });
+        return found && found.name ? found.name : 'Item ' + id;
+    });
+    var preview =
+        names.length <= 3
+            ? names.map(function (n) { return '"' + n + '"'; }).join(', ')
+            : names.slice(0, 2).map(function (n) { return '"' + n + '"'; }).join(', ') +
+              ', and ' + (names.length - 2) + ' more';
+
+    showModal(
+        'Delete selected content?',
+        'Delete ' + ids.length + ' item' + (ids.length === 1 ? '' : 's') +
+            ' (' + preview + ')? This cannot be undone.',
+        [
+            { label: 'Cancel', className: 'syllentras-modal-secondary', onClick: closeModal },
+            {
+                label: 'Delete',
+                className: 'syllentras-modal-danger',
+                onClick: function () {
+                    closeModal();
+                    fetchJson('/ai-content/delete-many', {
+                        method: 'POST',
+                        body: JSON.stringify({
+                            courseId: courseId,
+                            moodleUserId: moodleUserId,
+                            cmIds: ids
+                        })
+                    })
+                        .then(function (data) {
+                            var failed = (data && data.failed) || [];
+                            aiContentBulkMode = false;
+                            aiContentSelected = {};
+                            refreshAiContentList();
+                            if (failed.length > 0) {
+                                showModal(
+                                    'Delete',
+                                    failed.length === ids.length
+                                        ? 'Could not delete the selected items.'
+                                        : 'Deleted some items, but ' +
+                                          failed.length +
+                                          ' failed.',
+                                    [
+                                        {
+                                            label: 'Close',
+                                            className: 'syllentras-modal-secondary',
+                                            onClick: closeModal
+                                        }
+                                    ]
+                                );
+                            }
+                        })
+                        .catch(function () {
+                            showModal('Delete', 'Could not delete the selected items.', [
+                                {
+                                    label: 'Close',
+                                    className: 'syllentras-modal-secondary',
+                                    onClick: closeModal
+                                }
+                            ]);
+                        });
+                }
+            }
+        ]
+    );
+}
+
+function resetAiContentListControls() {
+    aiContentSearchQuery = '';
+    aiContentSortKey = 'course';
+    aiContentSortDir = 'asc';
+    aiContentFilterKinds = {};
+    aiContentBulkMode = false;
+    aiContentSelected = {};
+    closeAiContentDropdowns();
+    closeAiContentMenu();
+
+    if (aiContentToolbar) {
+        var searchInput = aiContentToolbar.querySelector('#syllentras-ai-content-search');
+        if (searchInput) searchInput.value = '';
+        Array.from(aiContentToolbar.querySelectorAll('#syllentras-ai-filter-panel input[type="checkbox"]')).forEach(
+            function (box) {
+                box.checked = false;
+            }
+        );
+    }
+
+    renderAiContentList();
+}
+
+function bindAiContentToolbar() {
+    if (!aiContentToolbar) return;
+
+    var searchInput = aiContentToolbar.querySelector('#syllentras-ai-content-search');
+    var sortBtn = aiContentToolbar.querySelector('#syllentras-ai-sort-btn');
+    var sortPanel = aiContentToolbar.querySelector('#syllentras-ai-sort-panel');
+    var filterBtn = aiContentToolbar.querySelector('#syllentras-ai-filter-btn');
+    var filterPanel = aiContentToolbar.querySelector('#syllentras-ai-filter-panel');
+    var bulkToggle = aiContentToolbar.querySelector('#syllentras-ai-bulk-toggle');
+    var resetBtn = aiContentToolbar.querySelector('#syllentras-ai-content-reset');
+    var selectAllBtn = aiContentToolbar.querySelector('#syllentras-ai-select-all');
+    var deselectAllBtn = aiContentToolbar.querySelector('#syllentras-ai-deselect-all');
+    var bulkDeleteBtn = aiContentToolbar.querySelector('#syllentras-ai-bulk-delete');
+
+    function togglePanel(btn, panel) {
+        var willOpen = panel.hidden;
+        closeAiContentDropdowns();
+        closeAiContentMenu();
+        if (willOpen) {
+            panel.hidden = false;
+            btn.setAttribute('aria-expanded', 'true');
+        }
+    }
+
+    if (searchInput) {
+        searchInput.value = aiContentSearchQuery || '';
+        searchInput.addEventListener('input', function () {
+            aiContentSearchQuery = searchInput.value || '';
+            renderAiContentList();
+        });
+        searchInput.addEventListener('click', function (e) {
+            e.stopPropagation();
+        });
+        searchInput.addEventListener('keydown', function (e) {
+            e.stopPropagation();
+        });
+    }
+
+    if (resetBtn) {
+        resetBtn.addEventListener('click', function (e) {
+            e.stopPropagation();
+            resetAiContentListControls();
+        });
+    }
+
+    if (sortBtn && sortPanel) {
+        sortBtn.addEventListener('click', function (e) {
+            e.stopPropagation();
+            togglePanel(sortBtn, sortPanel);
+        });
+        Array.from(sortPanel.querySelectorAll('[data-sort]')).forEach(function (opt) {
+            opt.addEventListener('click', function (e) {
+                e.stopPropagation();
+                var key = opt.getAttribute('data-sort');
+                if (key === aiContentSortKey) {
+                    aiContentSortDir = aiContentSortDir === 'asc' ? 'desc' : 'asc';
+                } else {
+                    aiContentSortKey = key;
+                    aiContentSortDir = SORT_DEFAULT_DIR[key] || 'asc';
+                }
+                closeAiContentDropdowns();
+                renderAiContentList();
+            });
+        });
+    }
+
+    if (filterBtn && filterPanel) {
+        filterBtn.addEventListener('click', function (e) {
+            e.stopPropagation();
+            togglePanel(filterBtn, filterPanel);
+        });
+        Array.from(filterPanel.querySelectorAll('input[type="checkbox"]')).forEach(function (box) {
+            box.addEventListener('change', function () {
+                if (box.checked) {
+                    aiContentFilterKinds[box.value] = true;
+                } else {
+                    delete aiContentFilterKinds[box.value];
+                }
+                aiContentSelected = {};
+                renderAiContentList();
+            });
+            box.addEventListener('click', function (e) {
+                e.stopPropagation();
+            });
+        });
+        filterPanel.addEventListener('click', function (e) {
+            e.stopPropagation();
+        });
+    }
+
+    if (bulkToggle) {
+        bulkToggle.addEventListener('click', function () {
+            closeAiContentDropdowns();
+            closeAiContentMenu();
+            aiContentBulkMode = !aiContentBulkMode;
+            if (!aiContentBulkMode) {
+                aiContentSelected = {};
+            }
+            renderAiContentList();
+        });
+    }
+
+    if (selectAllBtn) {
+        selectAllBtn.addEventListener('click', function () {
+            getVisibleAiContentItems().forEach(function (item) {
+                aiContentSelected[item.cmId] = true;
+            });
+            renderAiContentList();
+        });
+    }
+
+    if (deselectAllBtn) {
+        deselectAllBtn.addEventListener('click', function () {
+            getVisibleAiContentItems().forEach(function (item) {
+                delete aiContentSelected[item.cmId];
+            });
+            renderAiContentList();
+        });
+    }
+
+    if (bulkDeleteBtn) {
+        bulkDeleteBtn.addEventListener('click', function () {
+            deleteSelectedAiContentItems();
+        });
+    }
+
+    document.addEventListener('click', function (e) {
+        if (!aiContentToolbar) return;
+        if (aiContentToolbar.contains(e.target)) return;
+        closeAiContentDropdowns();
+    });
+}
+
+bindAiContentDom();
+if (tabChatBtn) {
+    tabChatBtn.addEventListener('click', function () { setChatTab('chat'); });
+}
+if (tabAiContentBtn) {
+    tabAiContentBtn.addEventListener('click', function () { setChatTab('ai-content'); });
+}
+setChatTab('chat');
+
+// ===== display-settings.js =====
+// Part of the Syllentras chat widget.
+// Included inside the shared IIFE from before_footer.php — do not load standalone.
+
+var DISPLAY_THEME_KEY = 'syllentras_display_theme';
+var DISPLAY_FONT_SCALE_KEY = 'syllentras_display_font_scale';
+var DISPLAY_WALLPAPER_KEY = 'syllentras_display_wallpaper';
+
+var DISPLAY_THEMES = [
+    { id: 'default', label: 'Default' },
+    { id: 'high-contrast', label: 'High contrast' },
+    { id: 'dark', label: 'Dark' },
+    { id: 'soft', label: 'Soft' }
+];
+
+var DISPLAY_FONT_STEPS = [
+    { step: 1, scale: 1, label: 'Default' },
+    { step: 2, scale: 1.125, label: 'Large' },
+    { step: 3, scale: 1.25, label: 'Extra large' },
+    { step: 4, scale: 1.4, label: 'Largest' }
+];
+
+var displayBtn = document.getElementById('syllentras-display-btn');
+var displayMenu = document.getElementById('syllentras-display-menu');
+var displayWrap = displayBtn ? displayBtn.closest('.syllentras-display-wrap') : null;
+
+var selectedDisplayTheme = 'default';
+var selectedFontStep = 1;
+var wallpaperEnabled = true;
+var displayMenuBuilt = false;
+var displayFontValueEl = null;
+var displayFontSlider = null;
+var displaySpeechRateValueEl = null;
+var displaySpeechRateSlider = null;
+var displayDictationLangSelect = null;
+var displayWallpaperSwitch = null;
+
+function normalizeDisplayTheme(raw) {
+    for (var i = 0; i < DISPLAY_THEMES.length; i++) {
+        if (DISPLAY_THEMES[i].id === raw) return raw;
+    }
+    return 'default';
+}
+
+function normalizeFontStep(raw) {
+    var n = parseInt(raw, 10);
+    if (n >= 1 && n <= DISPLAY_FONT_STEPS.length) return n;
+    return 1;
+}
+
+function fontStepInfo(step) {
+    return DISPLAY_FONT_STEPS[normalizeFontStep(step) - 1];
+}
+
+function applyDisplaySettings() {
+    if (!root) return;
+    var info = fontStepInfo(selectedFontStep);
+    root.setAttribute('data-theme', selectedDisplayTheme);
+    root.setAttribute('data-font-scale', String(info.step));
+    root.setAttribute('data-wallpaper', wallpaperEnabled ? 'on' : 'off');
+    root.style.setProperty('--syll-font-scale', String(info.scale));
+}
+
+function saveDisplaySettings() {
+    try {
+        localStorage.setItem(DISPLAY_THEME_KEY, selectedDisplayTheme);
+        localStorage.setItem(DISPLAY_FONT_SCALE_KEY, String(selectedFontStep));
+        localStorage.setItem(DISPLAY_WALLPAPER_KEY, wallpaperEnabled ? '1' : '0');
+    } catch (e) { /* ignore quota / private mode */ }
+}
+
+function loadDisplaySettings() {
+    var themeRaw = null;
+    var fontRaw = null;
+    var wallpaperRaw = null;
+    try {
+        themeRaw = localStorage.getItem(DISPLAY_THEME_KEY);
+        fontRaw = localStorage.getItem(DISPLAY_FONT_SCALE_KEY);
+        wallpaperRaw = localStorage.getItem(DISPLAY_WALLPAPER_KEY);
+    } catch (e) {
+        themeRaw = null;
+        fontRaw = null;
+        wallpaperRaw = null;
+    }
+    selectedDisplayTheme = normalizeDisplayTheme(themeRaw);
+    selectedFontStep = normalizeFontStep(fontRaw);
+    // Missing key → on (default). Explicit "0" turns doodles off.
+    wallpaperEnabled = wallpaperRaw !== '0';
+    applyDisplaySettings();
+}
+
+function setWallpaperEnabled(on) {
+    wallpaperEnabled = !!on;
+    applyDisplaySettings();
+    saveDisplaySettings();
+    syncDisplayMenuUi();
+}
+
+function setDisplayTheme(themeId) {
+    selectedDisplayTheme = normalizeDisplayTheme(themeId);
+    applyDisplaySettings();
+    saveDisplaySettings();
+    syncDisplayMenuUi();
+}
+
+function setFontStep(step) {
+    selectedFontStep = normalizeFontStep(step);
+    applyDisplaySettings();
+    saveDisplaySettings();
+    syncDisplayMenuUi();
+}
+
+function resetDisplaySettings() {
+    selectedDisplayTheme = 'default';
+    selectedFontStep = 1;
+    wallpaperEnabled = true;
+    if (typeof resetSpeechSettings === 'function') {
+        resetSpeechSettings();
+    }
+    // Mic STT language goes back to English (US) with the rest of accessibility.
+    if (typeof resetDictationLanguage === 'function') {
+        resetDictationLanguage();
+    }
+    applyDisplaySettings();
+    saveDisplaySettings();
+    syncDisplayMenuUi();
+}
+
+function syncDisplayMenuUi() {
+    if (!displayMenuBuilt || !displayMenu) return;
+    var info = fontStepInfo(selectedFontStep);
+    if (displayFontValueEl) {
+        displayFontValueEl.textContent = info.label;
+    }
+    if (displayFontSlider) {
+        displayFontSlider.value = String(info.step);
+    }
+
+    if (typeof speechRateInfo === 'function' && typeof selectedSpeechRateStep !== 'undefined') {
+        var rateInfo = speechRateInfo(selectedSpeechRateStep);
+        if (displaySpeechRateValueEl) {
+            displaySpeechRateValueEl.textContent = rateInfo.label;
+        }
+        if (displaySpeechRateSlider) {
+            displaySpeechRateSlider.value = String(rateInfo.step);
+            displaySpeechRateSlider.setAttribute('aria-valuetext', rateInfo.label);
+        }
+    }
+
+    Array.from(displayMenu.querySelectorAll('.syllentras-display-theme-btn')).forEach(function (btn) {
+        var active = btn.dataset.themeId === selectedDisplayTheme;
+        btn.classList.toggle('selected', active);
+        btn.setAttribute('aria-pressed', active ? 'true' : 'false');
+    });
+
+    Array.from(displayMenu.querySelectorAll('.syllentras-display-voice-btn')).forEach(function (btn) {
+        var active = typeof selectedSpeechVoice !== 'undefined'
+            && btn.dataset.voiceId === selectedSpeechVoice;
+        btn.classList.toggle('selected', active);
+        btn.setAttribute('aria-pressed', active ? 'true' : 'false');
+    });
+
+    if (displayDictationLangSelect && typeof getDictationLang === 'function') {
+        displayDictationLangSelect.value = getDictationLang();
+    }
+
+    if (displayWallpaperSwitch) {
+        displayWallpaperSwitch.setAttribute('aria-checked', wallpaperEnabled ? 'true' : 'false');
+        displayWallpaperSwitch.classList.toggle('is-on', wallpaperEnabled);
+    }
+}
+
+function bindWallpaperSwitch(switchEl) {
+    var dragActive = false;
+    var dragStartX = 0;
+    var dragMoved = false;
+    var dragStartOn = false;
+    var skipClick = false;
+
+    switchEl.addEventListener('click', function (e) {
+        e.stopPropagation();
+        if (skipClick) {
+            skipClick = false;
+            return;
+        }
+        setWallpaperEnabled(!wallpaperEnabled);
+    });
+
+    switchEl.addEventListener('pointerdown', function (e) {
+        if (e.button != null && e.button !== 0) return;
+        e.stopPropagation();
+        dragActive = true;
+        dragMoved = false;
+        dragStartX = e.clientX;
+        dragStartOn = wallpaperEnabled;
+        switchEl.classList.add('is-dragging');
+        try {
+            switchEl.setPointerCapture(e.pointerId);
+        } catch (err) { /* older browsers */ }
+    });
+
+    switchEl.addEventListener('pointermove', function (e) {
+        if (!dragActive) return;
+        e.stopPropagation();
+        var dx = e.clientX - dragStartX;
+        if (Math.abs(dx) >= 4) dragMoved = true;
+        // Live preview while dragging past the midpoint of the track.
+        if (dx >= 10) {
+            switchEl.classList.add('is-on');
+            switchEl.setAttribute('aria-checked', 'true');
+        } else if (dx <= -10) {
+            switchEl.classList.remove('is-on');
+            switchEl.setAttribute('aria-checked', 'false');
+        } else {
+            switchEl.classList.toggle('is-on', dragStartOn);
+            switchEl.setAttribute('aria-checked', dragStartOn ? 'true' : 'false');
+        }
+    });
+
+    switchEl.addEventListener('pointerup', function (e) {
+        if (!dragActive) return;
+        e.stopPropagation();
+        dragActive = false;
+        switchEl.classList.remove('is-dragging');
+        var dx = e.clientX - dragStartX;
+        if (dragMoved && Math.abs(dx) >= 12) {
+            skipClick = true;
+            setWallpaperEnabled(dx > 0);
+        } else if (dragMoved) {
+            // Tiny drag — snap UI back; click may still toggle if it fires.
+            syncDisplayMenuUi();
+        }
+        // Pure tap: leave skipClick false so the following click toggles.
+    });
+
+    switchEl.addEventListener('pointercancel', function () {
+        dragActive = false;
+        switchEl.classList.remove('is-dragging');
+        syncDisplayMenuUi();
+    });
+
+    switchEl.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            e.stopPropagation();
+            setWallpaperEnabled(!wallpaperEnabled);
+        } else if (e.key === 'ArrowRight') {
+            e.preventDefault();
+            e.stopPropagation();
+            setWallpaperEnabled(true);
+        } else if (e.key === 'ArrowLeft') {
+            e.preventDefault();
+            e.stopPropagation();
+            setWallpaperEnabled(false);
+        }
+    });
+}
+
+function buildDisplayMenu() {
+    if (!displayMenu || displayMenuBuilt) return;
+    displayMenu.innerHTML = '';
+
+    var fontSection = document.createElement('div');
+    fontSection.className = 'syllentras-display-section';
+
+    var fontLabel = document.createElement('div');
+    fontLabel.className = 'syllentras-display-label';
+    fontLabel.textContent = 'Font size';
+    fontSection.appendChild(fontLabel);
+
+    displayFontValueEl = document.createElement('div');
+    displayFontValueEl.className = 'syllentras-display-value';
+    displayFontValueEl.id = 'syllentras-display-font-value';
+    fontSection.appendChild(displayFontValueEl);
+
+    displayFontSlider = document.createElement('input');
+    displayFontSlider.type = 'range';
+    displayFontSlider.className = 'syllentras-display-slider';
+    displayFontSlider.min = '1';
+    displayFontSlider.max = String(DISPLAY_FONT_STEPS.length);
+    displayFontSlider.step = '1';
+    displayFontSlider.setAttribute('aria-label', 'Font size');
+    displayFontSlider.setAttribute('aria-valuetext', fontStepInfo(selectedFontStep).label);
+    displayFontSlider.addEventListener('input', function () {
+        setFontStep(displayFontSlider.value);
+        displayFontSlider.setAttribute('aria-valuetext', fontStepInfo(selectedFontStep).label);
+    });
+    displayFontSlider.addEventListener('click', function (e) {
+        e.stopPropagation();
+    });
+    fontSection.appendChild(displayFontSlider);
+    displayMenu.appendChild(fontSection);
+
+    // Voice + speed when read-aloud works (Azure cloud and/or browser TTS).
+    if (typeof speechSupported === 'function' && speechSupported()
+        && typeof SPEECH_VOICES !== 'undefined'
+        && typeof SPEECH_RATE_STEPS !== 'undefined') {
+        var voiceSection = document.createElement('div');
+        voiceSection.className = 'syllentras-display-section';
+
+        var voiceLabel = document.createElement('div');
+        voiceLabel.className = 'syllentras-display-label';
+        voiceLabel.textContent = 'Voice';
+        voiceSection.appendChild(voiceLabel);
+
+        var voiceList = document.createElement('div');
+        voiceList.className = 'syllentras-display-theme-list';
+        voiceList.setAttribute('role', 'group');
+        voiceList.setAttribute('aria-label', 'Read aloud voice');
+
+        SPEECH_VOICES.forEach(function (voice) {
+            var btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'syllentras-display-theme-btn syllentras-display-voice-btn';
+            btn.dataset.voiceId = voice.id;
+            btn.textContent = voice.label;
+            btn.addEventListener('click', function (e) {
+                e.stopPropagation();
+                setSpeechVoicePreference(voice.id);
+                syncDisplayMenuUi();
+            });
+            voiceList.appendChild(btn);
+        });
+        voiceSection.appendChild(voiceList);
+        displayMenu.appendChild(voiceSection);
+
+        var rateSection = document.createElement('div');
+        rateSection.className = 'syllentras-display-section';
+
+        var rateLabel = document.createElement('div');
+        rateLabel.className = 'syllentras-display-label';
+        rateLabel.textContent = 'Speech speed';
+        rateSection.appendChild(rateLabel);
+
+        displaySpeechRateValueEl = document.createElement('div');
+        displaySpeechRateValueEl.className = 'syllentras-display-value';
+        displaySpeechRateValueEl.id = 'syllentras-display-speech-rate-value';
+        rateSection.appendChild(displaySpeechRateValueEl);
+
+        displaySpeechRateSlider = document.createElement('input');
+        displaySpeechRateSlider.type = 'range';
+        displaySpeechRateSlider.className = 'syllentras-display-slider';
+        displaySpeechRateSlider.min = '1';
+        displaySpeechRateSlider.max = String(SPEECH_RATE_STEPS.length);
+        displaySpeechRateSlider.step = '1';
+        displaySpeechRateSlider.setAttribute('aria-label', 'Speech speed');
+        displaySpeechRateSlider.setAttribute(
+            'aria-valuetext',
+            speechRateInfo(selectedSpeechRateStep).label
+        );
+        displaySpeechRateSlider.addEventListener('input', function () {
+            setSpeechRateStep(displaySpeechRateSlider.value);
+            displaySpeechRateSlider.setAttribute(
+                'aria-valuetext',
+                speechRateInfo(selectedSpeechRateStep).label
+            );
+            syncDisplayMenuUi();
+        });
+        displaySpeechRateSlider.addEventListener('click', function (e) {
+            e.stopPropagation();
+        });
+        rateSection.appendChild(displaySpeechRateSlider);
+        displayMenu.appendChild(rateSection);
+    }
+
+    // Mic language — only when the browser can do speech-to-text.
+    if (typeof speechRecognitionSupported === 'function' && speechRecognitionSupported()
+        && typeof DICTATION_LANGUAGES !== 'undefined') {
+        var micLangSection = document.createElement('div');
+        micLangSection.className = 'syllentras-display-section';
+
+        var micLangLabel = document.createElement('div');
+        micLangLabel.className = 'syllentras-display-label';
+        micLangLabel.textContent = 'Mic language';
+        micLangSection.appendChild(micLangLabel);
+
+        var micLangHint = document.createElement('div');
+        micLangHint.className = 'syllentras-display-hint';
+        micLangHint.textContent = 'Language the microphone listens for';
+        micLangSection.appendChild(micLangHint);
+
+        // Wrap the select so we can draw a chevron that matches light/dark themes.
+        var micLangWrap = document.createElement('div');
+        micLangWrap.className = 'syllentras-display-select-wrap';
+
+        displayDictationLangSelect = document.createElement('select');
+        displayDictationLangSelect.className = 'syllentras-display-select';
+        displayDictationLangSelect.id = 'syllentras-display-dictation-lang';
+        displayDictationLangSelect.setAttribute('aria-label', 'Microphone speech-to-text language');
+        DICTATION_LANGUAGES.forEach(function (lang) {
+            var opt = document.createElement('option');
+            opt.value = lang.id;
+            opt.textContent = lang.label;
+            displayDictationLangSelect.appendChild(opt);
+        });
+        if (typeof getDictationLang === 'function') {
+            displayDictationLangSelect.value = getDictationLang();
+        }
+        displayDictationLangSelect.addEventListener('change', function () {
+            if (typeof setDictationLang === 'function') {
+                setDictationLang(displayDictationLangSelect.value);
+            }
+        });
+        displayDictationLangSelect.addEventListener('click', function (e) {
+            e.stopPropagation();
+        });
+        micLangWrap.appendChild(displayDictationLangSelect);
+        micLangSection.appendChild(micLangWrap);
+        displayMenu.appendChild(micLangSection);
+    }
+
+    var themeSection = document.createElement('div');
+    themeSection.className = 'syllentras-display-section';
+
+    var themeLabel = document.createElement('div');
+    themeLabel.className = 'syllentras-display-label';
+    themeLabel.textContent = 'Theme';
+    themeSection.appendChild(themeLabel);
+
+    var themeList = document.createElement('div');
+    themeList.className = 'syllentras-display-theme-list';
+    themeList.setAttribute('role', 'group');
+    themeList.setAttribute('aria-label', 'Color theme');
+
+    DISPLAY_THEMES.forEach(function (theme) {
+        var btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'syllentras-display-theme-btn';
+        btn.dataset.themeId = theme.id;
+        btn.textContent = theme.label;
+        btn.addEventListener('click', function (e) {
+            e.stopPropagation();
+            setDisplayTheme(theme.id);
+        });
+        themeList.appendChild(btn);
+    });
+    themeSection.appendChild(themeList);
+    displayMenu.appendChild(themeSection);
+
+    var wallpaperSection = document.createElement('div');
+    wallpaperSection.className = 'syllentras-display-section';
+
+    var wallpaperRow = document.createElement('div');
+    wallpaperRow.className = 'syllentras-display-switch-row';
+
+    var wallpaperCopy = document.createElement('div');
+    wallpaperCopy.className = 'syllentras-display-switch-copy';
+    var wallpaperLabel = document.createElement('div');
+    wallpaperLabel.className = 'syllentras-display-label';
+    wallpaperLabel.id = 'syllentras-display-wallpaper-label';
+    wallpaperLabel.textContent = 'Background doodles';
+    wallpaperLabel.style.marginBottom = '0';
+    wallpaperCopy.appendChild(wallpaperLabel);
+
+    displayWallpaperSwitch = document.createElement('button');
+    displayWallpaperSwitch.type = 'button';
+    displayWallpaperSwitch.className = 'syllentras-display-switch';
+    displayWallpaperSwitch.setAttribute('role', 'switch');
+    displayWallpaperSwitch.setAttribute('aria-labelledby', 'syllentras-display-wallpaper-label');
+    var track = document.createElement('span');
+    track.className = 'syllentras-display-switch-track';
+    track.setAttribute('aria-hidden', 'true');
+    var thumb = document.createElement('span');
+    thumb.className = 'syllentras-display-switch-thumb';
+    track.appendChild(thumb);
+    displayWallpaperSwitch.appendChild(track);
+    bindWallpaperSwitch(displayWallpaperSwitch);
+
+    wallpaperRow.appendChild(wallpaperCopy);
+    wallpaperRow.appendChild(displayWallpaperSwitch);
+    wallpaperSection.appendChild(wallpaperRow);
+    displayMenu.appendChild(wallpaperSection);
+
+    var resetSection = document.createElement('div');
+    resetSection.className = 'syllentras-display-section';
+    var resetBtn = document.createElement('button');
+    resetBtn.type = 'button';
+    resetBtn.className = 'syllentras-display-reset';
+    resetBtn.textContent = 'Reset';
+    resetBtn.addEventListener('click', function (e) {
+        e.stopPropagation();
+        resetDisplaySettings();
+    });
+    resetSection.appendChild(resetBtn);
+    displayMenu.appendChild(resetSection);
+
+    displayMenu.addEventListener('click', function (e) {
+        e.stopPropagation();
+    });
+    // Stop the chat body from eating the wheel so this menu can actually scroll.
+    displayMenu.addEventListener('wheel', function (e) {
+        e.stopPropagation();
+    }, { passive: true });
+
+    displayMenuBuilt = true;
+    syncDisplayMenuUi();
+}
+
+function closeDisplayMenu() {
+    if (!displayMenu || !displayBtn) return;
+    displayMenu.hidden = true;
+    displayBtn.setAttribute('aria-expanded', 'false');
+}
+
+function fitDisplayMenuInPanel() {
+    if (!displayMenu || !displayBtn) return;
+    var panel = document.getElementById('syllentras-chat-panel');
+    if (!panel) return;
+    // Panel uses overflow:hidden, so if the menu is taller than the room under
+    // the Aa button it just gets chopped. Cap height to whatever still fits.
+    var panelRect = panel.getBoundingClientRect();
+    var btnRect = displayBtn.getBoundingClientRect();
+    var room = Math.floor(panelRect.bottom - btnRect.bottom - 12);
+    var capped = Math.max(160, Math.min(room, 320));
+    displayMenu.style.maxHeight = capped + 'px';
+}
+
+function openDisplayMenu() {
+    if (!displayMenu || !displayBtn) return;
+    if (typeof closeToolsMenu === 'function') closeToolsMenu();
+    if (typeof closeProviderMenu === 'function') closeProviderMenu();
+    if (typeof closeModeMenu === 'function') closeModeMenu();
+    buildDisplayMenu();
+    displayMenu.hidden = false;
+    displayBtn.setAttribute('aria-expanded', 'true');
+    fitDisplayMenuInPanel();
+}
+
+function toggleDisplayMenu(e) {
+    if (e) e.stopPropagation();
+    if (!displayMenu) return;
+    if (displayMenu.hidden) {
+        openDisplayMenu();
+    } else {
+        closeDisplayMenu();
+    }
+}
+
+function initDisplaySettings() {
+    loadDisplaySettings();
+    if (!displayBtn || !displayMenu) return;
+    displayBtn.addEventListener('click', toggleDisplayMenu);
+}
+
+initDisplaySettings();
+
+document.addEventListener('click', function (e) {
+    if (!displayMenu || displayMenu.hidden) return;
+    if (displayMenu.contains(e.target)) return;
+    if (displayWrap && displayWrap.contains(e.target)) return;
+    closeDisplayMenu();
+});
+
+document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape') {
+        closeDisplayMenu();
+    }
+});
+
+window.addEventListener('resize', function () {
+    if (displayMenu && !displayMenu.hidden) {
+        fitDisplayMenuInPanel();
+        return;
+    }
+    closeDisplayMenu();
+});
+
+// ===== cross-tab-sync.js =====
+// Part of the Syllentras chat widget.
+// Included inside the shared IIFE from before_footer.php — do not load standalone.
+
+var CHAT_SYNC_DEBOUNCE_MS = 200;
+var CHAT_SYNC_VISIBILITY_STALE_MS = 3000;
+
+var chatSyncChannel = null;
+var chatSyncDebounceTimer = null;
+var chatSyncPendingTypes = Object.create(null);
+var chatSyncPendingConversationId = null;
+var peerRefreshQueued = false;
+var lastChatSyncAt = 0;
+/** Peer-driven mid-turn lock (other tab started a turn). */
+var peerTurnActive = false;
+
+function chatSyncChannelName() {
+    return 'syllentras-chat-' + String(moodleUserId || '');
+}
+
+function markChatSyncNow() {
+    lastChatSyncAt = Date.now();
+}
+
+function broadcastChatSync(type, conversationId) {
+    if (!type) return;
+    markChatSyncNow();
+    if (!chatSyncChannel) return;
+    try {
+        chatSyncChannel.postMessage({
+            type: String(type),
+            courseId: courseId,
+            conversationId: conversationId || null,
+            at: lastChatSyncAt
+        });
+    } catch (e) {
+        // Ignore closed / unsupported channel failures.
+    }
+}
+
+function refreshAiContentIfNeeded() {
+    if (typeof refreshAiContentList === 'function'
+        && typeof isAiContentTabActive === 'function'
+        && isAiContentTabActive()) {
+        refreshAiContentList();
+    }
+}
+
+function setPeerTurnGenerating(busy) {
+    peerTurnActive = !!busy;
+    if (typeof setGeneratingState === 'function') {
+        setGeneratingState(peerTurnActive, { fromPeer: true });
+    } else if (typeof refreshGeneratingChrome === 'function') {
+        refreshGeneratingChrome();
+    } else if (typeof updateComposerLock === 'function') {
+        updateComposerLock();
+    } else if (send) {
+        send.disabled = peerTurnActive
+            || (typeof isConversationGenerating === 'function' && isConversationGenerating(conversationId));
+    }
+}
+
+function isLocalTurnForActiveChat() {
+    return typeof isConversationGenerating === 'function'
+        && isConversationGenerating(conversationId);
+}
+
+function ensurePeerThinkingPlaceholder() {
+    if (!msgs || typeof appendMessage !== 'function') return null;
+    var nodes = msgs.querySelectorAll('.syllentras-msg');
+    var last = nodes.length ? nodes[nodes.length - 1] : null;
+    if (last && last.classList.contains('assistant')) {
+        var text = (last.textContent || '').trim();
+        if (text === '...' || last.dataset.peerThinking === '1') {
+            last.dataset.peerThinking = '1';
+            return last;
+        }
+    }
+    if (last && last.classList.contains('user')) {
+        var loadingEl = appendMessage('assistant', '...', {
+            forceScroll: true,
+            skipTimeline: true
+        });
+        loadingEl.dataset.peerThinking = '1';
+        if (typeof rebuildChatTimeline === 'function') {
+            rebuildChatTimeline();
+        }
+        return loadingEl;
+    }
+    return null;
+}
+
+function reloadActiveConversationFromPeer(options) {
+    options = options || {};
+    if (!conversationId || typeof clearMessages !== 'function' || typeof loadCurrentHistory !== 'function') {
+        return Promise.resolve();
+    }
+    if (loadingHistory) {
+        peerRefreshQueued = true;
+        return Promise.resolve();
+    }
+
+    var stick = !!pinnedToBottom;
+    clearMessages();
+    pinnedToBottom = stick;
+    if (typeof beginMessageListSettle === 'function') {
+        beginMessageListSettle();
+    }
+    hasMore = false;
+    loadingHistory = false;
+
+    return loadCurrentHistory({ deferScroll: !stick }).then(function () {
+        if (options.showThinking || peerTurnActive) {
+            ensurePeerThinkingPlaceholder();
+        }
+        refreshAiContentIfNeeded();
+        markChatSyncNow();
+    });
+}
+
+function queueOrReloadActiveConversationFromPeer(options) {
+    // Local in-flight send already owns the optimistic UI — don't wipe it.
+    if (isLocalTurnForActiveChat() && !peerTurnActive) {
+        peerRefreshQueued = true;
+        return Promise.resolve();
+    }
+    return reloadActiveConversationFromPeer(options);
+}
+
+function flushPeerSyncQueue() {
+    if (!peerRefreshQueued) return;
+    if (isLocalTurnForActiveChat() && !peerTurnActive) {
+        return;
+    }
+    peerRefreshQueued = false;
+    reloadActiveConversationFromPeer({ showThinking: peerTurnActive });
+}
+
+function applyPeerTurnStarted(eventConversationId) {
+    var sameConversation = !!(conversationId && eventConversationId
+        && String(conversationId) === String(eventConversationId));
+    if (!sameConversation) {
+        if (typeof loadConversations === 'function') {
+            loadConversations();
+        }
+        return;
+    }
+    // This tab is already the sender — BroadcastChannel does not echo, but
+    // guard anyway if generating locally without peerTurnActive.
+    if (isLocalTurnForActiveChat() && !peerTurnActive) {
+        return;
+    }
+    setPeerTurnGenerating(true);
+    queueOrReloadActiveConversationFromPeer({ showThinking: true });
+}
+
+function applyPeerTurnFinished(eventConversationId) {
+    var sameConversation = !!(conversationId && eventConversationId
+        && String(conversationId) === String(eventConversationId));
+    if (peerTurnActive) {
+        setPeerTurnGenerating(false);
+    }
+    if (!sameConversation) {
+        if (typeof loadConversations === 'function') {
+            loadConversations();
+        }
+        return;
+    }
+    if (isLocalTurnForActiveChat() && !peerTurnActive) {
+        peerRefreshQueued = true;
+        return;
+    }
+    queueOrReloadActiveConversationFromPeer({ showThinking: false });
+}
+
+function flushPendingChatSyncTypes() {
+    var types = chatSyncPendingTypes;
+    var eventConversationId = chatSyncPendingConversationId;
+    chatSyncPendingTypes = Object.create(null);
+    chatSyncPendingConversationId = null;
+
+    var sameConversation = !!(conversationId && eventConversationId
+        && String(conversationId) === String(eventConversationId));
+
+    markChatSyncNow();
+
+    // Turn lifecycle takes precedence within the debounce window.
+    if (types['turn-finished']) {
+        applyPeerTurnFinished(eventConversationId);
+        if (types['conversation-list-changed'] && typeof loadConversations === 'function') {
+            loadConversations();
+        }
+        return;
+    }
+    if (types['turn-started']) {
+        applyPeerTurnStarted(eventConversationId);
+        if (types['conversation-list-changed'] && typeof loadConversations === 'function') {
+            loadConversations();
+        }
+        return;
+    }
+
+    var needsList = !!types['conversation-list-changed'];
+    var needsHistory = !!(types['messages-updated'] || types['pending-action-changed']
+        || (types['conversation-list-changed'] && sameConversation));
+
+    if (needsList && typeof loadConversations === 'function') {
+        loadConversations();
+    }
+    if (needsHistory && sameConversation) {
+        queueOrReloadActiveConversationFromPeer({ showThinking: peerTurnActive });
+    } else if (!needsList && needsHistory && !sameConversation && typeof loadConversations === 'function') {
+        loadConversations();
+    }
+}
+
+function scheduleChatSyncApply(event) {
+    if (!event || !event.type) return;
+    if (event.courseId != null && String(event.courseId) !== String(courseId)) return;
+
+    chatSyncPendingTypes[event.type] = true;
+    if (event.conversationId) {
+        chatSyncPendingConversationId = event.conversationId;
+    }
+
+    if (chatSyncDebounceTimer) {
+        clearTimeout(chatSyncDebounceTimer);
+    }
+    chatSyncDebounceTimer = setTimeout(function () {
+        chatSyncDebounceTimer = null;
+        flushPendingChatSyncTypes();
+    }, CHAT_SYNC_DEBOUNCE_MS);
+}
+
+function onChatSyncMessage(messageEvent) {
+    var data = messageEvent && messageEvent.data;
+    if (!data || typeof data !== 'object' || !data.type) return;
+    scheduleChatSyncApply(data);
+}
+
+function onChatSyncVisibilityChange() {
+    if (document.visibilityState !== 'visible') return;
+    if (!conversationId) return;
+    if (Date.now() - lastChatSyncAt < CHAT_SYNC_VISIBILITY_STALE_MS) return;
+    queueOrReloadActiveConversationFromPeer({ showThinking: peerTurnActive });
+}
+
+/** After history load: if server says a turn is mid-flight, show thinking UI. */
+function applyGeneratingStateFromHistoryPage(page) {
+    if (!page || !page.generatingStartedAt) return;
+    if (isLocalTurnForActiveChat() && !peerTurnActive) {
+        // Switched back to a chat that is still generating locally — restore "...".
+        ensurePeerThinkingPlaceholder();
+        return;
+    }
+    setPeerTurnGenerating(true);
+    ensurePeerThinkingPlaceholder();
+}
+
+function initCrossTabSync() {
+    if (typeof BroadcastChannel === 'function' && moodleUserId) {
+        try {
+            chatSyncChannel = new BroadcastChannel(chatSyncChannelName());
+            chatSyncChannel.addEventListener('message', onChatSyncMessage);
+        } catch (e) {
+            chatSyncChannel = null;
+        }
+    }
+
+    document.addEventListener('visibilitychange', onChatSyncVisibilityChange);
+    markChatSyncNow();
+}
+
+// ===== wiring.js =====
+// Part of the Syllentras chat widget.
+// Included inside the shared IIFE from before_footer.php — do not load standalone.
+
+expandBtn.addEventListener('click', function () {
+    if (!isExpanded) savePanelLayout();
+    isExpanded = !isExpanded;
+    localStorage.setItem('syllentras_expanded', isExpanded ? '1' : '0');
+    applyExpandedState(isExpanded);
+});
+
+resetBtn.addEventListener('click', resetPanelLayout);
+
+btn.addEventListener('click', function () {
+    openLastOrGeneralConversation();
+});
+
+close.addEventListener('click', function () {
+    if (typeof saveConversationScrollPosition === 'function' && conversationId) {
+        saveConversationScrollPosition(conversationId);
+    }
+    panel.hidden = true;
+    btn.hidden = false;
+    if (typeof stopDictation === 'function') {
+        stopDictation();
+    }
+});
+
+input.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        sendMessage();
+    }
+});
+
+send.addEventListener('click', sendMessage);
+newBtn.addEventListener('click', showNewConversationPrompt);
+searchInput.addEventListener('input', function () {
+    searchConversations(searchInput.value);
+});
+
+msgs.addEventListener('scroll', function () {
+    if (typeof syncPinnedToBottomFromScroll === 'function') {
+        syncPinnedToBottomFromScroll();
+    }
+    if (typeof saveConversationScrollPosition === 'function' && conversationId) {
+        saveConversationScrollPosition(conversationId);
+    }
+    if (msgs.scrollTop === 0 && hasMore && !loadingOlder) {
+        loadOlderMessages();
+    }
+});
+
+if (scrollBottomBtn) {
+    scrollBottomBtn.addEventListener('click', function () {
+        scrollToBottom({ smooth: true });
+    });
+}
+
+header.addEventListener('pointerdown', function (e) {
+    if (isMobileLayout() || e.button !== 0 || e.target.closest('button') || e.target.closest('.syllentras-display-wrap') || e.target.closest('.syllentras-panel-resize-handle')) return;
+
+    var rect = panel.getBoundingClientRect();
+    isDraggingPanel = true;
+    dragOffsetX = e.clientX - rect.left;
+    dragOffsetY = e.clientY - rect.top;
+    setPanelRect(normalizePanelRect({
+        left: rect.left,
+        top: rect.top,
+        width: rect.width,
+        height: rect.height
+    }));
+    e.preventDefault();
+});
+
+document.addEventListener('pointermove', function (e) {
+    if (isResizingPanel && resizeStartRect && resizeEdge) {
+        var dx = e.clientX - resizeStartX;
+        var dy = e.clientY - resizeStartY;
+        var maxWidth = Math.max(1, window.innerWidth - PANEL_MARGIN * 2);
+        var maxHeight = Math.max(1, window.innerHeight - PANEL_MARGIN * 2);
+        var minWidth = Math.min(PANEL_MIN_WIDTH, maxWidth);
+        var minHeight = Math.min(PANEL_MIN_HEIGHT, maxHeight);
+        var next = {
+            left: resizeStartRect.left,
+            top: resizeStartRect.top,
+            width: resizeStartRect.width,
+            height: resizeStartRect.height
+        };
+        var right = resizeStartRect.left + resizeStartRect.width;
+        var bottom = resizeStartRect.top + resizeStartRect.height;
+
+        if (resizeEdge.indexOf('e') !== -1) {
+            next.width = clamp(
+                resizeStartRect.width + dx,
+                minWidth,
+                Math.max(minWidth, window.innerWidth - resizeStartRect.left - PANEL_MARGIN)
+            );
+        }
+        if (resizeEdge.indexOf('w') !== -1) {
+            next.left = clamp(resizeStartRect.left + dx, PANEL_MARGIN, right - minWidth);
+            next.width = right - next.left;
+        }
+        if (resizeEdge.indexOf('s') !== -1) {
+            next.height = clamp(
+                resizeStartRect.height + dy,
+                minHeight,
+                Math.max(minHeight, window.innerHeight - resizeStartRect.top - PANEL_MARGIN)
+            );
+        }
+        if (resizeEdge.indexOf('n') !== -1) {
+            next.top = clamp(resizeStartRect.top + dy, PANEL_MARGIN, bottom - minHeight);
+            next.height = bottom - next.top;
+        }
+
+        setPanelRect(normalizePanelRect(next));
+        return;
+    }
+
+    if (!isDraggingPanel) return;
+    setPanelRect(normalizePanelRect({
+        left: e.clientX - dragOffsetX,
+        top: e.clientY - dragOffsetY,
+        width: panel.offsetWidth,
+        height: panel.offsetHeight
+    }));
+});
+
+document.addEventListener('pointerup', function () {
+    if (isResizingPanel) {
+        isResizingPanel = false;
+        resizeEdge = null;
+        resizeStartRect = null;
+        savePanelLayout();
+        return;
+    }
+    if (!isDraggingPanel) return;
+    isDraggingPanel = false;
+    savePanelLayout();
+});
+
+Array.prototype.forEach.call(panel.querySelectorAll('.syllentras-panel-resize-handle'), function (handle) {
+    handle.addEventListener('pointerdown', function (e) {
+        if (isMobileLayout() || e.button !== 0) return;
+        var rect = panel.getBoundingClientRect();
+        isResizingPanel = true;
+        resizeEdge = handle.getAttribute('data-edge');
+        resizeStartX = e.clientX;
+        resizeStartY = e.clientY;
+        resizeStartRect = {
+            left: rect.left,
+            top: rect.top,
+            width: rect.width,
+            height: rect.height
+        };
+        setPanelRect(normalizePanelRect(resizeStartRect));
+        if (handle.setPointerCapture) handle.setPointerCapture(e.pointerId);
+        e.preventDefault();
+        e.stopPropagation();
+    });
+});
+
+sidebarResizer.addEventListener('pointerdown', function (e) {
+    if (isMobileLayout()) return;
+    isResizingSidebar = true;
+    sidebarResizer.classList.add('resizing');
+    e.preventDefault();
+});
+
+document.addEventListener('pointermove', function (e) {
+    if (!isResizingSidebar) return;
+    var sidebarRect = sidebar.getBoundingClientRect();
+    setSidebarWidth(e.clientX - sidebarRect.left);
+});
+
+document.addEventListener('pointerup', function () {
+    if (!isResizingSidebar) return;
+    isResizingSidebar = false;
+    sidebarResizer.classList.remove('resizing');
+    saveSidebarWidth();
+});
+
+inputResizer.addEventListener('pointerdown', function (e) {
+    if (e.button !== 0) return;
+    isResizingInput = true;
+    inputResizeStartY = e.clientY;
+    inputResizeStartHeight = input.getBoundingClientRect().height;
+    inputResizer.classList.add('resizing');
+    if (inputResizer.setPointerCapture) inputResizer.setPointerCapture(e.pointerId);
+    e.preventDefault();
+});
+
+document.addEventListener('pointermove', function (e) {
+    if (!isResizingInput) return;
+    // Dragging the divider up grows the input; down shrinks it.
+    setInputHeight(inputResizeStartHeight - (e.clientY - inputResizeStartY));
+});
+
+document.addEventListener('pointerup', function () {
+    if (!isResizingInput) return;
+    isResizingInput = false;
+    inputResizer.classList.remove('resizing');
+    saveInputHeight();
+});
+
+document.addEventListener('click', function (e) {
+    if (openMenu && !openMenu.contains(e.target) && !e.target.closest('.syllentras-conversation-menu-btn')) {
+        closeConversationMenu();
+    }
+    if (openToolsMenu && !openToolsMenu.contains(e.target) && !(toolsWrap && toolsWrap.contains(e.target))) {
+        closeToolsMenu();
+    }
+    if (typeof closeModeMenu === 'function' &&
+        openModeMenu &&
+        !openModeMenu.contains(e.target) &&
+        !e.target.closest('#syllentras-mode-btn') &&
+        !e.target.closest('.syllentras-mode-wrap')) {
+        closeModeMenu();
+    }
+    if (typeof closeAiContentMenu === 'function' &&
+        aiContentOpenMenu &&
+        !aiContentOpenMenu.contains(e.target) &&
+        !e.target.closest('.syllentras-ai-content-menu-btn')) {
+        closeAiContentMenu();
+    }
+});
+
+modal.addEventListener('click', function (e) {
+    if (e.target === modal) closeModal();
+});
+
+document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape') {
+        closeConversationMenu();
+        closeToolsMenu();
+        if (typeof closeModeMenu === 'function') closeModeMenu();
+        if (typeof closeDisplayMenu === 'function') closeDisplayMenu();
+        if (typeof closeAiContentMenu === 'function') closeAiContentMenu();
+        if (!modal.hidden) closeModal();
+    }
+});
+
+window.addEventListener('resize', function () {
+    closeToolsMenu();
+    if (typeof closeModeMenu === 'function') closeModeMenu();
+    if (typeof closeDisplayMenu === 'function') closeDisplayMenu();
+    clampCurrentPanelLayout();
+});
+
+if (window.ResizeObserver) {
+    new ResizeObserver(function () {
+        if (!isDraggingPanel && !isResizingPanel) clampCurrentPanelLayout();
+    }).observe(panel);
+} else {
+    panel.addEventListener('mouseup', scheduleLayoutSave);
+}
+
+applyExpandedState();
+applyStoredSidebarWidth();
+applyStoredInputHeight();
+initAttachments();
+initToolsMenu();
+initModeSelector();
+bindMessageSearchUi();
+loadProviders();
+loadAzureSpeechConfig();
+loadConversations();
+installSectionButtons();
+if (typeof initCrossTabSync === 'function') {
+    initCrossTabSync();
+}
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', installSectionButtons);
+}
+// Some Moodle course formats finish rendering section markup after this footer hook runs.
+window.setTimeout(installSectionButtons, 500);
+
+})();

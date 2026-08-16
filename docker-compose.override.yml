@@ -66,9 +66,29 @@ services:
       DATABASE_URL: ${DATABASE_URL}
       MOODLE_INTERNAL_URL: ${MOODLE_INTERNAL_URL:-http://webserver}
       MOODLE_INTERNAL_HOST: ${MOODLE_INTERNAL_HOST:-localhost:8000}
+      # Browser-facing Moodle origin (set by `dev tunnel`; leave empty for local).
+      MOODLE_PUBLIC_URL: ${MOODLE_PUBLIC_URL:-}
       MOODLE_TOKEN: ${MOODLE_TOKEN}
-      GEMINI_API_KEY: ${GEMINI_API_KEY}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      XAI_API_KEY: ${XAI_API_KEY:-}
+      MISTRAL_API_KEY: ${MISTRAL_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-}
+      GEMINI_MODEL: ${GEMINI_MODEL:-}
+      ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-}
+      XAI_MODEL: ${XAI_MODEL:-}
+      MISTRAL_MODEL: ${MISTRAL_MODEL:-}
       CORS_ORIGIN: ${CORS_ORIGIN}
+      # Temporary: log second-turn chat pipeline as [GREETING_DEBUG]
+      CHAT_GREETING_DEBUG: "0"
+      ATTACHMENT_STORAGE_PATH: /app/uploads
+      ATTACHMENT_USER_QUOTA_BYTES: ${ATTACHMENT_USER_QUOTA_BYTES:-2147483648}
+      ATTACHMENT_ABANDONED_HOURS: ${ATTACHMENT_ABANDONED_HOURS:-24}
+      ATTACHMENT_RETENTION_DAYS: ${ATTACHMENT_RETENTION_DAYS:-30}
+      AZURE_TTS_ENABLED: ${AZURE_TTS_ENABLED:-false}
+      AZURE_SPEECH_KEY: ${AZURE_SPEECH_KEY:-}
+      AZURE_SPEECH_REGION: ${AZURE_SPEECH_REGION:-}
     ports:
       - "${API_PORT:-3000}:3000"
       # Node.js inspector port — VS Code "Attach: NestJS API" connects here.
@@ -78,6 +98,8 @@ services:
       - ./api:/app
       # Isolate node_modules inside the container (avoids Windows path issues).
       - api_node_modules:/app/node_modules
+      # Persistent chat attachment binaries (not Postgres).
+      - api_uploads:/app/uploads
     depends_on:
       postgres:
         condition: service_healthy
@@ -85,5 +107,6 @@ services:
 volumes:
   pgdata:
   api_node_modules:
+  api_uploads:
   mariadb_data:
   moodledata:

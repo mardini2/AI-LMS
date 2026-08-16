@@ -6,6 +6,7 @@
 
 # ── Environment secrets ───────────────────────────────────────────────────────
 .env
+.tunnel-state
 
 # ── Node / NestJS ─────────────────────────────────────────────────────────────
 node_modules/
@@ -23,6 +24,7 @@ desktop.ini
 
 # ── Docker volumes (if accidentally created locally) ──────────────────────────
 pgdata/
+api/uploads/
 
 # ── Logs ──────────────────────────────────────────────────────────────────────
 *.log

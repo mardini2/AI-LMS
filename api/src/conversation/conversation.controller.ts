@@ -112,11 +112,10 @@ export class ConversationController {
   }
 
   @Delete(':id')
-  async delete(
+  delete(
     @Param('id', ParseUUIDPipe) id: string,
     @Query() query: DeleteConversationQueryDto,
   ) {
-    await this.conversationService.deleteConversation(id, query.moodleUserId);
-    return { deleted: true };
+    return this.conversationService.deleteConversation(id, query.moodleUserId);
   }
 }

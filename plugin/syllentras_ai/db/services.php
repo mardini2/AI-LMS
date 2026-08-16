@@ -2,6 +2,89 @@
 
 defined('MOODLE_INTERNAL') || die();
 
+$functions = [
+    'local_syllentras_ai_ensure_student_placement' => [
+        'classname' => 'local_syllentras_ai\external\ensure_student_placement',
+        'methodname' => 'execute',
+        'description' => 'Ensure the shared AI Content section and a private per-student group exist',
+        'type' => 'write',
+        'capabilities' => 'local/syllentras_ai:manageplacement',
+        'ajax' => false,
+    ],
+    'local_syllentras_ai_create_practice_quiz' => [
+        'classname' => 'local_syllentras_ai\external\create_practice_quiz',
+        'methodname' => 'execute',
+        'description' => 'Create a private practice quiz in the AI Content section for one student',
+        'type' => 'write',
+        'capabilities' => 'local/syllentras_ai:manageplacement',
+        'ajax' => false,
+    ],
+    'local_syllentras_ai_create_study_guide' => [
+        'classname' => 'local_syllentras_ai\external\create_study_guide',
+        'methodname' => 'execute',
+        'description' => 'Create a private study guide Page in the AI Content section for one student',
+        'type' => 'write',
+        'capabilities' => 'local/syllentras_ai:manageplacement',
+        'ajax' => false,
+    ],
+    'local_syllentras_ai_update_private_page' => [
+        'classname' => 'local_syllentras_ai\external\update_private_page',
+        'methodname' => 'execute',
+        'description' => 'Update content of a private AI Content Page (study guide / flashcards) for one student',
+        'type' => 'write',
+        'capabilities' => 'local/syllentras_ai:manageplacement',
+        'ajax' => false,
+    ],
+    'local_syllentras_ai_list_private_content' => [
+        'classname' => 'local_syllentras_ai\external\list_private_content',
+        'methodname' => 'execute',
+        'description' => 'List private AI Content activities for one student',
+        'type' => 'read',
+        'capabilities' => 'local/syllentras_ai:manageplacement',
+        'ajax' => false,
+    ],
+    'local_syllentras_ai_rename_private_activity' => [
+        'classname' => 'local_syllentras_ai\external\rename_private_activity',
+        'methodname' => 'execute',
+        'description' => 'Rename a private AI Content activity for one student',
+        'type' => 'write',
+        'capabilities' => 'local/syllentras_ai:manageplacement',
+        'ajax' => false,
+    ],
+    'local_syllentras_ai_delete_private_activity' => [
+        'classname' => 'local_syllentras_ai\external\delete_private_activity',
+        'methodname' => 'execute',
+        'description' => 'Delete a private AI Content activity for one student',
+        'type' => 'write',
+        'capabilities' => 'local/syllentras_ai:manageplacement',
+        'ajax' => false,
+    ],
+    'local_syllentras_ai_delete_private_activities' => [
+        'classname' => 'local_syllentras_ai\external\delete_private_activities',
+        'methodname' => 'execute',
+        'description' => 'Delete multiple private AI Content activities for one student',
+        'type' => 'write',
+        'capabilities' => 'local/syllentras_ai:manageplacement',
+        'ajax' => false,
+    ],
+    'local_syllentras_ai_get_practice_attempt_review' => [
+        'classname' => 'local_syllentras_ai\external\get_practice_attempt_review',
+        'methodname' => 'execute',
+        'description' => 'Get the latest finished practice-quiz attempt with per-question results',
+        'type' => 'read',
+        'capabilities' => 'local/syllentras_ai:manageplacement',
+        'ajax' => false,
+    ],
+    'local_syllentras_ai_get_private_content_export' => [
+        'classname' => 'local_syllentras_ai\external\get_private_content_export',
+        'methodname' => 'execute',
+        'description' => 'Export private AI Content (page HTML or quiz questions) for PDF download',
+        'type' => 'read',
+        'capabilities' => 'local/syllentras_ai:manageplacement',
+        'ajax' => false,
+    ],
+];
+
 // The API uses Moodle's built-in external functions directly. Keeping them in a
 // plugin-owned service lets the token download files from webservice/pluginfile.php.
 $services = [
@@ -16,6 +99,16 @@ $services = [
             'mod_forum_get_forum_discussions',
             'mod_forum_get_forums_by_courses',
             'mod_page_get_pages_by_courses',
+            'local_syllentras_ai_ensure_student_placement',
+            'local_syllentras_ai_create_practice_quiz',
+            'local_syllentras_ai_create_study_guide',
+            'local_syllentras_ai_update_private_page',
+            'local_syllentras_ai_list_private_content',
+            'local_syllentras_ai_rename_private_activity',
+            'local_syllentras_ai_delete_private_activity',
+            'local_syllentras_ai_delete_private_activities',
+            'local_syllentras_ai_get_practice_attempt_review',
+            'local_syllentras_ai_get_private_content_export',
         ],
         'restrictedusers' => 0,
         'enabled' => 1,

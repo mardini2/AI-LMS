@@ -1,0 +1,289 @@
+import { Injectable, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import {
+  FunctionCallingConfigMode,
+  HarmBlockThreshold,
+  HarmCategory,
+  Type,
+  type FunctionDeclaration,
+  type Schema,
+  type Tool,
+} from '@google/genai';
+import { GeminiClient } from '../gemini.client';
+import type { LlmProvider } from './llm-provider.interface';
+import {
+  assertNonEmptyText,
+  mapProviderError,
+} from './provider.errors';
+import type {
+  AiProviderId,
+  LlmChatRequest,
+  LlmChatResult,
+  LlmJsonRequest,
+  LlmJsonSchema,
+  LlmTool,
+  LlmToolCall,
+} from './provider.types';
+import {
+  formatHistoryForLog,
+  logGreetingDebug,
+  shouldLogGreetingDebug,
+} from '../greeting-debug';
+
+@Injectable()
+export class GeminiProvider implements LlmProvider {
+  readonly id: AiProviderId = 'gemini';
+  readonly displayName = 'Google Gemini';
+  private readonly logger = new Logger(GeminiProvider.name);
+  private readonly apiKey: string;
+
+  constructor(
+    private readonly gemini: GeminiClient,
+    config: ConfigService,
+  ) {
+    this.apiKey = (config.get<string>('GEMINI_API_KEY') ?? '').trim();
+  }
+
+  isConfigured(): boolean {
+    return this.apiKey.length > 0 && this.gemini.isReady();
+  }
+
+  async chat(request: LlmChatRequest): Promise<LlmChatResult> {
+    this.assertReady();
+    try {
+      const tools = request.tools?.length
+        ? ([
+            {
+              functionDeclarations: request.tools.map(toGeminiFunctionDeclaration),
+            },
+          ] as Tool[])
+        : undefined;
+
+      const geminiHistory = toGeminiHistory(request.history);
+      const priorUserTurns = request.history.filter((m) => m.role === 'user').length;
+      if (shouldLogGreetingDebug(priorUserTurns)) {
+        logGreetingDebug(
+          'PROVIDER_PAYLOAD:gemini',
+          [
+            'systemInstruction passed to createChat.config.systemInstruction: YES',
+            `systemInstructionLength: ${request.systemInstruction.length}`,
+            `systemInstructionShaPreview: ${request.systemInstruction.slice(0, 120).replace(/\s+/g, ' ')}…`,
+            '',
+            '----- HISTORY PASSED TO createChat (after toGeminiHistory) -----',
+            formatHistoryForLog(
+              geminiHistory.map((m) => ({
+                role: m.role,
+                content: m.parts[0]?.text ?? '',
+              })),
+            ),
+            '',
+            '----- USER MESSAGE PASSED TO sendMessage -----',
+            request.message,
+          ].join('\n'),
+        );
+      }
+
+      const safetySettings = [
+        {
+          category: HarmCategory.HARM_CATEGORY_HARASSMENT,
+          threshold: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
+        },
+      ];
+      // Only when this turn includes fetched link content — keeps default
+      // stricter for ordinary multi-course Q&A.
+      if (request.relaxDangerousContentSafety) {
+        safetySettings.push({
+          category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
+          threshold: HarmBlockThreshold.BLOCK_NONE,
+        });
+      }
+
+      const chat = this.gemini.createChat({
+        history: geminiHistory,
+        config: {
+          systemInstruction: request.systemInstruction,
+          tools,
+          toolConfig: tools
+            ? {
+                functionCallingConfig: {
+                  mode: FunctionCallingConfigMode.AUTO,
+                },
+              }
+            : undefined,
+          safetySettings,
+        },
+      });
+
+      const result = await chat.sendMessage({ message: request.message });
+      const toolCalls: LlmToolCall[] = (result.functionCalls ?? [])
+        .filter((call) => typeof call.name === 'string' && call.name.length > 0)
+        .map((call) => ({
+          name: call.name as string,
+          args: (call.args ?? {}) as Record<string, unknown>,
+        }));
+
+      const text = (result.text ?? '').trim();
+      const finishReason = result.candidates?.[0]?.finishReason
+        ? String(result.candidates[0].finishReason)
+        : undefined;
+      const safetyRatings = result.candidates?.[0]?.safetyRatings;
+
+      if (shouldLogGreetingDebug(priorUserTurns)) {
+        logGreetingDebug(
+          'PROVIDER_RAW:gemini',
+          [
+            '----- RAW PROVIDER RESPONSE (gemini SDK result.text) -----',
+            text || '(empty text)',
+            `finishReason: ${finishReason ?? '(none)'}`,
+            `toolCalls: ${JSON.stringify(toolCalls)}`,
+            `safetyRatings: ${JSON.stringify(safetyRatings ?? [])}`,
+          ].join('\n'),
+        );
+      }
+
+      if (!text) {
+        this.logger.warn(
+          `Gemini returned empty text (finishReason=${finishReason ?? 'n/a'}, toolCalls=${JSON.stringify(
+            toolCalls.map((c) => c.name),
+          )}, safetyRatings=${JSON.stringify(safetyRatings ?? [])}, relaxDangerous=${Boolean(
+            request.relaxDangerousContentSafety,
+          )})`,
+        );
+      }
+
+      return {
+        text,
+        toolCalls,
+        finishReason,
+      };
+    } catch (err) {
+      this.logger.warn(`Gemini chat failed: ${err instanceof Error ? err.message : String(err)}`);
+      throw mapProviderError(err, this.displayName);
+    }
+  }
+
+  async generateJson(request: LlmJsonRequest): Promise<string> {
+    this.assertReady();
+    try {
+      const response = await this.gemini.generateContent({
+        contents: request.prompt,
+        config: {
+          responseMimeType: 'application/json',
+          responseSchema: request.schema
+            ? toGeminiSchema(request.schema)
+            : undefined,
+        },
+      });
+      return assertNonEmptyText(response.text, this.displayName);
+    } catch (err) {
+      this.logger.warn(
+        `Gemini JSON generation failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      throw mapProviderError(err, this.displayName);
+    }
+  }
+
+  private assertReady(): void {
+    if (!this.isConfigured()) {
+      throw mapProviderError(
+        new Error('missing api key'),
+        this.displayName,
+      );
+    }
+  }
+}
+
+function toGeminiHistory(
+  history: LlmChatRequest['history'],
+): Array<{ role: 'user' | 'model'; parts: [{ text: string }] }> {
+  const geminiHistory: Array<{
+    role: 'user' | 'model';
+    parts: [{ text: string }];
+  }> = [];
+
+  for (const m of history) {
+    const role: 'user' | 'model' = m.role === 'assistant' ? 'model' : 'user';
+
+    // Gemini chats must start with a user turn. Keep section-welcome assistant
+    // messages by seeding a minimal opener instead of dropping them.
+    if (geminiHistory.length === 0 && role === 'model') {
+      geminiHistory.push({
+        role: 'user',
+        parts: [{ text: '(Conversation opened.)' }],
+      });
+    }
+
+    const last = geminiHistory[geminiHistory.length - 1];
+    if (last?.role === role) {
+      last.parts[0].text += `\n${m.content}`;
+      continue;
+    }
+
+    geminiHistory.push({ role, parts: [{ text: m.content }] });
+  }
+
+  return geminiHistory;
+}
+
+function toGeminiFunctionDeclaration(tool: LlmTool): FunctionDeclaration {
+  return {
+    name: tool.name,
+    description: tool.description,
+    parameters: toGeminiSchema(tool.parameters) as Schema,
+  };
+}
+
+function toGeminiSchema(schema: LlmJsonSchema): Schema {
+  const out: Schema = {};
+  const type = normalizeGeminiType(schema.type);
+  if (type) {
+    out.type = type;
+  }
+  if (schema.description) {
+    out.description = schema.description;
+  }
+  if (schema.enum) {
+    out.enum = schema.enum.map(String);
+  }
+  if (schema.format) {
+    out.format = schema.format;
+  }
+  if (schema.properties) {
+    out.properties = Object.fromEntries(
+      Object.entries(schema.properties).map(([key, value]) => [
+        key,
+        toGeminiSchema(value),
+      ]),
+    );
+  }
+  if (schema.items) {
+    out.items = toGeminiSchema(schema.items);
+  }
+  if (schema.required) {
+    out.required = schema.required;
+  }
+  return out;
+}
+
+function normalizeGeminiType(
+  type: string | string[] | undefined,
+): Type | undefined {
+  const raw = Array.isArray(type) ? type[0] : type;
+  if (!raw) return undefined;
+  switch (raw.toLowerCase()) {
+    case 'object':
+      return Type.OBJECT;
+    case 'array':
+      return Type.ARRAY;
+    case 'string':
+      return Type.STRING;
+    case 'number':
+      return Type.NUMBER;
+    case 'integer':
+      return Type.INTEGER;
+    case 'boolean':
+      return Type.BOOLEAN;
+    default:
+      return undefined;
+  }
+}

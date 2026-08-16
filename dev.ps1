@@ -6,17 +6,23 @@
     Wraps the docker compose command so team members don't need to remember
     the full -f flag syntax. Mirrors what moodle-docker-compose does internally.
 .PARAMETER Command
-    One of: up, down, restart, logs, ps, install-api
+    One of: up, down, restart, logs, ps, install-api,
+    moodle-install, moodle-upgrade, moodle-purge, rebuild-chat-js,
+    clear-attachments, tunnel, tunnel-stop
 .EXAMPLE
     .\dev.ps1 up
     .\dev.ps1 down
     .\dev.ps1 logs
     .\dev.ps1 install-api
+    .\dev.ps1 rebuild-chat-js
+    .\dev.ps1 clear-attachments
+    .\dev.ps1 tunnel
+    .\dev.ps1 tunnel-stop
 #>
 
 param(
     [Parameter(Position = 0)]
-    [ValidateSet("up", "down", "restart", "logs", "ps", "install-api", "moodle-install", "moodle-upgrade", "moodle-purge")]
+    [ValidateSet("up", "down", "restart", "logs", "ps", "install-api", "moodle-install", "moodle-upgrade", "moodle-purge", "rebuild-chat-js", "clear-attachments", "tunnel", "tunnel-stop")]
     [string]$Command = "up"
 )
 
@@ -40,12 +46,19 @@ if (Test-Path ".\.env") {
 # efficiently — running from Windows PowerShell routes through the NTFS→WSL2
 # bridge and causes 10+ second page loads.
 # Translate the current Windows path to /mnt/c/... and delegate to dev.sh.
+# Tunnel commands also require WSL (Moodle config.php lives on the Linux path).
 if ($env:MOODLE_DOCKER_WWWROOT -match '^/') {
     $drive  = (Get-Location).Drive.Name.ToLower()
     $relPath = (Get-Location).Path -replace '^[A-Za-z]:\\', '' -replace '\\', '/'
     $wslDir = "/mnt/$drive/$relPath"
     wsl --cd $wslDir -- bash dev.sh $Command
     exit $LASTEXITCODE
+}
+
+if ($Command -eq "tunnel" -or $Command -eq "tunnel-stop") {
+    Write-Host "ERROR: tunnel commands require MOODLE_DOCKER_WWWROOT on the WSL filesystem." -ForegroundColor Red
+    Write-Host "Run setup.sh first, or invoke ./dev.sh tunnel from WSL." -ForegroundColor Yellow
+    exit 1
 }
 
 # Set variables that moodle-docker-compose normally exports via the shell script
@@ -119,5 +132,26 @@ switch ($Command) {
         Write-Host "Purging all Moodle caches (required after hook/capability definition changes)..." -ForegroundColor Cyan
         Invoke-Expression "$compose exec webserver php admin/cli/purge_caches.php"
         Write-Host "Done." -ForegroundColor Green
+    }
+    "rebuild-chat-js" {
+        Write-Host "Rebuilding Syllentras chat widget bundle (boot.js)..." -ForegroundColor Cyan
+        python "plugin/syllentras_ai/js/_build_boot.py"
+        if ($LASTEXITCODE -ne 0) {
+            throw "Chat JS rebuild failed (exit $LASTEXITCODE)."
+        }
+        Write-Host "Running Moodle plugin upgrade (no-op if version.php unchanged)..." -ForegroundColor Cyan
+        Invoke-Expression "$compose exec webserver php admin/cli/upgrade.php --non-interactive"
+        Write-Host "Purging all Moodle caches..." -ForegroundColor Cyan
+        Invoke-Expression "$compose exec webserver php admin/cli/purge_caches.php"
+        Write-Host "Done. Hard-refresh the Moodle page if it still looks stale." -ForegroundColor Green
+    }
+    "clear-attachments" {
+        # When WSL delegation is active, this branch is never reached — WSL gets
+        # clear-attachments via dev.sh. This path is for pure Windows setups.
+        Write-Host "Clearing all chat attachments (all users)..." -ForegroundColor Cyan
+        & "$PSScriptRoot\clear-attachments.ps1" -Force
+        if ($LASTEXITCODE -ne 0) {
+            throw "clear-attachments failed (exit $LASTEXITCODE)."
+        }
     }
 }

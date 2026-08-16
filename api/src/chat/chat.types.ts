@@ -1,0 +1,71 @@
+import type { QuizDifficulty } from './entities/pending-action.entity';
+
+export interface PendingActionDto {
+  id: string;
+  type: 'practice_quiz' | 'study_guide' | 'flashcards';
+  title: string;
+  scopeSummary: string;
+  /** Present for practice quizzes only. */
+  questionCount?: number;
+  /** Present for practice quizzes only. */
+  difficulty?: QuizDifficulty;
+  /** Present for flashcards only. */
+  cardCount?: number;
+}
+
+export interface ReviewOfferDto {
+  actionId: string;
+  quizId: number;
+  title: string;
+  score: number;
+  maxScore: number;
+  wrongCount: number;
+  total: number;
+  scoreLabel: string;
+}
+
+export interface ReviewBlockDto {
+  slot: number;
+  question: string;
+  studentAnswer: string;
+  rightAnswer: string;
+  why: string;
+  citationTitle: string;
+  citationSnippet?: string;
+  citationUrl?: string;
+}
+
+export interface SuggestedLinkDto {
+  title: string;
+  url: string;
+}
+
+export interface ChatResponse {
+  response: string;
+  conversationId: string;
+  /** Which LLM handled this request (never includes secrets). */
+  provider?: string;
+  /** Teaching mode used for this reply. */
+  mode?: 'direct' | 'coach';
+  /** Coach guidance 1–5 when mode is coach. */
+  guidance?: number;
+  pendingAction?: PendingActionDto;
+  /** Ephemeral Open-button targets for pages recommended this turn. */
+  suggestedLinks?: SuggestedLinkDto[];
+  topicSuggestions?: string[];
+  quizUrl?: string;
+  studyGuideUrl?: string;
+  flashcardsUrl?: string;
+  reviewOffer?: ReviewOfferDto;
+  review?: ReviewBlockDto[];
+  /** Non-fatal per-file upload/parse issues (unsupported, empty, etc.). */
+  attachmentWarnings?: string[];
+}
+
+/** Response from POST /chat/message/start (user message persisted). */
+export interface StartMessageTurnResponse {
+  conversationId: string;
+  userMessageId: string;
+  generatingStartedAt: string;
+  attachmentWarnings?: string[];
+}

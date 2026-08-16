@@ -44,6 +44,13 @@ export class Conversation {
   @Column({ default: false })
   pinned: boolean;
 
+  @Column({ name: 'topic_suggestions', type: 'json', nullable: true })
+  topicSuggestions?: string[] | null;
+
+  /** Set while a chat turn is generating (persist-first start → complete). */
+  @Column({ name: 'generating_started_at', type: 'timestamptz', nullable: true })
+  generatingStartedAt?: Date | null;
+
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;
 

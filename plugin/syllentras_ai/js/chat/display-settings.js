@@ -1,0 +1,565 @@
+// Part of the Syllentras chat widget.
+// Included inside the shared IIFE from before_footer.php — do not load standalone.
+
+var DISPLAY_THEME_KEY = 'syllentras_display_theme';
+var DISPLAY_FONT_SCALE_KEY = 'syllentras_display_font_scale';
+var DISPLAY_WALLPAPER_KEY = 'syllentras_display_wallpaper';
+
+var DISPLAY_THEMES = [
+    { id: 'default', label: 'Default' },
+    { id: 'high-contrast', label: 'High contrast' },
+    { id: 'dark', label: 'Dark' },
+    { id: 'soft', label: 'Soft' }
+];
+
+var DISPLAY_FONT_STEPS = [
+    { step: 1, scale: 1, label: 'Default' },
+    { step: 2, scale: 1.125, label: 'Large' },
+    { step: 3, scale: 1.25, label: 'Extra large' },
+    { step: 4, scale: 1.4, label: 'Largest' }
+];
+
+var displayBtn = document.getElementById('syllentras-display-btn');
+var displayMenu = document.getElementById('syllentras-display-menu');
+var displayWrap = displayBtn ? displayBtn.closest('.syllentras-display-wrap') : null;
+
+var selectedDisplayTheme = 'default';
+var selectedFontStep = 1;
+var wallpaperEnabled = true;
+var displayMenuBuilt = false;
+var displayFontValueEl = null;
+var displayFontSlider = null;
+var displaySpeechRateValueEl = null;
+var displaySpeechRateSlider = null;
+var displayDictationLangSelect = null;
+var displayWallpaperSwitch = null;
+
+function normalizeDisplayTheme(raw) {
+    for (var i = 0; i < DISPLAY_THEMES.length; i++) {
+        if (DISPLAY_THEMES[i].id === raw) return raw;
+    }
+    return 'default';
+}
+
+function normalizeFontStep(raw) {
+    var n = parseInt(raw, 10);
+    if (n >= 1 && n <= DISPLAY_FONT_STEPS.length) return n;
+    return 1;
+}
+
+function fontStepInfo(step) {
+    return DISPLAY_FONT_STEPS[normalizeFontStep(step) - 1];
+}
+
+function applyDisplaySettings() {
+    if (!root) return;
+    var info = fontStepInfo(selectedFontStep);
+    root.setAttribute('data-theme', selectedDisplayTheme);
+    root.setAttribute('data-font-scale', String(info.step));
+    root.setAttribute('data-wallpaper', wallpaperEnabled ? 'on' : 'off');
+    root.style.setProperty('--syll-font-scale', String(info.scale));
+}
+
+function saveDisplaySettings() {
+    try {
+        localStorage.setItem(DISPLAY_THEME_KEY, selectedDisplayTheme);
+        localStorage.setItem(DISPLAY_FONT_SCALE_KEY, String(selectedFontStep));
+        localStorage.setItem(DISPLAY_WALLPAPER_KEY, wallpaperEnabled ? '1' : '0');
+    } catch (e) { /* ignore quota / private mode */ }
+}
+
+function loadDisplaySettings() {
+    var themeRaw = null;
+    var fontRaw = null;
+    var wallpaperRaw = null;
+    try {
+        themeRaw = localStorage.getItem(DISPLAY_THEME_KEY);
+        fontRaw = localStorage.getItem(DISPLAY_FONT_SCALE_KEY);
+        wallpaperRaw = localStorage.getItem(DISPLAY_WALLPAPER_KEY);
+    } catch (e) {
+        themeRaw = null;
+        fontRaw = null;
+        wallpaperRaw = null;
+    }
+    selectedDisplayTheme = normalizeDisplayTheme(themeRaw);
+    selectedFontStep = normalizeFontStep(fontRaw);
+    // Missing key → on (default). Explicit "0" turns doodles off.
+    wallpaperEnabled = wallpaperRaw !== '0';
+    applyDisplaySettings();
+}
+
+function setWallpaperEnabled(on) {
+    wallpaperEnabled = !!on;
+    applyDisplaySettings();
+    saveDisplaySettings();
+    syncDisplayMenuUi();
+}
+
+function setDisplayTheme(themeId) {
+    selectedDisplayTheme = normalizeDisplayTheme(themeId);
+    applyDisplaySettings();
+    saveDisplaySettings();
+    syncDisplayMenuUi();
+}
+
+function setFontStep(step) {
+    selectedFontStep = normalizeFontStep(step);
+    applyDisplaySettings();
+    saveDisplaySettings();
+    syncDisplayMenuUi();
+}
+
+function resetDisplaySettings() {
+    selectedDisplayTheme = 'default';
+    selectedFontStep = 1;
+    wallpaperEnabled = true;
+    if (typeof resetSpeechSettings === 'function') {
+        resetSpeechSettings();
+    }
+    // Mic STT language goes back to English (US) with the rest of accessibility.
+    if (typeof resetDictationLanguage === 'function') {
+        resetDictationLanguage();
+    }
+    applyDisplaySettings();
+    saveDisplaySettings();
+    syncDisplayMenuUi();
+}
+
+function syncDisplayMenuUi() {
+    if (!displayMenuBuilt || !displayMenu) return;
+    var info = fontStepInfo(selectedFontStep);
+    if (displayFontValueEl) {
+        displayFontValueEl.textContent = info.label;
+    }
+    if (displayFontSlider) {
+        displayFontSlider.value = String(info.step);
+    }
+
+    if (typeof speechRateInfo === 'function' && typeof selectedSpeechRateStep !== 'undefined') {
+        var rateInfo = speechRateInfo(selectedSpeechRateStep);
+        if (displaySpeechRateValueEl) {
+            displaySpeechRateValueEl.textContent = rateInfo.label;
+        }
+        if (displaySpeechRateSlider) {
+            displaySpeechRateSlider.value = String(rateInfo.step);
+            displaySpeechRateSlider.setAttribute('aria-valuetext', rateInfo.label);
+        }
+    }
+
+    Array.from(displayMenu.querySelectorAll('.syllentras-display-theme-btn')).forEach(function (btn) {
+        var active = btn.dataset.themeId === selectedDisplayTheme;
+        btn.classList.toggle('selected', active);
+        btn.setAttribute('aria-pressed', active ? 'true' : 'false');
+    });
+
+    Array.from(displayMenu.querySelectorAll('.syllentras-display-voice-btn')).forEach(function (btn) {
+        var active = typeof selectedSpeechVoice !== 'undefined'
+            && btn.dataset.voiceId === selectedSpeechVoice;
+        btn.classList.toggle('selected', active);
+        btn.setAttribute('aria-pressed', active ? 'true' : 'false');
+    });
+
+    if (displayDictationLangSelect && typeof getDictationLang === 'function') {
+        displayDictationLangSelect.value = getDictationLang();
+    }
+
+    if (displayWallpaperSwitch) {
+        displayWallpaperSwitch.setAttribute('aria-checked', wallpaperEnabled ? 'true' : 'false');
+        displayWallpaperSwitch.classList.toggle('is-on', wallpaperEnabled);
+    }
+}
+
+function bindWallpaperSwitch(switchEl) {
+    var dragActive = false;
+    var dragStartX = 0;
+    var dragMoved = false;
+    var dragStartOn = false;
+    var skipClick = false;
+
+    switchEl.addEventListener('click', function (e) {
+        e.stopPropagation();
+        if (skipClick) {
+            skipClick = false;
+            return;
+        }
+        setWallpaperEnabled(!wallpaperEnabled);
+    });
+
+    switchEl.addEventListener('pointerdown', function (e) {
+        if (e.button != null && e.button !== 0) return;
+        e.stopPropagation();
+        dragActive = true;
+        dragMoved = false;
+        dragStartX = e.clientX;
+        dragStartOn = wallpaperEnabled;
+        switchEl.classList.add('is-dragging');
+        try {
+            switchEl.setPointerCapture(e.pointerId);
+        } catch (err) { /* older browsers */ }
+    });
+
+    switchEl.addEventListener('pointermove', function (e) {
+        if (!dragActive) return;
+        e.stopPropagation();
+        var dx = e.clientX - dragStartX;
+        if (Math.abs(dx) >= 4) dragMoved = true;
+        // Live preview while dragging past the midpoint of the track.
+        if (dx >= 10) {
+            switchEl.classList.add('is-on');
+            switchEl.setAttribute('aria-checked', 'true');
+        } else if (dx <= -10) {
+            switchEl.classList.remove('is-on');
+            switchEl.setAttribute('aria-checked', 'false');
+        } else {
+            switchEl.classList.toggle('is-on', dragStartOn);
+            switchEl.setAttribute('aria-checked', dragStartOn ? 'true' : 'false');
+        }
+    });
+
+    switchEl.addEventListener('pointerup', function (e) {
+        if (!dragActive) return;
+        e.stopPropagation();
+        dragActive = false;
+        switchEl.classList.remove('is-dragging');
+        var dx = e.clientX - dragStartX;
+        if (dragMoved && Math.abs(dx) >= 12) {
+            skipClick = true;
+            setWallpaperEnabled(dx > 0);
+        } else if (dragMoved) {
+            // Tiny drag — snap UI back; click may still toggle if it fires.
+            syncDisplayMenuUi();
+        }
+        // Pure tap: leave skipClick false so the following click toggles.
+    });
+
+    switchEl.addEventListener('pointercancel', function () {
+        dragActive = false;
+        switchEl.classList.remove('is-dragging');
+        syncDisplayMenuUi();
+    });
+
+    switchEl.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            e.stopPropagation();
+            setWallpaperEnabled(!wallpaperEnabled);
+        } else if (e.key === 'ArrowRight') {
+            e.preventDefault();
+            e.stopPropagation();
+            setWallpaperEnabled(true);
+        } else if (e.key === 'ArrowLeft') {
+            e.preventDefault();
+            e.stopPropagation();
+            setWallpaperEnabled(false);
+        }
+    });
+}
+
+function buildDisplayMenu() {
+    if (!displayMenu || displayMenuBuilt) return;
+    displayMenu.innerHTML = '';
+
+    var fontSection = document.createElement('div');
+    fontSection.className = 'syllentras-display-section';
+
+    var fontLabel = document.createElement('div');
+    fontLabel.className = 'syllentras-display-label';
+    fontLabel.textContent = 'Font size';
+    fontSection.appendChild(fontLabel);
+
+    displayFontValueEl = document.createElement('div');
+    displayFontValueEl.className = 'syllentras-display-value';
+    displayFontValueEl.id = 'syllentras-display-font-value';
+    fontSection.appendChild(displayFontValueEl);
+
+    displayFontSlider = document.createElement('input');
+    displayFontSlider.type = 'range';
+    displayFontSlider.className = 'syllentras-display-slider';
+    displayFontSlider.min = '1';
+    displayFontSlider.max = String(DISPLAY_FONT_STEPS.length);
+    displayFontSlider.step = '1';
+    displayFontSlider.setAttribute('aria-label', 'Font size');
+    displayFontSlider.setAttribute('aria-valuetext', fontStepInfo(selectedFontStep).label);
+    displayFontSlider.addEventListener('input', function () {
+        setFontStep(displayFontSlider.value);
+        displayFontSlider.setAttribute('aria-valuetext', fontStepInfo(selectedFontStep).label);
+    });
+    displayFontSlider.addEventListener('click', function (e) {
+        e.stopPropagation();
+    });
+    fontSection.appendChild(displayFontSlider);
+    displayMenu.appendChild(fontSection);
+
+    // Voice + speed when read-aloud works (Azure cloud and/or browser TTS).
+    if (typeof speechSupported === 'function' && speechSupported()
+        && typeof SPEECH_VOICES !== 'undefined'
+        && typeof SPEECH_RATE_STEPS !== 'undefined') {
+        var voiceSection = document.createElement('div');
+        voiceSection.className = 'syllentras-display-section';
+
+        var voiceLabel = document.createElement('div');
+        voiceLabel.className = 'syllentras-display-label';
+        voiceLabel.textContent = 'Voice';
+        voiceSection.appendChild(voiceLabel);
+
+        var voiceList = document.createElement('div');
+        voiceList.className = 'syllentras-display-theme-list';
+        voiceList.setAttribute('role', 'group');
+        voiceList.setAttribute('aria-label', 'Read aloud voice');
+
+        SPEECH_VOICES.forEach(function (voice) {
+            var btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'syllentras-display-theme-btn syllentras-display-voice-btn';
+            btn.dataset.voiceId = voice.id;
+            btn.textContent = voice.label;
+            btn.addEventListener('click', function (e) {
+                e.stopPropagation();
+                setSpeechVoicePreference(voice.id);
+                syncDisplayMenuUi();
+            });
+            voiceList.appendChild(btn);
+        });
+        voiceSection.appendChild(voiceList);
+        displayMenu.appendChild(voiceSection);
+
+        var rateSection = document.createElement('div');
+        rateSection.className = 'syllentras-display-section';
+
+        var rateLabel = document.createElement('div');
+        rateLabel.className = 'syllentras-display-label';
+        rateLabel.textContent = 'Speech speed';
+        rateSection.appendChild(rateLabel);
+
+        displaySpeechRateValueEl = document.createElement('div');
+        displaySpeechRateValueEl.className = 'syllentras-display-value';
+        displaySpeechRateValueEl.id = 'syllentras-display-speech-rate-value';
+        rateSection.appendChild(displaySpeechRateValueEl);
+
+        displaySpeechRateSlider = document.createElement('input');
+        displaySpeechRateSlider.type = 'range';
+        displaySpeechRateSlider.className = 'syllentras-display-slider';
+        displaySpeechRateSlider.min = '1';
+        displaySpeechRateSlider.max = String(SPEECH_RATE_STEPS.length);
+        displaySpeechRateSlider.step = '1';
+        displaySpeechRateSlider.setAttribute('aria-label', 'Speech speed');
+        displaySpeechRateSlider.setAttribute(
+            'aria-valuetext',
+            speechRateInfo(selectedSpeechRateStep).label
+        );
+        displaySpeechRateSlider.addEventListener('input', function () {
+            setSpeechRateStep(displaySpeechRateSlider.value);
+            displaySpeechRateSlider.setAttribute(
+                'aria-valuetext',
+                speechRateInfo(selectedSpeechRateStep).label
+            );
+            syncDisplayMenuUi();
+        });
+        displaySpeechRateSlider.addEventListener('click', function (e) {
+            e.stopPropagation();
+        });
+        rateSection.appendChild(displaySpeechRateSlider);
+        displayMenu.appendChild(rateSection);
+    }
+
+    // Mic language — only when the browser can do speech-to-text.
+    if (typeof speechRecognitionSupported === 'function' && speechRecognitionSupported()
+        && typeof DICTATION_LANGUAGES !== 'undefined') {
+        var micLangSection = document.createElement('div');
+        micLangSection.className = 'syllentras-display-section';
+
+        var micLangLabel = document.createElement('div');
+        micLangLabel.className = 'syllentras-display-label';
+        micLangLabel.textContent = 'Mic language';
+        micLangSection.appendChild(micLangLabel);
+
+        var micLangHint = document.createElement('div');
+        micLangHint.className = 'syllentras-display-hint';
+        micLangHint.textContent = 'Language the microphone listens for';
+        micLangSection.appendChild(micLangHint);
+
+        // Wrap the select so we can draw a chevron that matches light/dark themes.
+        var micLangWrap = document.createElement('div');
+        micLangWrap.className = 'syllentras-display-select-wrap';
+
+        displayDictationLangSelect = document.createElement('select');
+        displayDictationLangSelect.className = 'syllentras-display-select';
+        displayDictationLangSelect.id = 'syllentras-display-dictation-lang';
+        displayDictationLangSelect.setAttribute('aria-label', 'Microphone speech-to-text language');
+        DICTATION_LANGUAGES.forEach(function (lang) {
+            var opt = document.createElement('option');
+            opt.value = lang.id;
+            opt.textContent = lang.label;
+            displayDictationLangSelect.appendChild(opt);
+        });
+        if (typeof getDictationLang === 'function') {
+            displayDictationLangSelect.value = getDictationLang();
+        }
+        displayDictationLangSelect.addEventListener('change', function () {
+            if (typeof setDictationLang === 'function') {
+                setDictationLang(displayDictationLangSelect.value);
+            }
+        });
+        displayDictationLangSelect.addEventListener('click', function (e) {
+            e.stopPropagation();
+        });
+        micLangWrap.appendChild(displayDictationLangSelect);
+        micLangSection.appendChild(micLangWrap);
+        displayMenu.appendChild(micLangSection);
+    }
+
+    var themeSection = document.createElement('div');
+    themeSection.className = 'syllentras-display-section';
+
+    var themeLabel = document.createElement('div');
+    themeLabel.className = 'syllentras-display-label';
+    themeLabel.textContent = 'Theme';
+    themeSection.appendChild(themeLabel);
+
+    var themeList = document.createElement('div');
+    themeList.className = 'syllentras-display-theme-list';
+    themeList.setAttribute('role', 'group');
+    themeList.setAttribute('aria-label', 'Color theme');
+
+    DISPLAY_THEMES.forEach(function (theme) {
+        var btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'syllentras-display-theme-btn';
+        btn.dataset.themeId = theme.id;
+        btn.textContent = theme.label;
+        btn.addEventListener('click', function (e) {
+            e.stopPropagation();
+            setDisplayTheme(theme.id);
+        });
+        themeList.appendChild(btn);
+    });
+    themeSection.appendChild(themeList);
+    displayMenu.appendChild(themeSection);
+
+    var wallpaperSection = document.createElement('div');
+    wallpaperSection.className = 'syllentras-display-section';
+
+    var wallpaperRow = document.createElement('div');
+    wallpaperRow.className = 'syllentras-display-switch-row';
+
+    var wallpaperCopy = document.createElement('div');
+    wallpaperCopy.className = 'syllentras-display-switch-copy';
+    var wallpaperLabel = document.createElement('div');
+    wallpaperLabel.className = 'syllentras-display-label';
+    wallpaperLabel.id = 'syllentras-display-wallpaper-label';
+    wallpaperLabel.textContent = 'Background doodles';
+    wallpaperLabel.style.marginBottom = '0';
+    wallpaperCopy.appendChild(wallpaperLabel);
+
+    displayWallpaperSwitch = document.createElement('button');
+    displayWallpaperSwitch.type = 'button';
+    displayWallpaperSwitch.className = 'syllentras-display-switch';
+    displayWallpaperSwitch.setAttribute('role', 'switch');
+    displayWallpaperSwitch.setAttribute('aria-labelledby', 'syllentras-display-wallpaper-label');
+    var track = document.createElement('span');
+    track.className = 'syllentras-display-switch-track';
+    track.setAttribute('aria-hidden', 'true');
+    var thumb = document.createElement('span');
+    thumb.className = 'syllentras-display-switch-thumb';
+    track.appendChild(thumb);
+    displayWallpaperSwitch.appendChild(track);
+    bindWallpaperSwitch(displayWallpaperSwitch);
+
+    wallpaperRow.appendChild(wallpaperCopy);
+    wallpaperRow.appendChild(displayWallpaperSwitch);
+    wallpaperSection.appendChild(wallpaperRow);
+    displayMenu.appendChild(wallpaperSection);
+
+    var resetSection = document.createElement('div');
+    resetSection.className = 'syllentras-display-section';
+    var resetBtn = document.createElement('button');
+    resetBtn.type = 'button';
+    resetBtn.className = 'syllentras-display-reset';
+    resetBtn.textContent = 'Reset';
+    resetBtn.addEventListener('click', function (e) {
+        e.stopPropagation();
+        resetDisplaySettings();
+    });
+    resetSection.appendChild(resetBtn);
+    displayMenu.appendChild(resetSection);
+
+    displayMenu.addEventListener('click', function (e) {
+        e.stopPropagation();
+    });
+    // Stop the chat body from eating the wheel so this menu can actually scroll.
+    displayMenu.addEventListener('wheel', function (e) {
+        e.stopPropagation();
+    }, { passive: true });
+
+    displayMenuBuilt = true;
+    syncDisplayMenuUi();
+}
+
+function closeDisplayMenu() {
+    if (!displayMenu || !displayBtn) return;
+    displayMenu.hidden = true;
+    displayBtn.setAttribute('aria-expanded', 'false');
+}
+
+function fitDisplayMenuInPanel() {
+    if (!displayMenu || !displayBtn) return;
+    var panel = document.getElementById('syllentras-chat-panel');
+    if (!panel) return;
+    // Panel uses overflow:hidden, so if the menu is taller than the room under
+    // the Aa button it just gets chopped. Cap height to whatever still fits.
+    var panelRect = panel.getBoundingClientRect();
+    var btnRect = displayBtn.getBoundingClientRect();
+    var room = Math.floor(panelRect.bottom - btnRect.bottom - 12);
+    var capped = Math.max(160, Math.min(room, 320));
+    displayMenu.style.maxHeight = capped + 'px';
+}
+
+function openDisplayMenu() {
+    if (!displayMenu || !displayBtn) return;
+    if (typeof closeToolsMenu === 'function') closeToolsMenu();
+    if (typeof closeProviderMenu === 'function') closeProviderMenu();
+    if (typeof closeModeMenu === 'function') closeModeMenu();
+    buildDisplayMenu();
+    displayMenu.hidden = false;
+    displayBtn.setAttribute('aria-expanded', 'true');
+    fitDisplayMenuInPanel();
+}
+
+function toggleDisplayMenu(e) {
+    if (e) e.stopPropagation();
+    if (!displayMenu) return;
+    if (displayMenu.hidden) {
+        openDisplayMenu();
+    } else {
+        closeDisplayMenu();
+    }
+}
+
+function initDisplaySettings() {
+    loadDisplaySettings();
+    if (!displayBtn || !displayMenu) return;
+    displayBtn.addEventListener('click', toggleDisplayMenu);
+}
+
+initDisplaySettings();
+
+document.addEventListener('click', function (e) {
+    if (!displayMenu || displayMenu.hidden) return;
+    if (displayMenu.contains(e.target)) return;
+    if (displayWrap && displayWrap.contains(e.target)) return;
+    closeDisplayMenu();
+});
+
+document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape') {
+        closeDisplayMenu();
+    }
+});
+
+window.addEventListener('resize', function () {
+    if (displayMenu && !displayMenu.hidden) {
+        fitDisplayMenuInPanel();
+        return;
+    }
+    closeDisplayMenu();
+});

@@ -1,0 +1,1 @@
+window.SyllentrasChat = window.SyllentrasChat || {};
