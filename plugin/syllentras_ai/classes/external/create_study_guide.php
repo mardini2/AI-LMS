@@ -146,6 +146,7 @@ class create_study_guide extends external_api {
             'printintro' => 0,
         ]);
         $moduleinfo->printintro = 0;
+        $moduleinfo->printlastmodified = 0;
         $moduleinfo->section = $sectionnum;
         $moduleinfo->visible = 1;
         $moduleinfo->visibleoncoursepage = 1;

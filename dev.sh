@@ -504,6 +504,10 @@ case "$CMD" in
         $COMPOSE exec webserver php admin/cli/purge_caches.php
         echo "Done."
         ;;
+    cron)
+        echo "Running Moodle cron (processes pending backup/restore and other scheduled tasks)..."
+        $COMPOSE exec webserver php admin/cli/cron.php
+        ;;
 behat-init)
         echo "Initializing Behat testing environment..."
         $COMPOSE exec webserver php public/admin/tool/behat/cli/init.php
