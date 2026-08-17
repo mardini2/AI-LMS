@@ -13,9 +13,19 @@ defined('MOODLE_INTERNAL') || die();
 
     <div id="syllentras-chat-panel" role="dialog" aria-label="Course AI Assistant" hidden>
         <div id="syllentras-chat-header">
-            <div class="syllentras-chat-header-text">
-                <span class="syllentras-chat-title">Syllentras AI</span>
-                <span id="syllentras-chat-course" class="syllentras-chat-subtitle"></span>
+            <div class="syllentras-chat-header-brand">
+                <img
+                    class="syllentras-chat-logo"
+                    src="<?php echo s($logourl); ?>"
+                    alt=""
+                    width="50"
+                    height="50"
+                    decoding="async"
+                >
+                <div class="syllentras-chat-header-text">
+                    <span class="syllentras-chat-title">Syllentras AI</span>
+                    <span id="syllentras-chat-course" class="syllentras-chat-subtitle"></span>
+                </div>
             </div>
             <div class="syllentras-chat-header-actions">
                 <div class="syllentras-display-wrap">

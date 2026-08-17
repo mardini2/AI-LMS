@@ -7,6 +7,7 @@ var DISPLAY_WALLPAPER_KEY = 'syllentras_display_wallpaper';
 
 var DISPLAY_THEMES = [
     { id: 'default', label: 'Default' },
+    { id: 'blue', label: 'Blue' },
     { id: 'high-contrast', label: 'High contrast' },
     { id: 'dark', label: 'Dark' },
     { id: 'soft', label: 'Soft' }

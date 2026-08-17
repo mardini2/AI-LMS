@@ -3,21 +3,21 @@
     --syll-panel-bg: #ffffff;
     --syll-text: #1a1f2c;
     --syll-text-muted: #6b7280;
-    --syll-header-bg: #0b5cab;
+    --syll-header-bg: #5a54fc;
     --syll-header-text: #fff;
-    --syll-sidebar-bg: #f4f6fa;
-    --syll-accent: #0b5cab;
-    --syll-accent-hover: #094a8c;
-    --syll-user-bubble-bg: #0b5cab;
+    --syll-sidebar-bg: #f6f5fc;
+    --syll-accent: #5a54fc;
+    --syll-accent-hover: #4a44e0;
+    --syll-user-bubble-bg: #5a54fc;
     --syll-user-bubble-text: #fff;
-    --syll-assistant-bubble-bg: #eef1f6;
+    --syll-assistant-bubble-bg: #f0eff8;
     --syll-assistant-bubble-text: #1a1f2c;
-    --syll-border: #d5dbe6;
-    --syll-border-soft: #e8ecf2;
+    --syll-border: #d9d7ea;
+    --syll-border-soft: #eae8f4;
     --syll-input-bg: #fff;
-    --syll-surface-active: #e3eef9;
-    --syll-surface-hover: #eef3f9;
-    --syll-surface-active-border: #a9c8e8;
+    --syll-surface-active: #e7e6fe;
+    --syll-surface-hover: #f1f0fd;
+    --syll-surface-active-border: #b7b4fb;
     --syll-code-bg: rgba(15, 23, 42, 0.06);
     --syll-error-bg: #ffeaea;
     --syll-error-text: #c00;
@@ -35,6 +35,20 @@
     font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
     color: var(--syll-text);
     -webkit-font-smoothing: antialiased;
+}
+/* The original palette, kept selectable now that Default is logo purple. */
+#syllentras-chat-root[data-theme="blue"] {
+    --syll-header-bg: #0b5cab;
+    --syll-sidebar-bg: #f4f6fa;
+    --syll-accent: #0b5cab;
+    --syll-accent-hover: #094a8c;
+    --syll-user-bubble-bg: #0b5cab;
+    --syll-assistant-bubble-bg: #eef1f6;
+    --syll-border: #d5dbe6;
+    --syll-border-soft: #e8ecf2;
+    --syll-surface-active: #e3eef9;
+    --syll-surface-hover: #eef3f9;
+    --syll-surface-active-border: #a9c8e8;
 }
 #syllentras-chat-root[data-theme="high-contrast"] {
     --syll-panel-bg: #fff;
@@ -229,12 +243,37 @@
     cursor: move;
     user-select: none;
     border-bottom: 1px solid color-mix(in srgb, #000 12%, transparent);
+    gap: 10px;
 }
-.syllentras-chat-header-text {
+#syllentras-chat-root .syllentras-chat-header-brand {
+    display: flex;
+    flex-direction: row;
+    flex-wrap: nowrap;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+    flex: 1 1 auto;
+}
+/* White plate keeps the navy cap legible on the blue header. */
+#syllentras-chat-root .syllentras-chat-logo {
+    box-sizing: border-box;
+    width: 50px;
+    height: 50px;
+    max-width: 50px;
+    max-height: 50px;
+    flex: 0 0 50px;
+    padding: 4px;
+    background: #fff;
+    border-radius: 11px;
+    box-shadow: 0 1px 3px rgba(15, 23, 42, 0.25);
+    object-fit: contain;
+    display: block;
+}
+#syllentras-chat-root .syllentras-chat-header-text {
     display: flex;
     flex-direction: column;
     min-width: 0;
-    flex: 1;
+    flex: 1 1 auto;
 }
 .syllentras-chat-title {
     font-weight: 700;
@@ -2691,6 +2730,11 @@
 #syllentras-chat-root[data-theme="high-contrast"] #syllentras-chat-header {
     background: var(--syll-header-bg);
     border-bottom: 1px solid #000;
+}
+#syllentras-chat-root[data-theme="high-contrast"] .syllentras-chat-logo {
+    border: 1px solid #fff;
+    border-radius: 0;
+    box-shadow: none;
 }
 #syllentras-chat-root[data-theme="high-contrast"] #syllentras-chat-panel {
     border: 2px solid #000;
