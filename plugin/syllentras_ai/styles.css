@@ -3,21 +3,21 @@
     --syll-panel-bg: #ffffff;
     --syll-text: #1a1f2c;
     --syll-text-muted: #6b7280;
-    --syll-header-bg: #0b5cab;
+    --syll-header-bg: #5a54fc;
     --syll-header-text: #fff;
-    --syll-sidebar-bg: #f4f6fa;
-    --syll-accent: #0b5cab;
-    --syll-accent-hover: #094a8c;
-    --syll-user-bubble-bg: #0b5cab;
+    --syll-sidebar-bg: #f6f5fc;
+    --syll-accent: #5a54fc;
+    --syll-accent-hover: #4a44e0;
+    --syll-user-bubble-bg: #5a54fc;
     --syll-user-bubble-text: #fff;
-    --syll-assistant-bubble-bg: #eef1f6;
+    --syll-assistant-bubble-bg: #f0eff8;
     --syll-assistant-bubble-text: #1a1f2c;
-    --syll-border: #d5dbe6;
-    --syll-border-soft: #e8ecf2;
+    --syll-border: #d9d7ea;
+    --syll-border-soft: #eae8f4;
     --syll-input-bg: #fff;
-    --syll-surface-active: #e3eef9;
-    --syll-surface-hover: #eef3f9;
-    --syll-surface-active-border: #a9c8e8;
+    --syll-surface-active: #e7e6fe;
+    --syll-surface-hover: #f1f0fd;
+    --syll-surface-active-border: #b7b4fb;
     --syll-code-bg: rgba(15, 23, 42, 0.06);
     --syll-error-bg: #ffeaea;
     --syll-error-text: #c00;
@@ -35,6 +35,20 @@
     font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
     color: var(--syll-text);
     -webkit-font-smoothing: antialiased;
+}
+/* The original palette, kept selectable now that Default is logo purple. */
+#syllentras-chat-root[data-theme="blue"] {
+    --syll-header-bg: #0b5cab;
+    --syll-sidebar-bg: #f4f6fa;
+    --syll-accent: #0b5cab;
+    --syll-accent-hover: #094a8c;
+    --syll-user-bubble-bg: #0b5cab;
+    --syll-assistant-bubble-bg: #eef1f6;
+    --syll-border: #d5dbe6;
+    --syll-border-soft: #e8ecf2;
+    --syll-surface-active: #e3eef9;
+    --syll-surface-hover: #eef3f9;
+    --syll-surface-active-border: #a9c8e8;
 }
 #syllentras-chat-root[data-theme="high-contrast"] {
     --syll-panel-bg: #fff;
@@ -229,12 +243,37 @@
     cursor: move;
     user-select: none;
     border-bottom: 1px solid color-mix(in srgb, #000 12%, transparent);
+    gap: 10px;
 }
-.syllentras-chat-header-text {
+#syllentras-chat-root .syllentras-chat-header-brand {
+    display: flex;
+    flex-direction: row;
+    flex-wrap: nowrap;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+    flex: 1 1 auto;
+}
+/* White plate keeps the navy cap legible on the blue header. */
+#syllentras-chat-root .syllentras-chat-logo {
+    box-sizing: border-box;
+    width: 50px;
+    height: 50px;
+    max-width: 50px;
+    max-height: 50px;
+    flex: 0 0 50px;
+    padding: 4px;
+    background: #fff;
+    border-radius: 11px;
+    box-shadow: 0 1px 3px rgba(15, 23, 42, 0.25);
+    object-fit: contain;
+    display: block;
+}
+#syllentras-chat-root .syllentras-chat-header-text {
     display: flex;
     flex-direction: column;
     min-width: 0;
-    flex: 1;
+    flex: 1 1 auto;
 }
 .syllentras-chat-title {
     font-weight: 700;
@@ -314,7 +353,7 @@
     width: 280px;
     max-width: min(280px, calc(100vw - 48px));
     /* Fallback cap — JS also sets max-height to fit inside the chat panel. */
-    max-height: min(42vh, 300px);
+    max-height: min(52vh, 380px);
     overflow-x: hidden;
     overflow-y: auto;
     overscroll-behavior: contain;
@@ -379,13 +418,18 @@
     content: '';
     position: absolute;
     right: 14px;
-    top: 50%;
+    top: 18px;
     width: 7px;
     height: 7px;
     border-right: 2px solid var(--syll-text-muted);
     border-bottom: 2px solid var(--syll-text-muted);
     transform: translateY(-70%) rotate(45deg);
     pointer-events: none;
+    transition: transform 0.12s ease;
+}
+.syllentras-display-select-wrap.is-open::after {
+    top: 22px;
+    transform: translateY(-70%) rotate(225deg);
 }
 .syllentras-display-select {
     display: block;
@@ -403,6 +447,7 @@
     font-size: calc(13px * var(--syll-font-scale));
     font-weight: 500;
     line-height: 1.35;
+    text-align: left;
     cursor: pointer;
     transition: border-color 0.12s ease, background-color 0.12s ease;
 }
@@ -415,9 +460,50 @@
     border-color: var(--syll-accent);
     box-shadow: 0 0 0 2px color-mix(in srgb, var(--syll-accent) 28%, transparent);
 }
-/* IE/old Edge leftover arrow — hide if it still shows up. */
-.syllentras-display-select::-ms-expand {
+.syllentras-display-select-wrap.is-open .syllentras-display-select {
+    border-color: var(--syll-accent);
+}
+/* Custom list always opens below the trigger (native <select> often flips upward). */
+.syllentras-display-select-list {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    margin-top: 6px;
+    max-height: 180px;
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    border: 1px solid var(--syll-border);
+    border-radius: 8px;
+    background: var(--syll-input-bg);
+    padding: 4px;
+    scrollbar-width: thin;
+    scrollbar-color: var(--syll-border) transparent;
+}
+.syllentras-display-select-list[hidden] {
     display: none;
+}
+.syllentras-display-select-option {
+    display: block;
+    width: 100%;
+    text-align: left;
+    border: 1px solid transparent;
+    background: transparent;
+    color: var(--syll-text);
+    border-radius: 6px;
+    padding: 7px 9px;
+    cursor: pointer;
+    font: inherit;
+    font-size: calc(13px * var(--syll-font-scale));
+    line-height: 1.35;
+}
+.syllentras-display-select-option:hover {
+    background: var(--syll-surface-hover);
+}
+.syllentras-display-select-option.selected {
+    border-color: var(--syll-accent);
+    background: var(--syll-surface-active);
+    font-weight: 600;
 }
 .syllentras-display-theme-list {
     display: flex;
@@ -2691,6 +2777,11 @@
 #syllentras-chat-root[data-theme="high-contrast"] #syllentras-chat-header {
     background: var(--syll-header-bg);
     border-bottom: 1px solid #000;
+}
+#syllentras-chat-root[data-theme="high-contrast"] .syllentras-chat-logo {
+    border: 1px solid #fff;
+    border-radius: 0;
+    box-shadow: none;
 }
 #syllentras-chat-root[data-theme="high-contrast"] #syllentras-chat-panel {
     border: 2px solid #000;

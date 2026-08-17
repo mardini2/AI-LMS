@@ -113,6 +113,7 @@ class before_footer {
             $jsver = (string) (\get_config('local_syllentras_ai', 'version') ?: '');
         }
         $jsqs = $jsver !== '' ? ('?v=' . rawurlencode($jsver)) : '';
+        $logourl = $wwwroot . '/local/syllentras_ai/pix/logo.png' . $jsqs;
         ob_start();
         include(__DIR__ . '/../../../templates/chat_widget.php');
         ?>

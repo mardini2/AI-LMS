@@ -7012,6 +7012,7 @@ var DISPLAY_WALLPAPER_KEY = 'syllentras_display_wallpaper';
 
 var DISPLAY_THEMES = [
     { id: 'default', label: 'Default' },
+    { id: 'blue', label: 'Blue' },
     { id: 'high-contrast', label: 'High contrast' },
     { id: 'dark', label: 'Dark' },
     { id: 'soft', label: 'Soft' }
@@ -7036,7 +7037,9 @@ var displayFontValueEl = null;
 var displayFontSlider = null;
 var displaySpeechRateValueEl = null;
 var displaySpeechRateSlider = null;
-var displayDictationLangSelect = null;
+var displayDictationLangBtn = null;
+var displayDictationLangList = null;
+var displayDictationLangWrap = null;
 var displayWallpaperSwitch = null;
 
 function normalizeDisplayTheme(raw) {
@@ -7164,8 +7167,22 @@ function syncDisplayMenuUi() {
         btn.setAttribute('aria-pressed', active ? 'true' : 'false');
     });
 
-    if (displayDictationLangSelect && typeof getDictationLang === 'function') {
-        displayDictationLangSelect.value = getDictationLang();
+    if (displayDictationLangBtn && typeof getDictationLang === 'function'
+        && typeof DICTATION_LANGUAGES !== 'undefined') {
+        var currentLang = getDictationLang();
+        var currentLabel = currentLang;
+        for (var li = 0; li < DICTATION_LANGUAGES.length; li++) {
+            if (DICTATION_LANGUAGES[li].id === currentLang) {
+                currentLabel = DICTATION_LANGUAGES[li].label;
+                break;
+            }
+        }
+        displayDictationLangBtn.textContent = currentLabel;
+        Array.from(displayMenu.querySelectorAll('.syllentras-display-select-option')).forEach(function (optBtn) {
+            var active = optBtn.dataset.langId === currentLang;
+            optBtn.classList.toggle('selected', active);
+            optBtn.setAttribute('aria-selected', active ? 'true' : 'false');
+        });
     }
 
     if (displayWallpaperSwitch) {
@@ -7368,6 +7385,7 @@ function buildDisplayMenu() {
     }
 
     // Mic language — only when the browser can do speech-to-text.
+    // Custom list (not native <select>) so options always open downward.
     if (typeof speechRecognitionSupported === 'function' && speechRecognitionSupported()
         && typeof DICTATION_LANGUAGES !== 'undefined') {
         var micLangSection = document.createElement('div');
@@ -7383,33 +7401,48 @@ function buildDisplayMenu() {
         micLangHint.textContent = 'Language the microphone listens for';
         micLangSection.appendChild(micLangHint);
 
-        // Wrap the select so we can draw a chevron that matches light/dark themes.
-        var micLangWrap = document.createElement('div');
-        micLangWrap.className = 'syllentras-display-select-wrap';
+        displayDictationLangWrap = document.createElement('div');
+        displayDictationLangWrap.className = 'syllentras-display-select-wrap';
 
-        displayDictationLangSelect = document.createElement('select');
-        displayDictationLangSelect.className = 'syllentras-display-select';
-        displayDictationLangSelect.id = 'syllentras-display-dictation-lang';
-        displayDictationLangSelect.setAttribute('aria-label', 'Microphone speech-to-text language');
-        DICTATION_LANGUAGES.forEach(function (lang) {
-            var opt = document.createElement('option');
-            opt.value = lang.id;
-            opt.textContent = lang.label;
-            displayDictationLangSelect.appendChild(opt);
-        });
-        if (typeof getDictationLang === 'function') {
-            displayDictationLangSelect.value = getDictationLang();
-        }
-        displayDictationLangSelect.addEventListener('change', function () {
-            if (typeof setDictationLang === 'function') {
-                setDictationLang(displayDictationLangSelect.value);
-            }
-        });
-        displayDictationLangSelect.addEventListener('click', function (e) {
+        displayDictationLangBtn = document.createElement('button');
+        displayDictationLangBtn.type = 'button';
+        displayDictationLangBtn.className = 'syllentras-display-select';
+        displayDictationLangBtn.id = 'syllentras-display-dictation-lang';
+        displayDictationLangBtn.setAttribute('aria-label', 'Microphone speech-to-text language');
+        displayDictationLangBtn.setAttribute('aria-haspopup', 'listbox');
+        displayDictationLangBtn.setAttribute('aria-expanded', 'false');
+        displayDictationLangBtn.addEventListener('click', function (e) {
             e.stopPropagation();
+            toggleDictationLangDropdown();
         });
-        micLangWrap.appendChild(displayDictationLangSelect);
-        micLangSection.appendChild(micLangWrap);
+
+        displayDictationLangList = document.createElement('div');
+        displayDictationLangList.className = 'syllentras-display-select-list';
+        displayDictationLangList.setAttribute('role', 'listbox');
+        displayDictationLangList.setAttribute('aria-label', 'Microphone speech-to-text language');
+        displayDictationLangList.hidden = true;
+
+        DICTATION_LANGUAGES.forEach(function (lang) {
+            var optBtn = document.createElement('button');
+            optBtn.type = 'button';
+            optBtn.className = 'syllentras-display-select-option';
+            optBtn.setAttribute('role', 'option');
+            optBtn.dataset.langId = lang.id;
+            optBtn.textContent = lang.label;
+            optBtn.addEventListener('click', function (e) {
+                e.stopPropagation();
+                if (typeof setDictationLang === 'function') {
+                    setDictationLang(lang.id);
+                }
+                closeDictationLangDropdown();
+                syncDisplayMenuUi();
+            });
+            displayDictationLangList.appendChild(optBtn);
+        });
+
+        displayDictationLangWrap.appendChild(displayDictationLangBtn);
+        displayDictationLangWrap.appendChild(displayDictationLangList);
+        micLangSection.appendChild(displayDictationLangWrap);
         displayMenu.appendChild(micLangSection);
     }
 
@@ -7490,6 +7523,9 @@ function buildDisplayMenu() {
 
     displayMenu.addEventListener('click', function (e) {
         e.stopPropagation();
+        if (displayDictationLangWrap && !displayDictationLangWrap.contains(e.target)) {
+            closeDictationLangDropdown();
+        }
     });
     // Stop the chat body from eating the wheel so this menu can actually scroll.
     displayMenu.addEventListener('wheel', function (e) {
@@ -7500,8 +7536,42 @@ function buildDisplayMenu() {
     syncDisplayMenuUi();
 }
 
+function closeDictationLangDropdown() {
+    if (!displayDictationLangList || !displayDictationLangBtn) return;
+    displayDictationLangList.hidden = true;
+    displayDictationLangBtn.setAttribute('aria-expanded', 'false');
+    if (displayDictationLangWrap) {
+        displayDictationLangWrap.classList.remove('is-open');
+    }
+}
+
+function openDictationLangDropdown() {
+    if (!displayDictationLangList || !displayDictationLangBtn) return;
+    displayDictationLangList.hidden = false;
+    displayDictationLangBtn.setAttribute('aria-expanded', 'true');
+    if (displayDictationLangWrap) {
+        displayDictationLangWrap.classList.add('is-open');
+    }
+    var selected = displayDictationLangList.querySelector(
+        '.syllentras-display-select-option.selected'
+    );
+    if (selected && typeof selected.scrollIntoView === 'function') {
+        selected.scrollIntoView({ block: 'nearest' });
+    }
+}
+
+function toggleDictationLangDropdown() {
+    if (!displayDictationLangList) return;
+    if (displayDictationLangList.hidden) {
+        openDictationLangDropdown();
+    } else {
+        closeDictationLangDropdown();
+    }
+}
+
 function closeDisplayMenu() {
     if (!displayMenu || !displayBtn) return;
+    closeDictationLangDropdown();
     displayMenu.hidden = true;
     displayBtn.setAttribute('aria-expanded', 'false');
 }
@@ -7515,7 +7585,7 @@ function fitDisplayMenuInPanel() {
     var panelRect = panel.getBoundingClientRect();
     var btnRect = displayBtn.getBoundingClientRect();
     var room = Math.floor(panelRect.bottom - btnRect.bottom - 12);
-    var capped = Math.max(160, Math.min(room, 320));
+    var capped = Math.max(160, Math.min(room, 400));
     displayMenu.style.maxHeight = capped + 'px';
 }
 
