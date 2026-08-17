@@ -353,7 +353,7 @@
     width: 280px;
     max-width: min(280px, calc(100vw - 48px));
     /* Fallback cap — JS also sets max-height to fit inside the chat panel. */
-    max-height: min(42vh, 300px);
+    max-height: min(52vh, 380px);
     overflow-x: hidden;
     overflow-y: auto;
     overscroll-behavior: contain;
@@ -418,13 +418,18 @@
     content: '';
     position: absolute;
     right: 14px;
-    top: 50%;
+    top: 18px;
     width: 7px;
     height: 7px;
     border-right: 2px solid var(--syll-text-muted);
     border-bottom: 2px solid var(--syll-text-muted);
     transform: translateY(-70%) rotate(45deg);
     pointer-events: none;
+    transition: transform 0.12s ease;
+}
+.syllentras-display-select-wrap.is-open::after {
+    top: 22px;
+    transform: translateY(-70%) rotate(225deg);
 }
 .syllentras-display-select {
     display: block;
@@ -442,6 +447,7 @@
     font-size: calc(13px * var(--syll-font-scale));
     font-weight: 500;
     line-height: 1.35;
+    text-align: left;
     cursor: pointer;
     transition: border-color 0.12s ease, background-color 0.12s ease;
 }
@@ -454,9 +460,50 @@
     border-color: var(--syll-accent);
     box-shadow: 0 0 0 2px color-mix(in srgb, var(--syll-accent) 28%, transparent);
 }
-/* IE/old Edge leftover arrow — hide if it still shows up. */
-.syllentras-display-select::-ms-expand {
+.syllentras-display-select-wrap.is-open .syllentras-display-select {
+    border-color: var(--syll-accent);
+}
+/* Custom list always opens below the trigger (native <select> often flips upward). */
+.syllentras-display-select-list {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    margin-top: 6px;
+    max-height: 180px;
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    border: 1px solid var(--syll-border);
+    border-radius: 8px;
+    background: var(--syll-input-bg);
+    padding: 4px;
+    scrollbar-width: thin;
+    scrollbar-color: var(--syll-border) transparent;
+}
+.syllentras-display-select-list[hidden] {
     display: none;
+}
+.syllentras-display-select-option {
+    display: block;
+    width: 100%;
+    text-align: left;
+    border: 1px solid transparent;
+    background: transparent;
+    color: var(--syll-text);
+    border-radius: 6px;
+    padding: 7px 9px;
+    cursor: pointer;
+    font: inherit;
+    font-size: calc(13px * var(--syll-font-scale));
+    line-height: 1.35;
+}
+.syllentras-display-select-option:hover {
+    background: var(--syll-surface-hover);
+}
+.syllentras-display-select-option.selected {
+    border-color: var(--syll-accent);
+    background: var(--syll-surface-active);
+    font-weight: 600;
 }
 .syllentras-display-theme-list {
     display: flex;
