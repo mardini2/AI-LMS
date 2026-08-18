@@ -1,0 +1,11 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "rootDir": "../..",
+    "noEmit": true
+  },
+  // src must stay in the program: @types/multer's global Express.Multer
+  // augmentation reaches attachment.service.ts only via src's own imports.
+  "include": ["./**/*.ts", "../../src/**/*.ts"],
+  "exclude": ["../../node_modules", "../../dist"]
+}

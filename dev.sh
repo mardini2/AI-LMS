@@ -504,6 +504,18 @@ case "$CMD" in
         $COMPOSE exec webserver php admin/cli/purge_caches.php
         echo "Done."
         ;;
+    cron)
+        echo "Running Moodle cron (processes pending backup/restore and other scheduled tasks)..."
+        $COMPOSE exec webserver php admin/cli/cron.php
+        ;;
+behat-init)
+        echo "Initializing Behat testing environment..."
+        $COMPOSE exec webserver php public/admin/tool/behat/cli/init.php
+        ;;
+    behat-run)
+        echo "Running Behat acceptance tests..."
+        $COMPOSE exec webserver php public/admin/tool/behat/cli/run.php "${@:2}"
+        ;;
     rebuild-chat-js)
         echo "Rebuilding Syllentras chat widget bundle (boot.js)..."
         if command -v python3 >/dev/null 2>&1; then
@@ -532,7 +544,7 @@ case "$CMD" in
         tunnel_restore
         ;;
     *)
-        echo "Usage: ./dev.sh {up|down|restart|logs|ps|install-api|moodle-install|moodle-upgrade|moodle-purge|rebuild-chat-js|clear-attachments|tunnel|tunnel-stop}"
+        echo "Usage: ./dev.sh {up|down|restart|logs|ps|install-api|moodle-install|moodle-upgrade|moodle-purge|behat-init|behat-run|rebuild-chat-js|clear-attachments|tunnel|tunnel-stop}" >&2
         exit 1
         ;;
 esac

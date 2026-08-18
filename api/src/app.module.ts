@@ -40,6 +40,8 @@ import { AttachmentChunk } from './chat/attachments/attachment-chunk.entity';
         XAI_MODEL: Joi.string().allow('').optional(),
         MISTRAL_MODEL: Joi.string().allow('').optional(),
         CORS_ORIGIN: Joi.string().required(),
+        // Behat/Selenium: in-process LLM stub. Never enable in production.
+        STUB_LLM: Joi.boolean().truthy('true', '1').falsy('false', '0', '').optional(),
         ATTACHMENT_STORAGE_PATH: Joi.string().default('/app/uploads'),
         ATTACHMENT_USER_QUOTA_BYTES: Joi.number().default(2147483648),
         ATTACHMENT_ABANDONED_HOURS: Joi.number().default(24),

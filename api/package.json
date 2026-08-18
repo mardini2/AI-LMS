@@ -13,7 +13,8 @@
     "format": "prettier --write \"src/**/*.ts\"",
     "test": "jest",
     "test:watch": "jest --watch",
-    "test:cov": "jest --coverage"
+    "test:cov": "jest --coverage",
+    "test:e2e": "jest --config ./test/jest-e2e.json"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.114.0",
@@ -51,11 +52,14 @@
     "@types/marked": "^5.0.2",
     "@types/multer": "^2.2.0",
     "@types/node": "^22.0.0",
+    "@types/supertest": "^7.2.1",
     "@typescript-eslint/eslint-plugin": "^8.0.0",
     "@typescript-eslint/parser": "^8.0.0",
+    "dotenv": "^17.4.2",
     "eslint": "^9.0.0",
     "jest": "^30.4.2",
     "prettier": "^3.4.2",
+    "supertest": "^7.2.2",
     "ts-jest": "^29.4.12",
     "ts-loader": "^9.5.1",
     "ts-node": "^10.9.2",

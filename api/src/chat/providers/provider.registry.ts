@@ -4,6 +4,7 @@ import type { LlmProvider } from './llm-provider.interface';
 import { GeminiProvider } from './gemini.provider';
 import { AnthropicProvider } from './anthropic.provider';
 import { OpenAiCompatibleProvider } from './openai-compatible.provider';
+import { StubLlmProvider, isStubLlmEnabled } from './stub.provider';
 import {
   AI_PROVIDER_IDS,
   isAiProviderId,
@@ -18,6 +19,8 @@ import {
 @Injectable()
 export class AiProviderRegistry {
   private readonly providers: Map<AiProviderId, LlmProvider>;
+  /** In-process stub used by Behat. Never listed in the public picker. */
+  private readonly stub: StubLlmProvider | null;
   /** Prefer Gemini when present so existing installs keep the same default. */
   private readonly preferredOrder: AiProviderId[] = [
     'gemini',
@@ -66,6 +69,9 @@ export class AiProviderRegistry {
       ['xai', xai],
       ['mistral', mistral],
     ]);
+    this.stub = isStubLlmEnabled(config.get('STUB_LLM'))
+      ? new StubLlmProvider()
+      : null;
   }
 
   /** Public listing for the chatbox — never includes secrets. */
@@ -90,11 +96,22 @@ export class AiProviderRegistry {
     return null;
   }
 
+  /** True when STUB_LLM is on — Behat/CI only, never real student traffic. */
+  isStubMode(): boolean {
+    return this.stub !== null;
+  }
+
   /**
    * Resolve the provider for a request.
    * Empty/undefined providerId → default available provider.
    */
   resolve(providerId?: string | null): LlmProvider {
+    // Behat / Selenium: never call a real vendor, even if API keys are present
+    // and the widget sent a picker id.
+    if (this.stub) {
+      return this.stub;
+    }
+
     const requested = (providerId ?? '').trim();
 
     if (requested) {

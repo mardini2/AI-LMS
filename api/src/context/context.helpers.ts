@@ -161,7 +161,7 @@ function hasSectionConstraint(filter: CourseContextFilter): boolean {
   );
 }
 
-function matchesSection(
+export function matchesSection(
   doc: CourseContextDocument,
   filter: CourseContextFilter,
 ): boolean {
@@ -306,7 +306,7 @@ export function scopeIncludesSectionName(
   return scope.toLowerCase().includes(name.toLowerCase());
 }
 
-function relevanceScore(
+export function relevanceScore(
   doc: CourseContextDocument,
   questionTerms: string[],
 ): number {
@@ -328,7 +328,7 @@ export function formatCitationTitle(doc: CourseContextDocument): string {
   return section || resource || 'Course material';
 }
 
-function formatDocument(doc: CourseContextDocument): string {
+export function formatDocument(doc: CourseContextDocument): string {
   const sectionLabel = doc.sectionName?.trim() || 'Course';
   const resourceLabel = doc.moduleName?.trim() || doc.fileName?.trim();
   const heading = resourceLabel

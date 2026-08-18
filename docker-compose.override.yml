@@ -80,6 +80,7 @@ services:
       XAI_MODEL: ${XAI_MODEL:-}
       MISTRAL_MODEL: ${MISTRAL_MODEL:-}
       CORS_ORIGIN: ${CORS_ORIGIN}
+      STUB_LLM: ${STUB_LLM:-false}
       # Temporary: log second-turn chat pipeline as [GREETING_DEBUG]
       CHAT_GREETING_DEBUG: "0"
       ATTACHMENT_STORAGE_PATH: /app/uploads

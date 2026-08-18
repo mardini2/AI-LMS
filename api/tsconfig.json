@@ -16,6 +16,7 @@
     "strictBindCallApply": true,
     "forceConsistentCasingInFileNames": true,
     "noFallthroughCasesInSwitch": true,
-    "types": ["node", "jest"]
-  }
+    "types": ["jest", "node"]
+  },
+  "exclude": ["node_modules", "dist", "test"]
 }
