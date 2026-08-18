@@ -13,7 +13,7 @@ async function bootstrap() {
   const config = app.get(ConfigService);
 
   app.enableCors({
-    origin: config.get<string>('CORS_ORIGIN'),
+    origin: corsOrigins(config),
     methods: ['GET', 'POST', 'PATCH', 'DELETE'],
     allowedHeaders: ['Content-Type'],
   });
@@ -29,6 +29,30 @@ async function bootstrap() {
   const port = config.get<number>('PORT') ?? 3000;
   await app.listen(port);
   console.log(`Syllentras AI API running on port ${port} [${config.get('NODE_ENV')}]`);
+}
+
+/**
+ * CORS_ORIGIN is a comma-separated list so Behat (http://webserver) can sit
+ * next to the local Moodle origin. STUB_LLM also allows the Behat hostname
+ * automatically so CI only has to flip one flag.
+ */
+function corsOrigins(config: ConfigService): string | string[] {
+  const raw = config.get<string>('CORS_ORIGIN') ?? '';
+  const origins = raw
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const stubOn = config.get('STUB_LLM');
+  if (
+    (stubOn === true || stubOn === 'true' || stubOn === '1') &&
+    !origins.includes('http://webserver')
+  ) {
+    origins.push('http://webserver');
+  }
+  if (origins.length <= 1) {
+    return origins[0] ?? raw;
+  }
+  return origins;
 }
 
 bootstrap();

@@ -6,3 +6,4 @@ export * from './provider.registry';
 export * from './gemini.provider';
 export * from './anthropic.provider';
 export * from './openai-compatible.provider';
+export * from './stub.provider';

@@ -459,11 +459,23 @@ export class ChatService {
         userMessageCount,
         dbHistoryIncludingCurrent,
       ] = await Promise.all([
-        this.contextService.getContext(courseId, message, {
-          sectionId: conversation.sectionId,
-          sectionNumber: conversation.sectionNumber,
-          sectionName: conversation.sectionName,
-        }),
+        this.contextService
+          .getContext(courseId, message, {
+            sectionId: conversation.sectionId,
+            sectionNumber: conversation.sectionNumber,
+            sectionName: conversation.sectionName,
+          })
+          .catch((err) => {
+            if (!this.providers.isStubMode()) {
+              throw err;
+            }
+            // Behat courses are not on the main Moodle token. Swallow only
+            // when STUB_LLM is on so real traffic still fails the turn.
+            this.logger.warn(
+              `Course context unavailable (STUB_LLM): ${err instanceof Error ? err.message : String(err)}`,
+            );
+            return '';
+          }),
         this.contextService.resolveCourseName(courseId, courseName),
         moodleUserId
           ? this.contextService.getEnrolledCourseNames(moodleUserId)
